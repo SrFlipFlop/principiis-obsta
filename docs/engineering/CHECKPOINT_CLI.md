@@ -67,3 +67,21 @@ The single-task attempt is number 1; checkpoint ID equals task ID. Later resume/
 ## Verification record
 
 Tests use the CLI/artifact and subprocess contracts, with real local subprocesses. Red-before-green cycles observed: missing CLI; evaluator exception incorrectly crashed controller; incomplete executor was wrongly scored; missing executor/check executable raised without a final result. Each was fixed before the next slice. Passing tests also cover candidate failure retention, malformed evaluator output and evaluator mutation of its disposable copy. No models, paid calls or benchmark applications were executed.
+
+## Incremental sequence interface (#2)
+
+Run an ordered manifest with a trusted fixture executor:
+
+```sh
+python3 -m principiis sequence --sequence /path/to/sequence.json --executor '["python3", "/absolute/path/to/executor.py"]' --output /tmp/new-sequence-run
+```
+
+A sequence manifest defines `id`, `version`, `condition` (the same identity object as a single task), and a nonempty ordered `steps` array. Each step defines `id`, `version`, `sequence_version`, `request`, and `check` as in the single-task format. `sequence_version` must equal the enclosing version. IDs must be unique single path components. Request/check file paths resolve relative to the sequence manifest. All steps and request files are validated before creating a run or invoking an executor.
+
+Every step starts a new executor subprocess and records a fresh `session_id`; all checkpoints share the sequence `run_id`. The initial application workspace is empty. Later workspaces copy the previous completed snapshot, including agent-written notes and instructions. Stdin concatenates only requests through the current step, in chronological order separated by two newlines. Request authors must state changes/supersession explicitly: earlier requests remain visible as history. No prior stdout/stderr/conversation, external session state or evaluator output is copied into the workspace or stdin. Future requests remain outside the delivered context.
+
+The output root contains `sequence.json` with sequence identity, ordered checkpoint outcomes/artifact links and `running`, `completed` or `incomplete` status. Each `steps/<id>/` directory uses the single-checkpoint artifact contract; `tasks/` holds resolved controller metadata outside development workspaces. A completed candidate advances even after functional/security failure, unassessable scoring or evaluator error. Retained historical outcomes/snapshots remain intact. An incomplete executor stops the sequence with its partial files and evidence retained. Resume/retry and hard-termination recovery remain #4 scope. A different run requires a new output root and starts empty.
+
+The trusted host fixture limitation above applies equally here: absence from delivered stdin/workspace is tested, but host filesystem discovery is not prevented. This command is scaffolding for deterministic fixtures, not the real Codex context-isolation path (#3).
+
+Verification: `tests/test_sequence_cli.py` checks a failing-then-passing sequence twice with real subprocesses, notes/code persistence, distinct process and session identities, exact cumulative requirements, a future-request sentinel, original snapshot retention and invalid-manifest rejection before artifacts. Red-before-green evidence: missing `sequence` CLI failed first; missing condition validation then created an artifact directory before failing, fixed by preflight validation. No live agent or model was invoked.
