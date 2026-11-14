@@ -4,7 +4,7 @@ import os
 import re
 from pathlib import Path
 import subprocess
-import threading
+from .resource import execute
 
 
 class Codex:
@@ -65,32 +65,7 @@ class Codex:
             'model': c['model'], 'settings': settings, 'clean_runtime_review': c['clean_runtime_review'],
             'reported_usage': None, 'hosted_model_memory': None,
             'filesystem_boundary': 'normal Codex permissions; host reads are not isolated'}}
-        try:
-            with subprocess.Popen(argv, cwd=workspace, env=env, stdin=subprocess.PIPE,
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as process:
-                def retain(stream, destination):
-                    for line in stream:
-                        destination.write(redact(line))
-                        destination.flush()
-                readers = [threading.Thread(target=retain, args=(stream, destination))
-                           for stream, destination in ((process.stdout, stdout), (process.stderr, stderr))]
-                for reader in readers:
-                    reader.start()
-                try:
-                    try:
-                        process.stdin.write(request)
-                        process.stdin.close()
-                    except BrokenPipeError:
-                        pass
-                    evidence['exit_status'] = process.wait()
-                except KeyboardInterrupt:
-                    process.terminate()
-                    raise
-                finally:
-                    for reader in readers:
-                        reader.join()
-        except (OSError, KeyboardInterrupt) as error:
-            evidence['error'] = str(error) or 'controller interrupted'
+        evidence.update(execute(argv, workspace, request, stdout, stderr, env=env, transform=redact))
         return evidence
 
 
