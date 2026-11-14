@@ -4,7 +4,7 @@ import os
 import re
 from pathlib import Path
 import subprocess
-from .resource import execute
+from .execution import execute
 
 
 class Codex:

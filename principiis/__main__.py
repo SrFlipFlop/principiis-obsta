@@ -1,6 +1,7 @@
 import argparse
-from io import StringIO
-from .resource import execute
+from .execution import execute
+from .snapshot import preserve, validate
+from .task import check_argv
 import json
 from pathlib import Path
 import shutil
@@ -13,6 +14,8 @@ def run(task_path, executor, output, *, prior_snapshot=None, run_id=None, sequen
     task_path = Path(task_path).resolve()
     task = json.loads(task_path.read_text())
     request = visible_request if visible_request is not None else (task_path.parent / task['request']).read_text()
+    if prior_snapshot is not None:
+        validate(prior_snapshot)
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=False)
     workspace = output / 'workspace'
@@ -42,24 +45,28 @@ def run(task_path, executor, output, *, prior_snapshot=None, run_id=None, sequen
     if result['execution']['exit_status'] != 0:
         save_result(output, result)
         return result
-    shutil.copytree(workspace, output / 'snapshot', symlinks=True)
+    try:
+        preserve(workspace, output / 'snapshot')
+    except (OSError, ValueError) as error:
+        result['snapshot_error'] = str(error)
+        save_result(output, result)
+        return result
     check = list(task['check'])
     # Relative existing file arguments belong to the task package, not the candidate.
-    check = [str((task_path.parent / arg).resolve()) if (task_path.parent / arg).is_file() else arg for arg in check]
+    check = check_argv(task_path.parent, check)
     result['outcome'] = 'evaluator_error'
     result['evaluation'] = {'argv': check, 'exit_status': None}
     save_result(output, result)
     try:
         with tempfile.TemporaryDirectory(prefix='principiis-evaluation-') as evaluation:
+            validate(output / 'snapshot')
             candidate = Path(evaluation) / 'candidate'
             shutil.copytree(output / 'snapshot', candidate, symlinks=True)
-            stdout, stderr = StringIO(), StringIO()
-            result['evaluation'] = execute(check, candidate, '', stdout, stderr)
-        (output / 'evaluator.stdout').write_text(stdout.getvalue())
-        (output / 'evaluator.stderr').write_text(stderr.getvalue())
+            with (output / 'evaluator.stdout').open('w') as stdout, (output / 'evaluator.stderr').open('w') as stderr:
+                result['evaluation'] = execute(check, candidate, '', stdout, stderr)
         if result['evaluation']['exit_status'] != 0:
             raise ValueError('evaluator exited unsuccessfully')
-        scores = json.loads(stdout.getvalue())
+        scores = json.loads((output / 'evaluator.stdout').read_text())
         if not isinstance(scores, dict) or any(scores.get(key) not in ('pass', 'fail', 'unassessable') for key in ('functional', 'security')):
             raise ValueError('invalid evaluator scores')
         result.update({key: scores[key] for key in ('functional', 'security')})
