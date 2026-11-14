@@ -1,0 +1,7 @@
+seccomp_profile.json is derived from Microsoft Playwright v1.56.1:
+https://github.com/microsoft/playwright/blob/v1.56.1/utils/docker/seccomp_profile.json
+Copyright Microsoft Corporation; Apache License 2.0 (LICENSE.seccomp).
+Checked 2026-11-14. Modification: add unconditional chroot syscall allowance
+for Chromium's unprivileged nested-user-namespace sandbox, with host
+capabilities still dropped. The remainder is the full upstream profile.
+Playwright's profile in turn extends Docker/Moby's default seccomp profile.
