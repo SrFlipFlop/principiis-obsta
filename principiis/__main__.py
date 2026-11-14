@@ -2,13 +2,14 @@ import argparse
 import json
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
 import uuid
 
 
-def run(task_path, executor, output, *, prior_snapshot=None, run_id=None, sequence=None, visible_request=None):
+def run(task_path, executor, output, *, prior_snapshot=None, run_id=None, sequence=None, visible_request=None, attempt=1):
     task_path = Path(task_path).resolve()
     task = json.loads(task_path.read_text())
     request = visible_request if visible_request is not None else (task_path.parent / task['request']).read_text()
@@ -24,9 +25,9 @@ def run(task_path, executor, output, *, prior_snapshot=None, run_id=None, sequen
         'schema_version': 1, 'run_id': run_id or str(uuid.uuid4()),
         'session_id': str(uuid.uuid4()), 'sequence': sequence,
         'task': {'id': task['id'], 'version': task['version']},
-        'condition': task['condition'], 'attempt': 1, 'checkpoint': task['id'],
+        'condition': task['condition'], 'attempt': attempt, 'checkpoint': task['id'],
         'outcome': 'incomplete', 'functional': 'unknown', 'security': 'unknown',
-        'execution': {}, 'evaluation': {},
+        'execution': {}, 'evaluation': {}, 'completed': False,
     }
     started = time.monotonic()
     save_result(output, result)
@@ -71,12 +72,14 @@ def run(task_path, executor, output, *, prior_snapshot=None, run_id=None, sequen
     except (OSError, ValueError, TypeError, KeyboardInterrupt) as error:
         result['evaluation']['error'] = str(error) or 'controller interrupted'
     result['evaluation']['elapsed_seconds'] = time.monotonic() - evaluation_started
+    result['completed'] = True
     save_result(output, result)
     return result
 
 
 def save_result(output, result):
-    (output / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
+    from .resume import write_json
+    write_json(output / 'result.json', result)
     (output / 'report.md').write_text(
         f"Run {result['run_id']}\n\n"
         f"Task: {result['task']['id']} @ {result['task']['version']}\n\n"
@@ -86,7 +89,7 @@ def save_result(output, result):
         f"Functional: {result['functional']}; security: {result['security']}\n")
 
 
-def run_sequence(sequence_path, executor, output):
+def run_sequence(sequence_path, executor, output, *, resume=False, retry_incomplete=False):
     sequence_path = Path(sequence_path).resolve()
     manifest = json.loads(sequence_path.read_text())
     condition = manifest.get('condition')
@@ -108,39 +111,15 @@ def run_sequence(sequence_path, executor, output):
         if not step.get('version') or not isinstance(step.get('check'), list) or not step['check'] or not all(isinstance(arg, str) for arg in step['check']):
             raise ValueError('invalid step version or check argv')
         requests.append((sequence_path.parent / step['request']).read_text())
-    output = Path(output).resolve()
-    output.mkdir(parents=True, exist_ok=False)
-    run_id = str(uuid.uuid4())
-    identity = {'id': manifest['id'], 'version': manifest['version']}
-    summary = {'schema_version': 1, 'run_id': run_id, 'sequence': identity,
-               'condition': manifest['condition'], 'checkpoints': [], 'status': 'running'}
-    prior_snapshot = None
-    for index, step in enumerate(steps):
-        # Resolved private task metadata stays outside the application workspace.
-        task = dict(step, condition=manifest['condition'])
-        task['request'] = str((sequence_path.parent / step['request']).resolve())
-        task['check'] = [str((sequence_path.parent / arg).resolve()) if (sequence_path.parent / arg).is_file() else arg for arg in step['check']]
-        metadata = output / 'tasks'
-        metadata.mkdir(exist_ok=True)
-        task_path = metadata / (step['id'] + '.json')
-        task_path.write_text(json.dumps(task))
-        destination = output / 'steps' / step['id']
-        result = run(task_path, executor, destination, prior_snapshot=prior_snapshot,
-                     run_id=run_id, sequence=identity,
-                     visible_request='\n\n'.join(requests[:index + 1]))
-        summary['checkpoints'].append({'id': step['id'], 'outcome': result['outcome'],
-                                       'artifact': str(destination.relative_to(output))})
-        summary['status'] = 'incomplete' if result['outcome'] == 'incomplete' else 'running'
-        (output / 'sequence.json').write_text(json.dumps(summary, indent=2) + '\n')
-        if result['outcome'] == 'incomplete':
-            return summary
-        prior_snapshot = destination / 'snapshot'
-    summary['status'] = 'completed'
-    (output / 'sequence.json').write_text(json.dumps(summary, indent=2) + '\n')
-    return summary
+    from .resume import execute_sequence
+    return execute_sequence(sequence_path, manifest, requests, executor, output, run,
+                            resume=resume, retry_incomplete=retry_incomplete)
 
 
 def main():
+    def interrupted(signum, frame):
+        raise KeyboardInterrupt('controller interrupted')
+    signal.signal(signal.SIGTERM, interrupted)
     parser = argparse.ArgumentParser(description='Local fixture checkpoint controller')
     sub = parser.add_subparsers(dest='command', required=True)
     command = sub.add_parser('run')
@@ -155,6 +134,8 @@ def main():
     selection.add_argument('--executor')
     selection.add_argument('--codex-config')
     sequence_command.add_argument('--output', required=True)
+    sequence_command.add_argument('--resume', action='store_true')
+    sequence_command.add_argument('--retry-incomplete', action='store_true')
     args = parser.parse_args()
     if args.codex_config:
         from .codex import Codex
@@ -162,7 +143,7 @@ def main():
     else:
         executor = json.loads(args.executor)
     if args.command == 'sequence':
-        run_sequence(args.sequence, executor, args.output)
+        run_sequence(args.sequence, executor, args.output, resume=args.resume, retry_incomplete=args.retry_incomplete)
     else:
         run(args.task, executor, args.output)
 
