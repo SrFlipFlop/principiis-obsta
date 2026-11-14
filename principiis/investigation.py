@@ -11,7 +11,8 @@ import shutil
 import tempfile
 import time
 
-from .resource import execute as measured_execute, token_usage
+from .execution import execute as measured_execute
+from .resource import token_usage
 
 
 def digest(path):

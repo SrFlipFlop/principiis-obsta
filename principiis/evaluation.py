@@ -6,11 +6,14 @@ import pathlib
 import subprocess
 import time
 import uuid
+from .snapshot import validate
 
 
 def digest(path):
     if not path.is_dir():
         raise ValueError('snapshot must be an existing directory')
+    if path.with_suffix('.json').exists():
+        validate(path)
     value = hashlib.sha256()
     for item in sorted(path.rglob('*')):
         if item.is_symlink():
@@ -112,7 +115,7 @@ print(json.dumps(dict(uid=os.getuid(), status=pathlib.Path('/proc/self/status').
         try:
             record['snapshot_unchanged'] = digest(snapshot) == record['snapshot_sha256'] if snapshot.is_dir() else None
         except ValueError:
-            record['snapshot_unchanged'] = False
+            record['snapshot_unchanged'] = False if record['snapshot_sha256'] is not None else None
         if record['snapshot_unchanged'] is False:
             record.update(outcome='evaluator_error', functional='unassessable', security='unassessable', error='snapshot changed during evaluation')
         (output / 'report.md').write_text(f"Outcome: {record['outcome']}\n\nFunctionality: {record['functional']}\nSecurity: {record['security']}\n\n" + '\n'.join(f"- {c['id']}: {c['status']}" for c in record.get('checks', [])) + '\n')

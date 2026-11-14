@@ -3,6 +3,8 @@ import hashlib
 import json
 from pathlib import Path
 import uuid
+from .snapshot import validate
+from .task import check_argv
 
 
 def write_json(path, value):
@@ -31,6 +33,9 @@ def execute_sequence(source, manifest, requests, executor, output, run, *, resum
         summary = json.loads((output / 'sequence.json').read_text())
         if summary.get('fingerprint') != fingerprint:
             raise ValueError('task or execution configuration mismatch; create a new run')
+        for checkpoint in summary['checkpoints']:
+            if checkpoint['outcome'] != 'incomplete':
+                validate(output / checkpoint['artifact'] / 'snapshot')
         if summary['status'] == 'completed':
             return summary
     else:
@@ -55,6 +60,7 @@ def execute_sequence(source, manifest, requests, executor, output, run, *, resum
         outcome = result['outcome'] if finished else 'incomplete'
         summary['checkpoints'].append(dict(active, outcome=outcome))
         if finished:
+            validate(output / active['artifact'] / 'snapshot')
             completed.add(active['id'])
             prior_snapshot = output / active['artifact'] / 'snapshot'
         summary['active_attempt'] = None
@@ -71,7 +77,7 @@ def execute_sequence(source, manifest, requests, executor, output, run, *, resum
         destination = output / 'steps' / step['id'] if attempt == 1 else output / 'attempts' / step['id'] / str(attempt)
         task = dict(step, condition=manifest['condition'])
         task['request'] = str((source.parent / step['request']).resolve())
-        task['check'] = [str((source.parent / arg).resolve()) if (source.parent / arg).is_file() else arg for arg in step['check']]
+        task['check'] = check_argv(source.parent, step['check'])
         metadata = output / 'tasks'
         metadata.mkdir(exist_ok=True)
         task_path = metadata / (step['id'] + '.json')
