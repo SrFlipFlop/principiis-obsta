@@ -101,7 +101,7 @@ def inspect(root):
 
 
 def execute(argv, workspace, request, stdout, stderr, *, env=None, transform=lambda value: value,
-            clock=time.monotonic, wall_clock=time.time):
+            clock=time.monotonic, wall_clock=time.time, timeout=None):
     """Run one measured stage, retaining logs and killing its process group on interruption."""
     started = clock()
     evidence = {'argv': argv, 'exit_status': None, 'started_at': wall_clock(),
@@ -151,8 +151,8 @@ def execute(argv, workspace, request, stdout, stderr, *, env=None, transform=lam
             process.stdin.close()
         except BrokenPipeError:
             process.stdin.close()
-        evidence['exit_status'] = process.wait()
-    except (OSError, KeyboardInterrupt) as error:
+        evidence['exit_status'] = process.wait(timeout=timeout)
+    except (OSError, KeyboardInterrupt, subprocess.TimeoutExpired) as error:
         evidence['error'] = str(error) or 'controller interrupted'
     finally:
         if process is not None:
