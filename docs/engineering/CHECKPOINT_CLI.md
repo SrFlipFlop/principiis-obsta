@@ -115,3 +115,51 @@ JSONL stdout retains exposed command, file/tool events, summaries and usage; std
 Verified 2026-11-14 against installed `codex-cli 0.169.0` local `--help` / `exec --help` (read-only, no model invocation) and [official configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference). Current flag support is a local observation; compatibility with other versions and the operator's subscription runtime must be rechecked before execution. No actual model, billing, credential or production-runtime behavior was tested.
 
 TDD evidence: CLI first failed because `--codex-config` was absent; the second slice failed because credential-shaped events were retained. Fake executable contract tests now cover two fresh sequence invocations, cumulative/current requirements with a future sentinel, retained notes, explicit model/permissions, no inherited API key, passive events/stderr, nonzero exit/partial files, credential redaction and contaminated-home rejection. Run `python3 -m unittest discover -s tests -v`.
+
+## Passive resource inspection (#4)
+
+Inspect an attempt directory or recursively inspect a sequence, including incomplete
+attempts and explicit retries. This command reads existing evidence only:
+
+```sh
+python3 -m principiis.resource /tmp/principiis-fixture-run
+python3 -m principiis.resource /tmp/principiis-fixture-run --format markdown
+```
+
+JSON includes each unique `(run_id, session_id)` once, with separate development
+and evaluation stages. Conflicting duplicate result records are rejected. Explicit
+`turn.completed` event IDs are deduplicated within each attempt; events without IDs
+count once per retained line (identical counts can represent legitimate separate
+turns). Other event types, including item usage and cumulative summaries, are not
+added. Input plus output is the total; cached input and reasoning output are subsets,
+never extra tokens. Missing categories stay unknown, including across partially
+measured attempts. Raw logs retain the original provider evidence. This parser's
+recognized event vocabulary is explicit; new provider formats require a versioned
+parser change, not guessed values.
+
+Each subprocess stage records monotonic duration, UTC epoch start/end timestamps,
+and sampled peak local RSS. Total stage duration sums development and evaluation;
+wall elapsed time is the span from earliest stage start to latest finish, including
+idle gaps and overlapping stages only once. Missing stage timestamps/durations make
+corresponding totals unknown. These wall timestamps depend on the host clock;
+monotonic durations remain reliable across host clock adjustments. Timestamps cover
+measured stages, not task-loading/snapshot-copy/controller startup overhead.
+
+On Linux the sampler sums `/proc` RSS for processes in the executor's process group
+every 10ms. This covers the ordinary local agent and tool children remaining in that
+group; RSS can count shared pages multiple times, miss brief processes or children
+that detach, and is not a container-wide peak or hosted model memory measurement.
+No observable sample means unknown. Per-stage peaks remain per stage: adding peaks
+would not describe simultaneous consumption. The controller terminates and then
+kills the subprocess group after interruption (and closes residual descendants on
+normal exit), retaining partial logs and measurements. Detached groups are outside
+this cleanup scope. No application container measurements are claimed.
+
+Actual subscription spending and API-equivalent estimates are separate null fields:
+no subscription allocation, price or API bill is inferred from usage. This slice does
+not estimate prices. A future estimate must carry dated pricing/model/category
+assumptions and remain separate from actual spending. Future intervention stages can
+use the same stage evidence shape; no intervention behavior is implemented here.
+
+Validation uses harmless subprocesses, a controlled clock, retained event fixtures,
+and a real interruption with a child process. No model or account calls are needed.
