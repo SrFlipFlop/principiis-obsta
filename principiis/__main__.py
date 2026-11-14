@@ -32,8 +32,11 @@ def run(task_path, executor, output, *, prior_snapshot=None, run_id=None, sequen
     save_result(output, result)
     try:
         with (output / 'executor.stdout').open('w') as stdout, (output / 'executor.stderr').open('w') as stderr:
-            process = subprocess.run(executor, cwd=workspace, input=request, text=True, stdout=stdout, stderr=stderr)
-        result['execution'] = {'argv': executor, 'exit_status': process.returncode}
+            if hasattr(executor, 'execute'):
+                result['execution'] = executor.execute(workspace, request, stdout, stderr)
+            else:
+                process = subprocess.run(executor, cwd=workspace, input=request, text=True, stdout=stdout, stderr=stderr)
+                result['execution'] = {'argv': executor, 'exit_status': process.returncode}
     except (OSError, KeyboardInterrupt) as error:
         result['execution'] = {'argv': executor, 'exit_status': None,
                                'error': str(error) or 'controller interrupted'}
@@ -142,17 +145,26 @@ def main():
     sub = parser.add_subparsers(dest='command', required=True)
     command = sub.add_parser('run')
     command.add_argument('--task', required=True)
-    command.add_argument('--executor', required=True, help='JSON argv array; receives visible request on stdin')
+    selection = command.add_mutually_exclusive_group(required=True)
+    selection.add_argument('--executor', help='JSON argv array; receives visible request on stdin')
+    selection.add_argument('--codex-config', help='Explicit clean ordinary Codex configuration JSON')
     command.add_argument('--output', required=True)
     sequence_command = sub.add_parser('sequence')
     sequence_command.add_argument('--sequence', required=True)
-    sequence_command.add_argument('--executor', required=True)
+    selection = sequence_command.add_mutually_exclusive_group(required=True)
+    selection.add_argument('--executor')
+    selection.add_argument('--codex-config')
     sequence_command.add_argument('--output', required=True)
     args = parser.parse_args()
-    if args.command == 'sequence':
-        run_sequence(args.sequence, json.loads(args.executor), args.output)
+    if args.codex_config:
+        from .codex import Codex
+        executor = Codex(args.codex_config, args.output, Path(args.sequence if args.command == 'sequence' else args.task).parent)
     else:
-        run(args.task, json.loads(args.executor), args.output)
+        executor = json.loads(args.executor)
+    if args.command == 'sequence':
+        run_sequence(args.sequence, executor, args.output)
+    else:
+        run(args.task, executor, args.output)
 
 
 if __name__ == '__main__':
