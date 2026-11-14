@@ -8,7 +8,7 @@ All implementation verification uses local controls or simulated agent output un
 
 ## 1. [Run one fixture task from CLI to scored checkpoint](https://github.com/SrFlipFlop/principiis-obsta/issues/1)
 
-**Type:** AFK  
+**Type:** AFK
 **Covers:** Task delivery, execution, artifacts and reporting
 
 ### What to build
@@ -28,7 +28,7 @@ None — can start immediately
 
 ## 2. [Execute incremental sequences with fresh step sessions](https://github.com/SrFlipFlop/principiis-obsta/issues/2)
 
-**Type:** AFK  
+**Type:** AFK
 **Covers:** Incremental disclosure and project persistence
 
 ### What to build
@@ -48,7 +48,7 @@ Extend the executable path to an ordered multi-step application sequence. Each s
 
 ## 3. [Run ordinary Codex through the sequence controller](https://github.com/SrFlipFlop/principiis-obsta/issues/3)
 
-**Type:** AFK  
+**Type:** AFK
 **Covers:** Real coding-agent execution and passive evidence
 
 ### What to build
@@ -68,7 +68,7 @@ Add the first real execution path using ordinary noninteractive Codex and existi
 
 ## 4. [Inspect per-step and total resource consumption](https://github.com/SrFlipFlop/principiis-obsta/issues/4)
 
-**Type:** AFK  
+**Type:** AFK
 **Covers:** Time, tokens, memory and cost accounting
 
 ### What to build
@@ -88,7 +88,7 @@ Make a completed or failed sequence inspectable from the CLI with per-attempt/st
 
 ## 5. [Resume completed checkpoints and preserve interrupted attempts](https://github.com/SrFlipFlop/principiis-obsta/issues/5)
 
-**Type:** AFK  
+**Type:** AFK
 **Covers:** Recoverable progress and explicit retry
 
 ### What to build
@@ -108,7 +108,7 @@ Provide checkpoint-boundary resume. Keep interrupted workspaces, logs and resour
 
 ## 6. [Evaluate browser and backend behavior in an isolated checkpoint](https://github.com/SrFlipFlop/principiis-obsta/issues/6)
 
-**Type:** AFK  
+**Type:** AFK
 **Covers:** Executable primary oracles and qualification
 
 ### What to build
@@ -128,7 +128,7 @@ Evaluate a retained full-stack fixture through a browser and direct backend requ
 
 ## 7. [Investigate additional vulnerabilities with an independent evaluator agent](https://github.com/SrFlipFlop/principiis-obsta/issues/7)
 
-**Type:** AFK  
+**Type:** AFK
 **Covers:** Independent agent investigation and evidence
 
 ### What to build
@@ -148,7 +148,7 @@ Add a separate evaluator-agent stage over retained checkpoints. It can run hidde
 
 ## 8. [Document portal: qualify the initial build and first two changes](https://github.com/SrFlipFlop/principiis-obsta/issues/8)
 
-**Type:** HITL  
+**Type:** HITL
 **Covers:** Document portal sequence authoring and oracle validation
 
 ### What to build
@@ -168,7 +168,7 @@ Author a runnable benchmark package for document portal using Python: three visi
 
 ## 9. [Document portal: complete the ten-step evolution](https://github.com/SrFlipFlop/principiis-obsta/issues/9)
 
-**Type:** AFK  
+**Type:** AFK
 **Covers:** Document portal full application sequence
 
 ### What to build
@@ -188,7 +188,7 @@ Extend the qualified document portal package from three to ten steps. Author sev
 
 ## 10. [Customer-support desk: qualify the initial build and first two changes](https://github.com/SrFlipFlop/principiis-obsta/issues/10)
 
-**Type:** AFK  
+**Type:** AFK
 **Covers:** Customer-support desk sequence authoring and oracle validation
 
 ### What to build
@@ -208,7 +208,7 @@ Author a runnable benchmark package for customer-support desk using PHP: three v
 
 ## 11. [Customer-support desk: complete the ten-step evolution](https://github.com/SrFlipFlop/principiis-obsta/issues/11)
 
-**Type:** AFK  
+**Type:** AFK
 **Covers:** Customer-support desk full application sequence
 
 ### What to build
@@ -228,7 +228,7 @@ Extend the qualified customer-support desk package from three to ten steps. Auth
 
 ## 12. [Team expense manager: qualify the initial build and first two changes](https://github.com/SrFlipFlop/principiis-obsta/issues/12)
 
-**Type:** AFK  
+**Type:** AFK
 **Covers:** Team expense manager sequence authoring and oracle validation
 
 ### What to build
@@ -248,7 +248,7 @@ Author a runnable benchmark package for team expense manager using C#/.NET: thre
 
 ## 13. [Team expense manager: complete the ten-step evolution](https://github.com/SrFlipFlop/principiis-obsta/issues/13)
 
-**Type:** AFK  
+**Type:** AFK
 **Covers:** Team expense manager full application sequence
 
 ### What to build
@@ -268,7 +268,7 @@ Extend the qualified team expense manager package from three to ten steps. Autho
 
 ## 14. [Integration/workflow dashboard: qualify the initial build and first two changes](https://github.com/SrFlipFlop/principiis-obsta/issues/14)
 
-**Type:** AFK  
+**Type:** AFK
 **Covers:** Integration/workflow dashboard sequence authoring and oracle validation
 
 ### What to build
@@ -288,7 +288,7 @@ Author a runnable benchmark package for integration/workflow dashboard using Go:
 
 ## 15. [Integration/workflow dashboard: complete the ten-step evolution](https://github.com/SrFlipFlop/principiis-obsta/issues/15)
 
-**Type:** AFK  
+**Type:** AFK
 **Covers:** Integration/workflow dashboard full application sequence
 
 ### What to build
@@ -308,7 +308,7 @@ Extend the qualified integration/workflow dashboard package from three to ten st
 
 ## 16. [Online marketplace: qualify the initial build and first two changes](https://github.com/SrFlipFlop/principiis-obsta/issues/16)
 
-**Type:** AFK  
+**Type:** AFK
 **Covers:** Online marketplace sequence authoring and oracle validation
 
 ### What to build
@@ -328,7 +328,7 @@ Author a runnable benchmark package for online marketplace using TypeScript/Node
 
 ## 17. [Online marketplace: complete the ten-step evolution](https://github.com/SrFlipFlop/principiis-obsta/issues/17)
 
-**Type:** AFK  
+**Type:** AFK
 **Covers:** Online marketplace full application sequence
 
 ### What to build
@@ -348,7 +348,7 @@ Extend the qualified online marketplace package from three to ten steps. Author 
 
 ## 18. [Report suite-wide baseline progress and checkpoint outcomes](https://github.com/SrFlipFlop/principiis-obsta/issues/18)
 
-**Type:** AFK  
+**Type:** AFK
 **Covers:** Suite selection, aggregation, evidence and readable reports
 
 ### What to build
@@ -368,7 +368,7 @@ Connect application selection to execution/evaluation/resume and produce one sui
 
 ## 19. [Review pilot readiness and select execution-time settings](https://github.com/SrFlipFlop/principiis-obsta/issues/19)
 
-**Type:** HITL  
+**Type:** HITL
 **Covers:** Qualified baseline launch preparation
 
 ### What to build
