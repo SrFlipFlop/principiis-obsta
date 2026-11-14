@@ -1,0 +1,69 @@
+# Fixture checkpoint interface (#1)
+
+Implementation decision (2026-11-14): use Python 3.10+ and its standard library, JSON task/results and local filesystem artifacts. This keeps the first vertical slice runnable without dependency installation, a database, services or a plugin framework. It is engineering scaffolding, not a research finding or a new benchmark application.
+
+From the repository root, one command runs the harmless fixture without any model:
+
+```sh
+python3 -m principiis run --task fixtures/engineering/task.json --executor '["python3", "'"$PWD"'/fixtures/engineering/executor.py", "pass"]' --output /tmp/principiis-fixture-run
+```
+
+Choose a new output directory for each invocation. Existing output directories are rejected, so evidence is never silently replaced. The command exits zero once an attempt has been recorded; inspect `result.json` for the scientific outcome. Argument/configuration errors exit nonzero. This convention allows later sequence execution to continue after scored candidate failures without treating them as controller crashes.
+
+Run behavioral verification with `python3 -m unittest discover -s tests -v`.
+
+## Task author contract
+
+A task JSON file contains:
+
+```json
+{
+  "id": "engineering-greeting",
+  "version": "1",
+  "condition": {"id": "ordinary", "version": "1"},
+  "request": "request.txt",
+  "check": ["python3", "check.py"]
+}
+```
+
+`request` is a UTF-8 visible task file, relative to the task JSON (absolute paths also work). Only its contents are delivered to the executor. `check` is hidden evaluator argv, never shell text. Existing file arguments relative to the task JSON are resolved to absolute paths before evaluation. Use absolute paths for executable/check arguments when there could be ambiguity. This format is for one checkpoint; sequence validation and cumulative requirement semantics belong to #2.
+
+## Executor subprocess contract (#2/#3 seam)
+
+`--executor` is a JSON array of argv strings. The controller starts one fresh subprocess with an empty application workspace as cwd, sends only visible request text on stdin, and captures stdout/stderr separately. The executor writes application files into cwd. Exit zero declares the candidate complete; nonzero, launch failure or controller interruption gives `incomplete`, retaining partial files/logs without scoring or creating a completed snapshot. No live session recovery or implicit retry is provided.
+
+The supplied executor is a trusted deterministic test double; it asserts exact visible stdin and an initially empty project. It has modes `pass`, `fail`, `evaluator-error`, `malformed` and `incomplete`. The latter modes exercise evidence handling and are not benchmark task instructions. No evaluator scores are returned to the executor. The task manifest, check code, reports and researcher documents are outside the development workspace and absent from stdin/argv. Prior conversations are not supplied.
+
+**This fixture path is not an OS sandbox.** Trusted subprocesses inherit the normal environment and can access host paths, including parents of cwd. It does not claim to stop malicious code or a real agent from searching outside its workspace. Enforcing the actual coding-agent context boundary belongs to #3; restricting generated application/evaluator execution belongs to #6. Do not use this host subprocess path for untrusted applications. The fixture's closed-file-set check is a harmless security-property-shaped control, not evidence about application security.
+
+## Independent evaluator subprocess contract (#6 seam)
+
+After successful executor exit, `snapshot/` is a recoverable copy of its application files, preserving symlinks. The evaluator gets another temporary copy as cwd, so ordinary evaluator writes cannot change the retained checkpoint. It receives no stdin request or development transcript. Check code stays outside these directories. The temporary copy is deleted after evaluation; retained evaluator stdout/stderr stay in the run artifacts. This filesystem copy does not restrict host access, network or privileges.
+
+On exit zero the check must emit one JSON object on stdout:
+
+```json
+{"functional": "pass", "security": "pass"}
+```
+
+Each value must be `pass`, `fail` or `unassessable`. Additional fields are ignored. Both pass gives `joint_pass`; any fail gives `candidate_failure`; otherwise the outcome is `unassessable`. Nonzero exit, missing executable, malformed JSON or invalid score values gives `evaluator_error`, with both score fields remaining `unknown`. Errors are never silently converted into candidate failure or pass. Evaluator launch errors have null exit status and an error message; a started evaluator retains its stdout/stderr even when parsing fails.
+
+#6 can replace host evaluation with its restricted browser/backend runner while retaining this score/result boundary. Real benchmark security properties and oracle qualification are not supplied by this engineering fixture.
+
+## Artifacts and identity
+
+Each output directory holds:
+
+- `request.txt`: the delivered visible request, outside the application workspace.
+- `workspace/`: application files, including partial output on incomplete attempts.
+- `snapshot/`: completed, recoverable checkpoint; never edited by the controller/evaluator after creation. It is not an OS-enforced immutable archive.
+- `executor.stdout` / `executor.stderr`: executor output, independent of evaluator output.
+- `evaluator.stdout` / `evaluator.stderr`: started evaluator evidence, when available.
+- `result.json`: schema version, fresh run UUID, task and condition IDs/versions, attempt number, checkpoint ID, outcome, scores, resolved subprocess commands, exit statuses, errors and separate elapsed stage durations.
+- `report.md`: readable identity and primary scores/outcome.
+
+The single-task attempt is number 1; checkpoint ID equals task ID. Later resume/sequence work must preserve identity and evidence rather than overwrite them. Initial `incomplete` evidence is written before executor launch; the result is updated at stage boundaries. Explicit handling covers executor/evaluator launch failures and interrupts caught by Python. Hard process termination, power-loss durability, process-tree cleanup, retry policy, tokens/memory/cost accounting and transactional artifact writes remain later tickets. Missing measurements are not estimates of zero.
+
+## Verification record
+
+Tests use the CLI/artifact and subprocess contracts, with real local subprocesses. Red-before-green cycles observed: missing CLI; evaluator exception incorrectly crashed controller; incomplete executor was wrongly scored; missing executor/check executable raised without a final result. Each was fixed before the next slice. Passing tests also cover candidate failure retention, malformed evaluator output and evaluator mutation of its disposable copy. No models, paid calls or benchmark applications were executed.
