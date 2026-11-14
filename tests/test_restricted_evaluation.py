@@ -26,3 +26,14 @@ class RestrictedEvaluation(unittest.TestCase):
             evidence = json.loads((output / 'assessment.json').read_text())
             self.assertEqual(evidence['outcome'], 'evaluator_error')
             self.assertIsNone(evidence['snapshot_sha256'])
+
+    def test_invalid_author_check_contract_is_retained_before_docker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            contract = pathlib.Path(directory) / 'contract.json'
+            contract.write_text('{"only-functional": "functional"}')
+            output = pathlib.Path(directory) / 'assessment'
+            result = subprocess.run([sys.executable, '-m', 'principiis.evaluation', '--snapshot', str(ROOT / 'fixtures/evaluation'), '--output', str(output), '--app-image', 'missing', '--evaluator-image', 'missing', '--check-contract', str(contract)], cwd=ROOT, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            record = json.loads((output / 'assessment.json').read_text())
+            self.assertIn('check contract', record['error'])
+            self.assertEqual(record['outcome'], 'evaluator_error')

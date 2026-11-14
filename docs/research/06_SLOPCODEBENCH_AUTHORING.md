@@ -1,0 +1,10 @@
+# Iterative application authoring: primary-source note
+
+Checked 2026-11-14. Verified source facts below describe upstream practice; they do not qualify our oracle or establish realism empirically.
+
+- [SlopCodeBench](https://github.com/SprocketLab/slop-code-bench) describes evaluation under iterative specification refinement. Its linked [author guide](https://github.com/SprocketLab/slop-code-bench/blob/main/docs/contributing-problems/README.md) recommends a substantial first checkpoint followed by focused changes, black-box observable contracts and separate checkpoint specifications/tests. That guide excludes frontend work; our owner's approved full-stack application scope deliberately differs.
+- The linked [problem repository](https://github.com/gabeorlanski/scb-problems) contains problem configuration, checkpoint specifications, tests and separate solutions, and declares Apache-2.0 licensing. The previously guessed SprocketLab/scb-problems location is not the linked source. Repository layout is evidence of an authoring pattern, not permission to reuse arbitrary dependencies or content without auditing licenses.
+
+Our adaptation is an original consultancy document portal built from an empty project: complete personal library, collaborative collections, then changed lifecycle/search/export requirements. Python/Flask/SQLite and server-rendered UI are our choices. We borrow the iterative authoring pattern, not problem text, solutions, source code, metrics or upstream harness dependencies. Our primary outcome remains task-level functionality AND tested security properties; code erosion is not assumed to cause vulnerabilities. Three implemented checkpoints belong to issue #8; the private ten-step outline reserves later work for #9. Detailed traceability and evaluator-only controls remain private.
+
+Uncertainty: these mutable main-branch web pages were checked through the browsing tool; upstream revisions were not pinned locally. Our package is original, versioned and content-hashed independently. Full oracle qualification is pending restricted runtime access, and owner review of expectation mappings is pending.
