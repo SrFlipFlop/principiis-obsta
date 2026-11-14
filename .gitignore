@@ -1,0 +1,17 @@
+# Research artifacts and credentials
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.pyc
+.DS_Store
+# Do not accidentally commit raw agent traces / hidden oracles / private experiments
+results/raw/
+artifacts/
+secrets/
+private/
+benchmarks/hidden/
