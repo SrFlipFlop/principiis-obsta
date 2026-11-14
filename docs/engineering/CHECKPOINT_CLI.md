@@ -67,3 +67,51 @@ The single-task attempt is number 1; checkpoint ID equals task ID. Later resume/
 ## Verification record
 
 Tests use the CLI/artifact and subprocess contracts, with real local subprocesses. Red-before-green cycles observed: missing CLI; evaluator exception incorrectly crashed controller; incomplete executor was wrongly scored; missing executor/check executable raised without a final result. Each was fixed before the next slice. Passing tests also cover candidate failure retention, malformed evaluator output and evaluator mutation of its disposable copy. No models, paid calls or benchmark applications were executed.
+
+## Incremental sequence interface (#2)
+
+Run an ordered manifest with a trusted fixture executor:
+
+```sh
+python3 -m principiis sequence --sequence /path/to/sequence.json --executor '["python3", "/absolute/path/to/executor.py"]' --output /tmp/new-sequence-run
+```
+
+A sequence manifest defines `id`, `version`, `condition` (the same identity object as a single task), and a nonempty ordered `steps` array. Each step defines `id`, `version`, `sequence_version`, `request`, and `check` as in the single-task format. `sequence_version` must equal the enclosing version. IDs must be unique single path components. Request/check file paths resolve relative to the sequence manifest. All steps and request files are validated before creating a run or invoking an executor.
+
+Every step starts a new executor subprocess and records a fresh `session_id`; all checkpoints share the sequence `run_id`. The initial application workspace is empty. Later workspaces copy the previous completed snapshot, including agent-written notes and instructions. Stdin concatenates only requests through the current step, in chronological order separated by two newlines. Request authors must state changes/supersession explicitly: earlier requests remain visible as history. No prior stdout/stderr/conversation, external session state or evaluator output is copied into the workspace or stdin. Future requests remain outside the delivered context.
+
+The output root contains `sequence.json` with sequence identity, ordered checkpoint outcomes/artifact links and `running`, `completed` or `incomplete` status. Each `steps/<id>/` directory uses the single-checkpoint artifact contract; `tasks/` holds resolved controller metadata outside development workspaces. A completed candidate advances even after functional/security failure, unassessable scoring or evaluator error. Retained historical outcomes/snapshots remain intact. An incomplete executor stops the sequence with its partial files and evidence retained. Resume/retry and hard-termination recovery remain #4 scope. A different run requires a new output root and starts empty.
+
+The trusted host fixture limitation above applies equally here: absence from delivered stdin/workspace is tested, but host filesystem discovery is not prevented. This command is scaffolding for deterministic fixtures, not the real Codex context-isolation path (#3).
+
+Verification: `tests/test_sequence_cli.py` checks a failing-then-passing sequence twice with real subprocesses, notes/code persistence, distinct process and session identities, exact cumulative requirements, a future-request sentinel, original snapshot retention and invalid-manifest rejection before artifacts. Red-before-green evidence: missing `sequence` CLI failed first; missing condition validation then created an artifact directory before failing, fixed by preflight validation. No live agent or model was invoked.
+
+## Ordinary Codex adapter (#3)
+
+`run` and `sequence` accept `--codex-config /absolute/path/config.json` instead of `--executor`. This selects ordinary `codex exec`, one fresh invocation per step. This is an execution capability, **not authorization to launch the pilot**. Tests use a fake executable only. Example configuration (model is a placeholder, not a selected pilot model):
+
+```json
+{
+  "executable": "/absolute/path/to/codex",
+  "codex_home": "/outside/research/clean-existing-codex-home",
+  "model": "SELECT-AT-EXECUTION",
+  "reasoning_effort": "medium",
+  "sandbox": "workspace-write",
+  "approval_policy": "never",
+  "network_access": true,
+  "web_search": "live",
+  "clean_runtime_review": "Record operator review/date and runtime provenance here"
+}
+```
+
+Use a separately provisioned ordinary runtime with existing subscription authentication, installed toolchains and no researcher global instructions, skills, hooks, managed prompt additions or external memories. The adapter does not log in/out, inspect/copy credentials, change account settings or verify subscription identity; `authentication_verified` is unknown. No API-key or provider override environment is inherited. Do not point this at the researcher's usual CODEX_HOME: visible instruction/skill/hook/session-memory locations are rejected. Existing credentials remain owned by Codex, whose normal token refresh may update its store during an authorized future run. The implementation and tests do not access credentials. The adapter avoids `forced_login_method`: mismatched credentials may cause Codex to log out, violating the intended no-authentication-change workflow. Subscription identity remains an operator prerequisite for launch readiness (#19).
+
+The configuration must explicitly select every setting. The adapter records its actual `--version` response, selected model, exact launch argv, supported configuration overrides, declared runtime review, intended access mode, exit status and elapsed time. It supplies `--no-daemon`, `--ephemeral`, `--ignore-user-config`, `--ignore-rules`, JSON events and a new empty HOME per step; CODEX_HOME remains the explicitly supplied clean runtime. It does not resume conversations or insert instructions. Built-in ordinary tools remain available, shell network access and web search are selected explicitly, and dependency installation is possible under normal workspace-write permissions. `approval_policy=never` returns permission failures to Codex; choose/review the actual normal approval policy at execution time. This adapter does not claim to reproduce arbitrary personal user configurations; the ordinary runtime setup must be reviewed and kept fixed across comparisons.
+
+Output under the research checkout, output that encloses the task package, and output with instruction/config ancestors are rejected before creating artifacts. These checks prevent common accidental context loading; they are **not a filesystem isolation boundary**. Under normal Codex permissions, host reads can still discover sibling task files, evaluator materials, artifacts and the research checkout. For a real run, provision the ordinary runtime on a separate host/container/filesystem account where those materials are absent or inaccessible, with the same intended normal tools/network access. The clean-runtime review records that operational boundary. A review string alone does not enforce it. The tests verify delivered context and configuration, not resistance to hostile host traversal. Do not put secrets or hidden materials in accessible host locations and then treat this adapter as containment. Agent-authored project instructions/notes persist normally.
+
+JSONL stdout retains exposed command, file/tool events, summaries and usage; stderr is separate. Recognizable JSON credential fields, bearer values and `sk-` keys are redacted before writing logs. No credential/environment dump is created. Redaction cannot recognize arbitrary secrets embedded in free text or application files: the reviewed runtime/tasks must contain no production secrets. Reported usage and hosted-model memory stay unknown in result metadata; the original exposed usage events remain available for the resource-accounting ticket. Logs stream to disk, including failed/partial attempts; nonzero exit preserves partial files and never triggers evaluation or implicit retry.
+
+Verified 2026-11-14 against installed `codex-cli 0.169.0` local `--help` / `exec --help` (read-only, no model invocation) and [official configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference). Current flag support is a local observation; compatibility with other versions and the operator's subscription runtime must be rechecked before execution. No actual model, billing, credential or production-runtime behavior was tested.
+
+TDD evidence: CLI first failed because `--codex-config` was absent; the second slice failed because credential-shaped events were retained. Fake executable contract tests now cover two fresh sequence invocations, cumulative/current requirements with a future sentinel, retained notes, explicit model/permissions, no inherited API key, passive events/stderr, nonzero exit/partial files, credential redaction and contaminated-home rejection. Run `python3 -m unittest discover -s tests -v`.
