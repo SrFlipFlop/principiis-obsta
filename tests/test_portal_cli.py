@@ -10,10 +10,17 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 class PortalRelease(unittest.TestCase):
-    def test_first_release_contains_only_initial_contract(self):
+    def test_removed_synthetic_edition_is_not_releasable(self):
         with tempfile.TemporaryDirectory() as temp:
             out = pathlib.Path(temp) / 'released'
             result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'release', '--edition', 'original', '--step', '1', '--output', str(out)], cwd=ROOT, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(out.exists())
+
+    def test_first_release_contains_only_initial_contract(self):
+        with tempfile.TemporaryDirectory() as temp:
+            out = pathlib.Path(temp) / 'released'
+            result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'release', '--edition', 'real-v1', '--step', '1', '--output', str(out)], cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual([p.name for p in out.iterdir()], ['request.txt'])
             text = (out / 'request.txt').read_text()
@@ -24,17 +31,17 @@ class PortalRelease(unittest.TestCase):
     def test_later_release_keeps_prior_requests_without_future_search(self):
         with tempfile.TemporaryDirectory() as temp:
             out = pathlib.Path(temp) / 'released'
-            result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'release', '--edition', 'original', '--step', '2', '--output', str(out)], cwd=ROOT, capture_output=True, text=True)
+            result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'release', '--edition', 'real-v1', '--step', '2', '--output', str(out)], cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             text = (out / 'request.txt').read_text()
             self.assertIn('/api/documents', text)
-            self.assertIn('/api/shares', text)
+            self.assertIn('/api/collections', text)
             self.assertNotIn('/api/search', text)
 
     def test_bind_rejects_missing_private_bundle_before_output(self):
         with tempfile.TemporaryDirectory() as temp:
             out = pathlib.Path(temp) / 'bound'
-            result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'bind', '--edition', 'original', '--bundle', temp, '--output', str(out)], cwd=ROOT, capture_output=True, text=True)
+            result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'bind', '--edition', 'real-v1', '--bundle', temp, '--output', str(out)], cwd=ROOT, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('bundle.json', result.stderr)
             self.assertFalse(out.exists())
@@ -45,14 +52,14 @@ class PortalRelease(unittest.TestCase):
             (root / 'principiis').mkdir()
             (root / 'principiis/__init__.py').touch()
             shutil.copyfile(ROOT / 'principiis/portal.py', root / 'principiis/portal.py')
-            package = root / 'benchmarks/document-portal'
+            package = root / 'benchmarks/document-portal-real'
             package.mkdir(parents=True)
             bundle = root / 'private'
             bundle.mkdir()
             raw = json.dumps(dict(files={}, qualification_status='pending', evaluator_images={})).encode()
             (bundle / 'bundle.json').write_bytes(raw)
             (package / 'package.json').write_text(json.dumps(dict(private_bundle_sha256=hashlib.sha256(raw).hexdigest())))
-            result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'evaluate', '--edition', 'original', '--bundle', str(bundle), '--step', '1', '--snapshot', str(root / 'absent')], cwd=root, capture_output=True, text=True)
+            result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'evaluate', '--edition', 'real-v1', '--bundle', str(bundle), '--step', '1', '--snapshot', str(root / 'absent')], cwd=root, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn('checker qualification pending', result.stderr)
             self.assertFalse((bundle / 'runtime').exists())

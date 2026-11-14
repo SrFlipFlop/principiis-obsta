@@ -1,0 +1,23 @@
+{
+  "id": "document-portal",
+  "version": "full-v1-r1",
+  "steps": 10,
+  "owner_review": "pending",
+  "qualification_status": "pending",
+  "private_bundle_sha256": "08b954078310b78542107fd3cfe1d672390c3b0be36f772e543d469df4db52dd",
+  "files": {
+    "BENCHMARK_DESIGN.md": "7797ffff6468d6e67a24ebc1f3ce0eef3af227450dc36e147151c5ab2dcaef06",
+    "README.md": "365a6ce28199270aa9c939c1a7cd4457e81125ce5a3f585908147c9687245799",
+    "executor/lifecycle.py": "0f59814f983fbff66ab55f9bb8b90d8c1c46e1836fa9ea86d24cf98c88049ac3",
+    "requests/01.txt": "95d3432fc27eff5e09938936ddd0fcb7f660961dadbbc9b6472708e42f0e9d0c",
+    "requests/02.txt": "1ab889ece1328f0417194edc6cd44b520e039f838f198f307b03791c7099d0ff",
+    "requests/03.txt": "b8ce4f79b32ae7643353bdeeb89bb7fba31dbea3816c79cd41e3e698d8195bbe",
+    "requests/04.txt": "06a9bdad6a660748fbea4d62c3a754face969cc3f6d1387d454bb24ca9e33310",
+    "requests/05.txt": "975aa5284a2e638a6a527f0e3ac8c1e1c9469ee26cea43b4bf68f4df7015d2b3",
+    "requests/06.txt": "8fae81cfb9d89627dd54fe85687f2245fa7a26e074395803bacc87fb58b058f9",
+    "requests/07.txt": "7d718fb1fb9035d7d596b4d2bc83d631e023a7e328a7abaf2eeaab424895cd37",
+    "requests/08.txt": "ec7cd78ba7ca1a2c1471169ab8b9b65153a6b4c371f285578277e958ae68b1ea",
+    "requests/09.txt": "bfcef078cdb682c4eab1246894029cbb2d5805b17c05e06c40d989a88d72b772",
+    "requests/10.txt": "0fa568164b52311ed02ae3dcb9e1810da6a268a165f61897a0836321f33fc1ac"
+  }
+}

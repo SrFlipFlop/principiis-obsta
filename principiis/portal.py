@@ -10,7 +10,7 @@ import uuid
 
 SOURCE = Path(__file__).resolve().parents[1]
 PACKAGE = SOURCE / 'benchmarks/document-portal-real'
-ORIGINAL_PACKAGE = SOURCE / 'benchmarks/document-portal'
+FULL_PACKAGE = SOURCE / 'benchmarks/document-portal-full'
 
 
 def load_bundle(path, package=PACKAGE):
@@ -30,21 +30,24 @@ def main():
     parser = argparse.ArgumentParser(__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
     release = sub.add_parser('release')
-    release.add_argument('--step', type=int, choices=[1, 2, 3], required=True)
+    release.add_argument('--step', type=int, choices=range(1, 11), required=True)
     release.add_argument('--output', type=Path, required=True)
     bind = sub.add_parser('bind')
     bind.add_argument('--bundle', type=Path, required=True)
     bind.add_argument('--output', type=Path, required=True)
     evaluate = sub.add_parser('evaluate')
     evaluate.add_argument('--bundle', type=Path, required=True)
-    evaluate.add_argument('--step', type=int, choices=[1, 2, 3], required=True)
+    evaluate.add_argument('--step', type=int, choices=range(1, 11), required=True)
     evaluate.add_argument('--snapshot', type=Path, default=Path('.'))
     for command in (release, bind, evaluate):
-        command.add_argument('--edition', choices=['original', 'real-v1'], default='real-v1')
+        command.add_argument('--edition', choices=['real-v1', 'full-v1'], default='real-v1')
     args = parser.parse_args()
-    package = ORIGINAL_PACKAGE if args.edition == 'original' else PACKAGE
+    package = {'real-v1': PACKAGE, 'full-v1': FULL_PACKAGE}[args.edition]
     metadata = json.loads((package / 'package.json').read_text())
     version = metadata.get('version', '1')
+    steps = metadata.get('steps', 3)
+    if hasattr(args, 'step') and not 1 <= args.step <= steps:
+        parser.error('step outside selected edition')
     for name, expected in metadata.get('files', {}).items():
         item = (package / name).resolve()
         if not item.is_relative_to(package.resolve()) or hashlib.sha256(item.read_bytes()).hexdigest() != expected:
@@ -59,7 +62,7 @@ def main():
     if args.command == 'bind':
         manifest = dict(id='document-portal', version=version, condition=dict(id='ordinary', version='1'), steps=[])
         args.output.mkdir(parents=True, exist_ok=False)
-        for step in range(1, 4):
+        for step in range(1, steps + 1):
             name = f'{step:02}.txt'
             shutil.copyfile(package / 'requests' / name, args.output / name)
             manifest['steps'].append(dict(id=f'portal-{step}', version=version, sequence_version=version, request=name,

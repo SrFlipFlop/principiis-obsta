@@ -1,6 +1,6 @@
-# Canonical document portal package: real-v1-r4
+# Canonical document portal package: real-v1-r5
 
-Read [the three-step product design](BENCHMARK_DESIGN.md). This is the document portal package to review and eventually extend under issue #9. The previous `benchmarks/document-portal` package is preliminary archived work, available only through explicit `--edition original`; it is not the default release.
+Read [the three-step Fieldwork product design](BENCHMARK_DESIGN.md). This preserves the initial Fieldwork request sequence; the [ten-step edition](../document-portal-full/README.md) extends it under issue #9. The obsolete synthetic prototype and its CLI edition have been removed. Only Fieldwork editions are releasable.
 
 Release only current/past requests to a separate context:
 
@@ -19,6 +19,8 @@ python3 -m principiis.portal evaluate --bundle /local/private/document-portal-re
 
 Bind creates a controller-side three-step sequence manifest with checks tied to this edition and content hashes. It does not create a developer workspace or authorize generation. Runtime checks use the existing #6 restricted evaluator unchanged. The prepared application image adds only [public lifecycle instrumentation](executor/lifecycle.py): it consumes the runner's fixture metadata, invokes exactly `python /app/app.py`, and offers loopback 8124 child restart while retaining PORTAL_DATA_DIR. It contains no tests or expected results. The hidden oracle uses that operation to verify real restart durability, not just a second session. Port 8123 remains the app port; candidate internals remain free. Every container retains the same UID, capabilities, filesystem, network and resource restrictions. Supervisor process testing is also pending where the sandbox prohibits local sockets. No candidate code has been run on the host.
 
-Revision real-v1-r4 corrects review findings in the hidden oracle without changing released request bytes. Qualification remains pending; no runtime assessments have been executed for any draft revision. The edition selector remains `real-v1`.
+Private revision real-v1-r4 corrected review findings in the hidden oracle without changing released request bytes. Qualification remains pending; no runtime assessments have been executed for any draft revision. The edition selector remains `real-v1`.
 
 R4 adds private author planning and qualification controls; released request bytes are unchanged. Independent valid control, runtime qualification and owner review remain pending.
+
+Public metadata revision r5 removes the obsolete synthetic-edition documentation only; the three request bytes and private real-v1-r4 oracle bundle are unchanged. No new qualification is claimed.

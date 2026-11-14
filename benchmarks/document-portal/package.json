@@ -1,9 +1,0 @@
-{
-  "id": "document-portal",
-  "version": "1",
-  "steps": 3,
-  "owner_review": "pending",
-  "private_bundle_sha256": "9a51d8bc0f449ae35317bd4b2b57d8ab56619c33f37050fa61450b888b7e0195",
-  "checker_revision": "2",
-  "qualification_status": "pending"
-}

@@ -1,0 +1,5 @@
+Request 8 — Make location and lifecycle decisions easier to maintain
+
+Before adding more features, refactor the application so the decisions about a document's current location, role and archive state have a clear shared internal boundary. Choose the design yourself; no prescribed function names, classes, modules or schema. Use your own tests and notes to explain what you preserved.
+
+Preserve every observable browser and API contract through the previous request, including roles after membership changes, moves, archive, client-link invalidation, imports and retries, revision access and restoration, search and exact handover/download bytes. Preserve existing on-disk users/documents/jobs/shares/history across upgrade and restart. This request adds no route, permission, response field or UI layout requirement. Do not weaken behavior to make the refactor easier. A correct implementation may already have an appropriate boundary; in that case review it, document the decision and improve tests where useful instead of making an unnecessary structural change.
