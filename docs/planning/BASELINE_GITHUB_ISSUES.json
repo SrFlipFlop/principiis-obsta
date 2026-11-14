@@ -1,0 +1,135 @@
+{
+  "1": {
+    "draft_id": 1,
+    "number": 1,
+    "title": "Run one fixture task from CLI to scored checkpoint",
+    "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/1",
+    "type": "AFK"
+  },
+  "2": {
+    "draft_id": 2,
+    "number": 2,
+    "title": "Execute incremental sequences with fresh step sessions",
+    "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/2",
+    "type": "AFK"
+  },
+  "3": {
+    "draft_id": 3,
+    "number": 3,
+    "title": "Run ordinary Codex through the sequence controller",
+    "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/3",
+    "type": "AFK"
+  },
+  "4": {
+    "draft_id": 4,
+    "number": 4,
+    "title": "Inspect per-step and total resource consumption",
+    "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/4",
+    "type": "AFK"
+  },
+  "5": {
+    "draft_id": 5,
+    "number": 5,
+    "title": "Resume completed checkpoints and preserve interrupted attempts",
+    "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/5",
+    "type": "AFK"
+  },
+  "6": {
+    "draft_id": 6,
+    "number": 6,
+    "title": "Evaluate browser and backend behavior in an isolated checkpoint",
+    "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/6",
+    "type": "AFK"
+  },
+  "7": {
+    "draft_id": 7,
+    "number": 7,
+    "title": "Investigate additional vulnerabilities with an independent evaluator agent",
+    "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/7",
+    "type": "AFK"
+  },
+  "8": {
+    "draft_id": 8,
+    "number": 8,
+    "title": "Document portal: qualify the initial build and first two changes",
+    "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/8",
+    "type": "HITL"
+  },
+  "9": {
+    "draft_id": 9,
+    "number": 9,
+    "title": "Document portal: complete the ten-step evolution",
+    "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/9",
+    "type": "AFK"
+  },
+  "10": {
+    "draft_id": 10,
+    "number": 10,
+    "title": "Customer-support desk: qualify the initial build and first two changes",
+    "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/10",
+    "type": "AFK"
+  },
+  "11": {
+    "draft_id": 11,
+    "number": 11,
+    "title": "Customer-support desk: complete the ten-step evolution",
+    "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/11",
+    "type": "AFK"
+  },
+  "12": {
+    "draft_id": 12,
+    "number": 12,
+    "title": "Team expense manager: qualify the initial build and first two changes",
+    "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/12",
+    "type": "AFK"
+  },
+  "13": {
+    "draft_id": 13,
+    "number": 13,
+    "title": "Team expense manager: complete the ten-step evolution",
+    "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/13",
+    "type": "AFK"
+  },
+  "14": {
+    "draft_id": 14,
+    "number": 14,
+    "title": "Integration/workflow dashboard: qualify the initial build and first two changes",
+    "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/14",
+    "type": "AFK"
+  },
+  "15": {
+    "draft_id": 15,
+    "number": 15,
+    "title": "Integration/workflow dashboard: complete the ten-step evolution",
+    "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/15",
+    "type": "AFK"
+  },
+  "16": {
+    "draft_id": 16,
+    "number": 16,
+    "title": "Online marketplace: qualify the initial build and first two changes",
+    "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/16",
+    "type": "AFK"
+  },
+  "17": {
+    "draft_id": 17,
+    "number": 17,
+    "title": "Online marketplace: complete the ten-step evolution",
+    "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/17",
+    "type": "AFK"
+  },
+  "18": {
+    "draft_id": 18,
+    "number": 18,
+    "title": "Report suite-wide baseline progress and checkpoint outcomes",
+    "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/18",
+    "type": "AFK"
+  },
+  "19": {
+    "draft_id": 19,
+    "number": 19,
+    "title": "Review pilot readiness and select execution-time settings",
+    "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/19",
+    "type": "HITL"
+  }
+}
