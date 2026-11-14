@@ -116,6 +116,18 @@ Verified 2026-11-14 against installed `codex-cli 0.169.0` local `--help` / `exec
 
 TDD evidence: CLI first failed because `--codex-config` was absent; the second slice failed because credential-shaped events were retained. Fake executable contract tests now cover two fresh sequence invocations, cumulative/current requirements with a future sentinel, retained notes, explicit model/permissions, no inherited API key, passive events/stderr, nonzero exit/partial files, credential redaction and contaminated-home rejection. Run `python3 -m unittest discover -s tests -v`.
 
+## Checkpoint resume and explicit retry (#5)
+
+Repeat the same `sequence` command and add `--resume`. A completed sequence is a no-op. A sequence interrupted during a step requires `--resume --retry-incomplete`; this is one explicit new attempt, never an automatic retry loop. Failed functional/security candidates and evaluator errors are completed development checkpoints and remain eligible as the next step's starting state. A nonzero/interrupted development executor remains incomplete and is never scored.
+
+The sequence journal is written before each launch and atomically replaced at stage boundaries. The journal records an active attempt before executor launch, allowing a later resume to classify a hard controller termination conservatively as incomplete. Existing attempt files are never rewritten during recovery. SIGTERM and SIGINT are handled as controller interruptions; subprocess cleanup and retained execution measurements use the measured executor boundary. SIGKILL/power loss cannot promise cleanup or final measurements: the last durable artifacts and active journal record remain the evidence, and retry still needs an explicit request. No live Codex conversation is recovered.
+
+Attempt one keeps `steps/<id>/`; subsequent attempts use `attempts/<id>/<number>/`. Results retain the sequence run ID but receive distinct session IDs and attempt numbers. A retry copies only the last completed snapshot (including a failed candidate), or starts empty when no checkpoint completed. Partial files, logs and resource records stay in the original attempt. Evaluator output never enters the next workspace. The journal includes historical incomplete records as well as completed outcomes.
+
+Resume requires an identical manifest, visible request contents, check-file contents and selected executor configuration (including Codex configuration and executable version). Content changes without a version bump are also rejected. Use a new output root for a deliberate new run; results are never implicitly pooled. This records declared runtime configuration, not a hash of the entire installed toolchain or remote dependencies. Do not concurrently operate on one output root.
+
+Verification uses only real deterministic fixture subprocesses: initial missing resume flags failed red before implementation; retry then preserved every prior attempt file byte-for-byte, restored the failed checkpoint and created a fresh session. An interrupt test checks cleanup, distinct outcome classification, configuration rejection and retained evidence. No model was invoked.
+
 ## Passive resource inspection (#4)
 
 Inspect an attempt directory or recursively inspect a sequence, including incomplete
