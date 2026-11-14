@@ -1,11 +1,11 @@
 import argparse
+from io import StringIO
+from .resource import execute
 import json
 from pathlib import Path
 import shutil
 import signal
-import subprocess
 import tempfile
-import time
 import uuid
 
 
@@ -29,19 +29,16 @@ def run(task_path, executor, output, *, prior_snapshot=None, run_id=None, sequen
         'outcome': 'incomplete', 'functional': 'unknown', 'security': 'unknown',
         'execution': {}, 'evaluation': {}, 'completed': False,
     }
-    started = time.monotonic()
     save_result(output, result)
     try:
         with (output / 'executor.stdout').open('w') as stdout, (output / 'executor.stderr').open('w') as stderr:
             if hasattr(executor, 'execute'):
                 result['execution'] = executor.execute(workspace, request, stdout, stderr)
             else:
-                process = subprocess.run(executor, cwd=workspace, input=request, text=True, stdout=stdout, stderr=stderr)
-                result['execution'] = {'argv': executor, 'exit_status': process.returncode}
+                result['execution'] = execute(executor, workspace, request, stdout, stderr)
     except (OSError, KeyboardInterrupt) as error:
         result['execution'] = {'argv': executor, 'exit_status': None,
                                'error': str(error) or 'controller interrupted'}
-    result['execution']['elapsed_seconds'] = time.monotonic() - started
     if result['execution']['exit_status'] != 0:
         save_result(output, result)
         return result
@@ -52,18 +49,17 @@ def run(task_path, executor, output, *, prior_snapshot=None, run_id=None, sequen
     result['outcome'] = 'evaluator_error'
     result['evaluation'] = {'argv': check, 'exit_status': None}
     save_result(output, result)
-    evaluation_started = time.monotonic()
     try:
         with tempfile.TemporaryDirectory(prefix='principiis-evaluation-') as evaluation:
             candidate = Path(evaluation) / 'candidate'
             shutil.copytree(output / 'snapshot', candidate, symlinks=True)
-            checked = subprocess.run(check, cwd=candidate, text=True, capture_output=True)
-        (output / 'evaluator.stdout').write_text(checked.stdout)
-        (output / 'evaluator.stderr').write_text(checked.stderr)
-        result['evaluation']['exit_status'] = checked.returncode
-        if checked.returncode != 0:
+            stdout, stderr = StringIO(), StringIO()
+            result['evaluation'] = execute(check, candidate, '', stdout, stderr)
+        (output / 'evaluator.stdout').write_text(stdout.getvalue())
+        (output / 'evaluator.stderr').write_text(stderr.getvalue())
+        if result['evaluation']['exit_status'] != 0:
             raise ValueError('evaluator exited unsuccessfully')
-        scores = json.loads(checked.stdout)
+        scores = json.loads(stdout.getvalue())
         if not isinstance(scores, dict) or any(scores.get(key) not in ('pass', 'fail', 'unassessable') for key in ('functional', 'security')):
             raise ValueError('invalid evaluator scores')
         result.update({key: scores[key] for key in ('functional', 'security')})
@@ -71,7 +67,6 @@ def run(task_path, executor, output, *, prior_snapshot=None, run_id=None, sequen
                              else 'candidate_failure' if 'fail' in (scores['functional'], scores['security']) else 'unassessable')
     except (OSError, ValueError, TypeError, KeyboardInterrupt) as error:
         result['evaluation']['error'] = str(error) or 'controller interrupted'
-    result['evaluation']['elapsed_seconds'] = time.monotonic() - evaluation_started
     result['completed'] = True
     save_result(output, result)
     return result
