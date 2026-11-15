@@ -12,6 +12,20 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class AlignedPortalRelease(unittest.TestCase):
+    def test_revised_requests_cannot_bind_a_historical_bundle(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bundle = root / 'historical'
+            bundle.mkdir()
+            (bundle / 'bundle.json').write_text('{"files": {}}')
+            output = root / 'bound'
+            result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'bind',
+                                     '--bundle', str(bundle), '--output', str(output)],
+                                    cwd=ROOT, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('require a new private evaluator bundle', result.stderr)
+            self.assertFalse(output.exists())
+
     def test_one_package_default_releases_tenth_step(self):
         with tempfile.TemporaryDirectory() as temp:
             out = Path(temp) / 'released'
@@ -42,7 +56,7 @@ class AlignedPortalRelease(unittest.TestCase):
             self.assertNotIn('/api/search', text)
             self.assertIn('requirements.txt', text)
             metadata = json.loads((ROOT / 'benchmarks/document-portal/package.json').read_text())
-            self.assertEqual(metadata['version'], 'v2-r1')
+            self.assertEqual(metadata['version'], 'v3-draft1')
             self.assertEqual(metadata['qualification_status'], 'pending')
 
     def test_unapproved_or_unknown_bundle_status_never_stages_candidate(self):
