@@ -1,0 +1,5 @@
+Request 4 — Can replies have formatting and drafts?
+
+The team keeps pasting checklists and links, so add simple Markdown to ticket replies and internal notes. Store the original Markdown and render headings, emphasis, lists, links and fenced code in the browser. Customers and staff still edit text in a normal textarea. Ticket subjects and filenames stay plain text. API timeline entries should expose message as the original source and rendered_html for clients that want it.
+
+Please also autosave one draft per user and ticket for Reply and one for Internal note. Save from the browser after changes, show when it was saved, restore it after navigation/restart, and clear only the submitted draft after a successful post. Drafts are private to their author. Customers have reply drafts only. Add PUT/GET/DELETE /api/tickets/{id}/drafts/{kind}, where kind is reply or note, using {message}; note drafts are staff-only. Keep this lightweight—no shared editing or draft history.

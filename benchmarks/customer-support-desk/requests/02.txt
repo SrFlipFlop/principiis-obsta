@@ -1,0 +1,7 @@
+Request 2 — Assignment and internal notes
+
+The team needs basic triage. Add low, normal, high and urgent priority, plus optional assignment to one staff member. New tickets default to normal and unassigned. Staff can change priority, assign/reassign to any staff account, or clear assignment. Customers may see priority but not assignment details.
+
+Also add private staff notes to the ticket timeline. Notes look distinct from replies and are visible only to staff; customers should experience the conversation as if notes were not there. Staff choose Reply or Internal note before posting. Notes never change a resolved ticket's status. Keep the existing customer workflow.
+
+API changes: ticket summaries/details add priority and, for staff responses, assignee {id,name,email} or null. PATCH /api/tickets/{id} accepts status, priority and assignee_id (string or null). POST /api/tickets/{id}/notes {message} creates a note. Timeline entries have id, type ('reply' or 'note'), message, author and created_at. Customer responses contain reply entries only.

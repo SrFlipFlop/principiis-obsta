@@ -1,0 +1,5 @@
+Request 8 — Clean up ticket access decisions
+
+Before the next reporting change, refactor the application so decisions about ticket visibility, timeline-entry visibility, attachment download, observer management and staff actions have a clear shared internal boundary. Choose the design, names and file layout yourself.
+
+Preserve every observable browser and API behavior through request 7, including access changes after organization/observer removal, private notes/drafts, search/export filtering, attachment bytes, assignments and restart persistence. Existing on-disk data must continue to load. Add or improve your own tests and briefly document the boundary. This request adds no route, response field, permission or UI requirement. If the application already has an appropriate boundary, avoid churn and strengthen its evidence instead.

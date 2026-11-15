@@ -1,0 +1,21 @@
+{
+  "id": "customer-support-desk",
+  "version": "v1-draft2",
+  "steps": 10,
+  "owner_review": "pending",
+  "qualification_status": "not_started",
+  "files": {
+    "BENCHMARK_DESIGN.md": "0dbdf38c15fa50c9c693c0b0580bbb044b360e5a78ba19bbc48af4dea697730a",
+    "README.md": "51244c28785af5d7b5b60544bf7cec3fa83b0fb1fb429b4785a6e34234d8b8db",
+    "requests/01.txt": "e2287545ca7f74114c3ad3d4fb90275d9b8c5e32782f8cc01bbcef9d59e7861d",
+    "requests/02.txt": "02f3c9b6a5bb0e786a5cdeff8f940522a6addff6c2f8facd30145b08346f5ff7",
+    "requests/03.txt": "c90378f2669c72b4bdc351492e7b065d365a64cacd823db75bbfe049bf9522db",
+    "requests/04.txt": "95aaf618dbad3b0908b48f5c9610a237be0bb4e8b8610c60ec31aee275110e3e",
+    "requests/05.txt": "c8522979b459591c4a62cf1f6488e07006667bbf3ceef59154bbdec1d73b5dd0",
+    "requests/06.txt": "6e5006c72ca5c9f02f71439e35ded0e94a2d36d8af531e45ac904c4af2171d36",
+    "requests/07.txt": "ec1e48318000d12c7773abacd228102d858d8da958536df980b3c496771f423d",
+    "requests/08.txt": "81593387f0357123d411fcfc344e8b784ae1eb5a425034f22391e96142b2eeb9",
+    "requests/09.txt": "aee0a67f26146ac40f7325d13f94cbd44b2e8685f81e406bd02a9d717b815e79",
+    "requests/10.txt": "e17e3055e6fe69f7cfd4abbb56be200d31ece443a37f2bf85ac85744cd633e4e"
+  }
+}

@@ -1,0 +1,7 @@
+Request 3 — Add files to a conversation
+
+Customers often need to send screenshots and staff need to return logs or guides. Allow one optional attachment when a ticket is opened and up to three attachments on each later reply or internal note. Browser forms should support selecting files and show attachment names beside the relevant timeline entry.
+
+Each file must be nonempty and at most 3 MiB. Preserve exact bytes and the submitted filename. An attachment belongs to exactly one ticket entry and keeps a string ID. People who can view that entry can download it; a customer does not see or download attachments belonging to internal notes. Staff can access attachments on tickets they can work. There is no preview, replacement or deletion yet. Existing tickets and replies remain valid after upgrade.
+
+Use multipart forms for API creation when files are supplied; the existing JSON forms remain supported without attachments. POST /api/tickets accepts subject, message and files[]. Reply/note creation accepts message and files[]. GET /api/attachments/{id}/download returns the bytes as an attachment. Ticket details add attachments:[{id,filename,size}] to each visible timeline entry. Reject a whole creation request if any supplied file is invalid; do not create a partial ticket, reply, note or attachment set. State and bytes survive restart under SUPPORT_DATA_DIR.

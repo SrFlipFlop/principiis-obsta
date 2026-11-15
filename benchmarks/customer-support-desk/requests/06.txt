@@ -1,0 +1,7 @@
+Request 6 — Search and weekly export
+
+Support leads need to find work and export a weekly snapshot. Add case-insensitive literal substring search over ticket subject and public reply text, including the opening message. Staff search all tickets; customers search tickets currently visible to them. Internal-note text is searchable only for staff. Don't search attachment contents. Punctuation is ordinary text.
+
+GET /api/tickets accepts q, status, priority, assignee_id and organization_id filters. Filters combine; omitted filters keep the old listing behavior. Customers may use q and status only. Invalid filter values return 4xx. Add equivalent browser filters.
+
+Staff can export the current filtered result as UTF-8 CSV through GET /api/tickets/export with the same filters. Include ticket_id,subject,status,priority,customer_email,organization,assignee_email,created_at,updated_at. Quote fields according to ordinary CSV rules and include one row per matching ticket in ID order. The export contains ticket metadata only—not messages, notes, drafts, passwords or attachment bytes. Customers have no export action. Preserve existing API list responses and all earlier behavior.

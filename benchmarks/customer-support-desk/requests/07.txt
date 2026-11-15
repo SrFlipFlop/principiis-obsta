@@ -1,0 +1,9 @@
+Request 7 — Check attachment mix-ups and returning observers
+
+Support has two QA scenarios to check. If they already work, add regression coverage in your own tests or notes; otherwise fix the behavior through both browser and API.
+
+A customer following an organization ticket leaves the organization and later rejoins. They should need a new observer invitation before following the old ticket again. Test this with someone who is still an observer when removed from the organization. Separately, remove just a ticket's observer invitation while the person remains an organization member; organization membership by itself should not make them follow that case.
+
+The team also reports confusion between files with the same name. Attach different screenshot.png files to two public replies and a third to a staff note. In each person's normal conversation view, the visible files should download with their own original names and bytes, including after restart. Keep the existing public/staff-note distinction.
+
+This request clarifies existing product behavior and adds no role, route or search syntax.

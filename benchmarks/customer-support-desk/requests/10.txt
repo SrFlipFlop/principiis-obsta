@@ -1,0 +1,14 @@
+Request 10 — Hand a customer account to a replacement
+
+When a client contact leaves, staff need to transfer their support responsibilities to an existing customer account. Add a staff customer directory in the browser and API (GET /api/customers -> [{id,email,name,active}]). On each customer page add Transfer account: replacement email, a checkbox to keep the former account active (unchecked by default), and explicit confirmation.
+
+POST /api/customers/{id}/transfer {replacement_email,keep_former_active} performs the transfer. Both must be different, active customer accounts and the flag must be boolean. Staff only. On success, atomically:
+- make the replacement the creator responsible for every ticket created by the former customer, both personal and organization tickets;
+- replace the former customer with the replacement in organization memberships and ticket observers, without duplicates; where the replacement becomes creator, an observer entry is unnecessary and is removed;
+- preserve historical timeline author IDs/names and attachment bytes, so the record still shows who wrote each message;
+- delete the former customer's drafts;
+- disable the former account unless keep_former_active is true.
+
+The replacement gets the resulting creator/observer access and can continue conversations. Historical message authorship does not grant ticket access. A retained former account has no transferred creator or observer rights, but can still participate in other cases according to the ordinary rules and create new tickets. A disabled account cannot log in or continue an existing session. Staff notes, assignments, ticket IDs/status, organizations and saved staff views keep their existing behavior. Preserve the transfer across restart.
+
+Return 200 with former_customer_id, replacement_customer_id, transferred_ticket_count and disabled. Count only distinct tickets whose creator changed, including organization tickets; observer-only or authorship references do not add to the count. Invalid or failed transfers make no changes. An account can be the source of only one successful transfer; another attempt returns 4xx. The replacement may later transfer onward under the same rules. Account deletion, email delivery and staff transfer remain out of scope.
