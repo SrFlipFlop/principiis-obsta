@@ -10,6 +10,16 @@ import tempfile
 import uuid
 
 
+def evaluator_scores(scores):
+    """Validate the two evaluator properties and ignore additional fields."""
+    if not isinstance(scores, dict) or any(scores.get(key) not in ('pass', 'fail', 'unassessable') for key in ('functional', 'security')):
+        raise ValueError('invalid evaluator scores')
+    properties = {key: scores[key] for key in ('functional', 'security')}
+    outcome = ('joint_pass' if properties['functional'] == properties['security'] == 'pass'
+               else 'candidate_failure' if 'fail' in properties.values() else 'unassessable')
+    return dict(properties, outcome=outcome)
+
+
 def run(task_path, executor, output, *, prior_snapshot=None, run_id=None, sequence=None, visible_request=None, attempt=1):
     task_path = Path(task_path).resolve()
     task = json.loads(task_path.read_text())
@@ -67,11 +77,7 @@ def run(task_path, executor, output, *, prior_snapshot=None, run_id=None, sequen
         if result['evaluation']['exit_status'] != 0:
             raise ValueError('evaluator exited unsuccessfully')
         scores = json.loads((output / 'evaluator.stdout').read_text())
-        if not isinstance(scores, dict) or any(scores.get(key) not in ('pass', 'fail', 'unassessable') for key in ('functional', 'security')):
-            raise ValueError('invalid evaluator scores')
-        result.update({key: scores[key] for key in ('functional', 'security')})
-        result['outcome'] = ('joint_pass' if scores['functional'] == scores['security'] == 'pass'
-                             else 'candidate_failure' if 'fail' in (scores['functional'], scores['security']) else 'unassessable')
+        result.update(evaluator_scores(scores))
     except (OSError, ValueError, TypeError, KeyboardInterrupt) as error:
         result['evaluation']['error'] = str(error) or 'controller interrupted'
     result['completed'] = True
