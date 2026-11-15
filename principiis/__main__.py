@@ -20,7 +20,7 @@ def evaluator_scores(scores):
     return dict(properties, outcome=outcome)
 
 
-def run(task_path, executor, output, *, prior_snapshot=None, run_id=None, sequence=None, visible_request=None, attempt=1):
+def run(task_path, executor, output, *, prior_snapshot=None, run_id=None, sequence=None, visible_request=None, attempt=1, defer_evaluation=False):
     task_path = Path(task_path).resolve()
     task = json.loads(task_path.read_text())
     request = visible_request if visible_request is not None else (task_path.parent / task['request']).read_text()
@@ -59,6 +59,10 @@ def run(task_path, executor, output, *, prior_snapshot=None, run_id=None, sequen
         preserve(workspace, output / 'snapshot')
     except (OSError, ValueError) as error:
         result['snapshot_error'] = str(error)
+        save_result(output, result)
+        return result
+    if defer_evaluation:
+        result.update(outcome='pending_evaluation', completed=True)
         save_result(output, result)
         return result
     check = list(task['check'])

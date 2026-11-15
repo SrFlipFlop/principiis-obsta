@@ -165,9 +165,13 @@ def report(output):
     applications, attempts, evaluations, investigations = [], [], [], []
     planned = sum(len(app['steps']) for app in state['applications'])
     completed, started = 0, 0
+    primary_paths = []
     for app in state['applications']:
         root = output / 'applications' / app['id']
         summary = read(root / 'sequence.json') if (root / 'sequence.json').exists() else None
+        if (root / 'manual.json').exists():
+            manual = read(root / 'manual.json')
+            summary = dict(manual, status='manual', checkpoints=manual['attempts'])
         entry = dict(app, status=summary['status'] if summary else 'unstarted', run_id=summary['run_id'] if summary else None)
         if summary:
             entry['fingerprint'] = summary['fingerprint']
@@ -181,12 +185,26 @@ def report(output):
                 begun.add(checkpoint['id'])
                 if result.get('completed'):
                     finished.add(checkpoint['id'])
+                if result.get('outcome') == 'pending_evaluation':
+                    primary = root / 'evaluations' / checkpoint['id'] / '1' / 'result.json'
+                    if primary.exists():
+                        assessment = read(primary)
+                        if assessment['developer_result_sha256'] != sha(artifact):
+                            raise ValueError('manual primary developer provenance mismatch')
+                        result = dict(result, developer_outcome=result['outcome'],
+                                      primary_assessment_ref=str(primary), primary_provenance=assessment['provenance'],
+                                      **{key: assessment[key] for key in ('outcome', 'functional', 'security')})
+                        primary_paths.append(primary)
                 attempts.append({'application': app['id'], 'checkpoint': checkpoint['id'], 'artifact': str(artifact), **result})
             completed += len(finished)
             started += len(begun)
         applications.append(entry)
         for path in sorted((root / 'evaluations').glob('*/assessment.json')):
             evaluations.append(dict(read(path), artifact=str(path)))
+        for path in sorted((root / 'evaluations').glob('*/*/result.json')):
+            assessment = read(path)
+            if assessment.get('role') == 'rerun':
+                evaluations.append(dict(assessment, execution=assessment['evaluation'], artifact=str(path)))
         for path in sorted((root / 'investigations').rglob('investigation.json')):
             investigation = dict(read(path), application=app['id'], artifact=str(path))
             investigation['measurements'] = [dict(read(path.parent / ref), artifact=str(path.parent / ref))
@@ -211,7 +229,7 @@ def report(output):
             'controller_errors': controller_errors, 'evaluations': evaluations,
             'supplementary': {'claims': dict(claims), 'verified_root_causes': [{'application': app, 'root_cause': cause} for app, cause in sorted(verified)],
                               'investigations': investigations},
-            'resources': inspect_resources(output / 'applications', result_paths=[Path(a['artifact']) for a in attempts if Path(a['artifact']).is_file()]),
+            'resources': inspect_resources(output / 'applications', result_paths=[Path(a['artifact']) for a in attempts if Path(a['artifact']).is_file()] + primary_paths),
             'supplemental_resources': {'evaluation_reruns': [{'artifact': e['artifact'], **e['execution']} for e in evaluations],
                                        'investigations': [{'artifact': i['artifact'], 'resources': i.get('resources'), 'agent': i.get('agent'), 'tools': i['measurements']} for i in investigations]},
             'limitations': LIMITATIONS}
@@ -251,6 +269,8 @@ def main():
     signal.signal(signal.SIGINT, interrupted)
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
+    prepare = commands.add_parser('prepare', help='initialize suite metadata without executing any checkpoint')
+    prepare.add_argument('--suite', required=True)
     run = commands.add_parser('run')
     run.add_argument('--suite', required=True)
     executor = run.add_mutually_exclusive_group(required=True)
@@ -262,13 +282,18 @@ def main():
     assessment.add_argument('--evaluator-version', required=True)
     view = commands.add_parser('report')
     view.add_argument('--format', choices=('json', 'markdown'), default='json')
-    for command in (run, assessment, view):
+    for command in (prepare, run, assessment, view):
         command.add_argument('--output', required=True)
     for command in (run, assessment):
         command.add_argument('--application', action='append')
     args = parser.parse_args()
     try:
-        if args.command == 'run':
+        if args.command == 'prepare':
+            state = load_suite(args.suite)
+            output = Path(args.output).resolve()
+            output.mkdir(parents=True, exist_ok=False)
+            write_json(output / 'suite.json', state)
+        elif args.command == 'run':
             run_suite(args, lambda: stopped)
         elif args.command == 'evaluate':
             evaluate(args, lambda: stopped)

@@ -106,3 +106,24 @@ sys.exit(7)
                 rejected=subprocess.run(cmd[:-1]+[str(unsafe)],cwd=ROOT,capture_output=True,text=True)
                 self.assertNotEqual(rejected.returncode,0)
                 self.assertIn('development output must be separate',rejected.stderr)
+
+    def test_default_settings_do_not_override_harness(self):
+        with tempfile.TemporaryDirectory() as d:
+            b=Path(d); (b/'home').mkdir()
+            fake=b/'codex'
+            fake.write_text('''#!/usr/bin/env python3
+import sys,json
+if sys.argv[1:] == ['--version']: print('fixture'); sys.exit()
+assert '--model' not in sys.argv
+assert not any('model_reasoning_effort' in a for a in sys.argv)
+print(json.dumps({'type':'turn.completed','usage':{'input_tokens':1,'output_tokens':2}}))
+'''); fake.chmod(0o755)
+            (b/'request').write_text('visible')
+            (b/'task').write_text(json.dumps({'id':'one','version':'1','condition':{'id':'ordinary','version':'1'},'request':'request','check':[sys.executable,'-c','print(\'{"functional":"pass","security":"pass"}\')']}))
+            config={'executable':str(fake),'codex_home':str(b/'home'),'model':'default','reasoning_effort':'default','sandbox':'workspace-write','approval_policy':'never','network_access':True,'web_search':'live','clean_runtime_review':'fixture'}
+            (b/'config').write_text(json.dumps(config))
+            p=subprocess.run([sys.executable,'-m','principiis','run','--task',str(b/'task'),'--codex-config',str(b/'config'),'--output',str(b/'out')],cwd=ROOT,capture_output=True,text=True)
+            self.assertEqual(p.returncode,0,p.stderr)
+            result=json.loads((b/'out/result.json').read_text())
+            self.assertEqual(result['outcome'],'joint_pass')
+            self.assertIsNone(result['execution']['codex']['model'])

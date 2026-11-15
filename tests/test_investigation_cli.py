@@ -72,3 +72,28 @@ class InvestigationCLI(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class CodexInvestigationCLI(unittest.TestCase):
+    def test_subscription_evaluator_parses_final_claims_and_retains_usage_without_timeout(self):
+        with tempfile.TemporaryDirectory() as d:
+            b=Path(d); (b/'snapshot').mkdir(); (b/'home').mkdir()
+            (b/'primary').write_text('{}'); (b/'prompt').write_text('Investigate fixture')
+            fake=b/'codex'
+            fake.write_text('''#!/usr/bin/env python3
+import json,sys
+if sys.argv[1:] == ['--version']: print('fixture'); sys.exit()
+assert '--model' not in sys.argv
+assert 'Investigate fixture' in sys.stdin.read()
+print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':'{"claims":[{"id":"one","root_cause":"fixture"}]}'}}))
+print(json.dumps({'type':'turn.completed','usage':{'input_tokens':4,'output_tokens':5}}))
+'''); fake.chmod(0o755)
+            codex={'executable':str(fake),'codex_home':str(b/'home'),'model':'default','reasoning_effort':'default','sandbox':'workspace-write','approval_policy':'never','network_access':True,'web_search':'live','clean_runtime_review':'fixture'}
+            (b/'codex.json').write_text(json.dumps(codex))
+            (b/'config').write_text(json.dumps({'version':'1','model':'default','settings':{},'codex_config':str(b/'codex.json'),'timeout_seconds':None,'evidence':{}}))
+            p=subprocess.run([sys.executable,'-m','principiis.investigation','--snapshot',str(b/'snapshot'),'--primary',str(b/'primary'),'--config',str(b/'config'),'--prompt',str(b/'prompt'),'--prompt-version','1','--output',str(b/'out')],cwd=ROOT,capture_output=True,text=True)
+            self.assertEqual(p.returncode,0,p.stderr)
+            r=json.loads((b/'out/investigation.json').read_text())
+            self.assertEqual(r['status'],'completed')
+            self.assertEqual(r['claims'][0]['status'],'unresolved')
+            self.assertEqual(r['resources']['reported_tokens']['total_tokens'],9)
+            self.assertIn('turn.completed',(b/'out/agent.stdout').read_text())
