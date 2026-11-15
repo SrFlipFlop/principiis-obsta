@@ -34,16 +34,39 @@ controller command against an application output directory at a time.
 Trigger the predefined primary evaluation separately:
 
 ```bash
-python3 -m principiis.manual evaluate --step step-01 --evaluator-version portal-oracle-v1 --output /operator/runs/baseline/applications/document-portal
+python3 -m principiis.manual evaluate --step step-01 --evaluator-version portal-oracle-v1 --evaluator-manifest /operator/evaluators/portal/manifest.json --output /operator/runs/baseline/applications/document-portal
 python3 -m principiis.suite report --output /operator/runs/baseline --format markdown
 python3 -m principiis.resource /operator/runs/baseline/applications/document-portal --format markdown
 ```
 
 The first explicit evaluation is `evaluations/step-01/1/result.json`, role `primary`,
 including errors. Later invocations append role `rerun`, with evaluator version,
-command/file hashes and developer-result/snapshot-manifest hashes. Changed evaluator
+command/file hashes and developer-result/snapshot-manifest hashes. Evaluation requires
+an operator-authored JSON dependency manifest, for example:
+
+```json
+{"version":"portal-oracle-v1","complete":true,"files":{"check.py":"<sha256>","policy.py":"<sha256>"}}
+```
+
+`complete: true` explicitly declares the full evaluator artifact/dependency closure,
+including imported helpers, fixtures, wrappers and controller sources that affect the
+checks. Paths are relative to the manifest directory and must stay within it. Each
+file is verified before allocation; command file arguments must be included. This is
+an author declaration, not an import scanner: the controller cannot discover an
+omitted runtime dependency. Freeze external runtime/container versions separately.
+The executable digest (when its argv path is a file), manifest digest and declared
+file digests are preserved in provenance. Missing/incomplete manifests fail closed.
+Changing a helper requires updated hashes **and a new evaluator version**, even if
+the entry point is unchanged. Development pins evaluator argv-file contents in its
+run fingerprint; dependency-closure provenance is declared separately before the
+first manual assessment, never injected into development context. Changed evaluator
 content requires a new version. Nothing rewrites the developer result or historical
-assessment. Suite reports explicitly link the first primary assessment and retain
+assessment. A durable allocation ledger records identity and provenance before an
+evaluation directory is created. The next evaluation reconciles interrupted
+allocations into explicit error evidence under their original primary/rerun role.
+Legacy orphan directories without a ledger become error evidence with unknown
+identity/provenance; their files are retained and never assigned current provenance.
+Suite reports explicitly link the first primary assessment and retain
 the original developer outcome; later reruns remain separate. Resource inspection
 includes retained attempts and separates development from evaluation. Missing token
 categories, hosted memory and subscription spending stay unknown.
