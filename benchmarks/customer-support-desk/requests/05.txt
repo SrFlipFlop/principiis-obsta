@@ -1,0 +1,9 @@
+Request 5 — Organization support changed the visibility rules
+
+Some customers work in teams and want colleagues to follow a support case. Add customer organizations. Staff create an organization, add existing customer accounts as members and remove them. One customer can belong to multiple organizations. A customer opening a ticket may keep it personal or choose one of their organizations.
+
+Organization tickets are visible to the creator plus organization members explicitly added as observers for that ticket. The creator and staff can add/remove observers from current organization members; observers can read the public conversation, download public attachments and post replies. Observers cannot manage other observers or change ticket organization. Internal notes, staff assignment and note drafts remain staff-only. Removing a person from an organization immediately removes their observer access to its tickets. Personal tickets continue to work as before.
+
+Staff browser pages need organization/member management; ticket pages need organization selection at creation and observer management where permitted.
+
+API additions: GET/POST /api/organizations lists available organizations / creates {name} for staff. PUT /api/organizations/{id}/members {email} and DELETE /api/organizations/{id}/members/{customer_id} manage membership. Ticket creation accepts organization_id or null; details add organization {id,name} or null and observers [{id,email,name}] when the caller may manage them. PUT /api/tickets/{id}/observers {customer_id} adds one and DELETE .../observers/{customer_id} removes one. Existing tickets are personal and require no migration choice.

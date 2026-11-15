@@ -1,0 +1,9 @@
+Request 7 — Regression report: private notes and duplicate filenames
+
+We have a predefined QA report for two confusing cases. It was written before this implementation and does not mean either bug is present. Reproduce the cases through the browser and API, fix them if needed, and otherwise record regression evidence in your own tests or notes.
+
+First, create an organization ticket with a customer observer. Add a public reply, an internal note, a reply draft and a note attachment named diagnostic.txt. The observer should see/search/export only what their role normally permits. Remove the observer and then remove them from the organization; old direct ticket and attachment URLs should follow their current access. Add them back to the organization without adding them as an observer and check again.
+
+Second, attach two different byte sequences both named screenshot.png to separate public replies and another screenshot.png to an internal note. Each visible download must return the bytes for its own attachment and keep the original filename. The customer should not gain the internal-note attachment merely because its filename matches. Restart the app and repeat the downloads.
+
+Also search for `[refund]`, `%_`, and a quote character as literal text in subjects/messages/notes. Results should follow the existing visibility and case-insensitive literal-search rules. This request adds no new role, route or search syntax.

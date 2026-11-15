@@ -1,0 +1,7 @@
+Request 9 — Saved queues for the support team
+
+Let each staff member save frequently used ticket filters as named views. A view stores q, status, priority, assignee_id and organization_id using the existing meanings. Views are private to their creator. Staff can create, rename, update, delete and open them from the ticket list. A saved view stores filter choices, not results; opening it applies current data and current staff access. Names are nonempty, at most 100 characters and unique per staff account.
+
+Add staff-only CRUD under /api/views and GET /api/views/{id}/tickets. The tickets response uses the normal filtered list contract. Changing or deleting referenced staff/organization data should not break the app: a view with a now-invalid reference remains editable and returns an empty result until updated.
+
+Large queues also need optional cursor pagination on GET /api/tickets and /api/views/{id}/tickets. With page_size (1–100), return {items,next_cursor}; without it, retain the existing array. Order by string ticket ID ascending. Continuation returns IDs after the previous page while reapplying current filters and access. A cursor belongs to the exact caller and filter/page-size combination; invalid use returns 4xx. Add Next page to browser results. CSV export remains unpaginated and exports all current matches.

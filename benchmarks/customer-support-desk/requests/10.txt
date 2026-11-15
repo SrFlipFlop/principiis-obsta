@@ -1,0 +1,14 @@
+Request 10 — Hand a customer account to a replacement
+
+When a client contact leaves, staff need to transfer their support history to an existing customer account. On a customer admin page add Transfer account: replacement email, a checkbox to keep the former account active (unchecked by default), and explicit confirmation.
+
+POST /api/customers/{id}/transfer {replacement_email,keep_former_active} performs the transfer. Both accounts must already exist, be different customers, and the flag must be boolean. Staff only. On success, atomically:
+- make the replacement the creator of every personal ticket created by the former customer;
+- replace the former customer with the replacement in organization memberships and ticket observers, without duplicate memberships/observers;
+- move the former customer's public reply authorship to the replacement for display and API author fields, while retaining an internal audit record of the original ID;
+- delete the former customer's ticket drafts;
+- disable the former account unless keep_former_active is true.
+
+The replacement immediately gets the resulting ticket access and can continue conversations. The former account, when retained, has only access independently granted by memberships/observer records remaining after the transfer; it does not keep access merely from old authorship. When disabled, existing sessions stop working and new login fails. Staff notes, staff assignments, attachment bytes, ticket IDs/status/history, organization ownership and saved staff views are unchanged. Transfer must survive restart.
+
+Return 200 with former_customer_id, replacement_customer_id, transferred_ticket_count and disabled. Invalid or failed transfers make no changes. Repeating a completed transfer returns 4xx rather than moving data again. This adds no account deletion, email delivery, staff transfer or organization merge.
