@@ -1,0 +1,7 @@
+Request 6 — Find and export delivery history
+
+Support needs to find a particular delivery quickly. Add case-insensitive literal substring search over the execution-time workflow name, action labels and rendered messages. Search punctuation is ordinary text. Search does not include raw input, response bodies or connection settings. History stays scoped to one selected workspace; there is no cross-workspace search.
+
+GET /api/workspaces/{w}/runs accepts q, status=succeeded|failed and source=manual|webhook. Filters combine. Missing filters retain the existing array response. Return results in string run-ID ascending order. Invalid filter values return 4xx. Members can use these filters in the browser.
+
+Owners/operators also need GET /api/workspaces/{w}/runs/export with the same filters: UTF-8 CSV containing run_id,workflow_name,source,event_id,status,attempt_count,created_at, one row per matching run in the same order. Quote ordinary CSV fields correctly. The report describes the latest cumulative run state; search still examines the original rendered action messages. Viewers browse history but do not export it. Include a browser export action. Preserve earlier API response fields and all saved data.
