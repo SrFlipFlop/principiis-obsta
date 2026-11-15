@@ -1,3 +1,5 @@
+> Historical starter README. Use [START_HERE](START_HERE.md) for current scope and workflow; the original setup gate below has been completed.
+
 > Imported starter README, retained separately to preserve the existing owner README. Relative links adjusted for this location.
 
 # Principiis Obsta

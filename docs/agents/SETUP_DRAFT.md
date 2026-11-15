@@ -1,3 +1,5 @@
+> Historical applied setup from 2026-11-14. Current instructions are [domain documentation](domain.md) and the [development workflow](workflow.md); the snippets below preserve the former `CONTEXT.md` convention.
+
 # Matt Pocock repository setup — applied draft
 
 The owner selected GitHub Issues, standard triage names and a single context on 2026-11-14. The displayed draft was applied after the owner invoked `/setup-matt-pocock-skills` to complete setup. It does not create GitHub resources or approve implementation.

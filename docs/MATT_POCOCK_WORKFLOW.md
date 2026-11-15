@@ -1,3 +1,5 @@
+> Historical skill setup and alignment record from 2026-11-14. For current instructions use the [development workflow](agents/workflow.md). Old command names and `CONTEXT.md` below record that setup; current terminology is in [GLOSSARY.md](../GLOSSARY.md).
+
 > Alignment completed: owner approved `docs/BASELINE_PILOT_SPEC.md` on 2026-11-14. Next prepare small baseline implementation/benchmark-author tickets using the available workflow. The initial stop gate below is historical; no new grill is needed for routine engineering choices. Paid experiments remain unauthorized.
 
 # Matt Pocock workflow — local compatibility and alignment gate
