@@ -1,0 +1,7 @@
+Request 4 — Return it for corrections instead of rejecting it
+
+Reviewers need a way to ask for a better description or receipt. Add decision 'return' with a required comment. It changes submitted to returned. A returned expense stays in the team, with its history, but its creator can edit its merchant, description, date and amount, and replace/remove the receipt. They can resubmit to any currently eligible reviewer using the existing submit action.
+
+This supersedes request 3's draft-only submission rule: both draft and returned expenses can be submitted. Returned expenses cannot be moved or deleted. Approved/rejected remain final. History adds returned events and retains every earlier submission and decision. Resubmission creates another submitted event and replaces the current reviewer_id; it does not erase prior review history.
+
+If the assigned reviewer leaves or becomes an ordinary member while a claim is submitted, a team owner can choose another current eligible reviewer, still different from the creator. Add a browser reassignment action and POST /api/expenses/{id}/reviewer {reviewer_id} -> 200 expense, adding one reassigned history event. No reassignment of other states. The previous reviewer keeps historical attribution, but the new assignment decides the pending claim. Preserve saved data during upgrade and restart.

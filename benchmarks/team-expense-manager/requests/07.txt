@@ -1,0 +1,7 @@
+Request 7 — Check penny totals and receipts with the same name
+
+Finance sent two examples to check before their next reporting cycle. If the app already handles them correctly, keep that behavior and add regression evidence in your own tests or notes.
+
+Record expenses for EUR 0.10, 0.20 and 12.30 on the same team/date, with two approved and one still draft. The unfiltered team report should total all three (1260 cents); a status=approved report and that month's budget usage should include only the two actually approved. Try different combinations of which claim is draft and confirm the filtered CSV/report agree. Returning and resubmitting a claim must not duplicate its amount in a report.
+
+Also attach two different receipts both named receipt.pdf to separate expenses, then replace just one of them. Each expense's download should retain its own expected bytes and original filename, including after restart. Check the browser and API. This adds no calculation rule, permission or receipt feature.

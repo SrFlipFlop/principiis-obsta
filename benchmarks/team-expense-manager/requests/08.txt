@@ -1,0 +1,5 @@
+Request 8 — Make claim changes easier to maintain
+
+Before the next feature, give expense amounts, filtered totals and claim lifecycle changes clear internal boundaries. Choose the design and names yourself. Preserve all browser/API behavior through request 7, including exact cents, category/date filters, receipt replacement, approval history, correction cycles and restart persistence.
+
+Use your own tests and a brief note to explain the behavior you preserved. This request adds no route, status, role or layout requirement. If the current design already has suitable boundaries, document it and improve its tests instead of restructuring for its own sake. Existing users, teams, claims, budgets and receipt bytes must continue to load.

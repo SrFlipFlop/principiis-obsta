@@ -1,0 +1,21 @@
+{
+  "id": "team-expense-manager",
+  "version": "v1-draft1",
+  "steps": 10,
+  "owner_review": "pending",
+  "qualification_status": "not_started",
+  "files": {
+    "README.md": "cb00eff68cfef5d1efac017262182dd6aa50bc63f10b37a97d543cf67bc7b5bd",
+    "BENCHMARK_DESIGN.md": "4555b75e34a14bc45b2948cc7043d157d3acdf1d3c3f7037b2ceaa811e71a65e",
+    "requests/01.txt": "b5ea9fd010f063f462e15a75c90136fb8fe472bb4d7bae31b3a3152efe23833d",
+    "requests/02.txt": "116ffe0bffee071171a7db2d608b441838eb78a69ca8ec4ace3c11677abcb87a",
+    "requests/03.txt": "934d6b3ff6516274f845fdfacda0a7cbedcc1e5b07cde13c3fc5646018785383",
+    "requests/04.txt": "ae991997274a8bc6cfa580a8d94b3228fecb058049625f72869d6ae5ef9f0906",
+    "requests/05.txt": "e87c4036b25f555f5870ad64e8444da911554a069186e5c85fb3a148396f6c64",
+    "requests/06.txt": "be2e98ce14a2f60e1bd9e258cbc5a4b94f282d9d20600777ba4da472c679b6a9",
+    "requests/07.txt": "a43d7b157f52f26a21eea5788295fa938e4ac2d8b2f9428ace6c72d140248fa5",
+    "requests/08.txt": "3834da0cf4a437221885d4932af7416d28f614699f3b715541676e091d193ade",
+    "requests/09.txt": "561079c624b4c8bf4dc8b81d32984cb300d7e5eb99d47368b82e989030369e8f",
+    "requests/10.txt": "30fa04d5f5b02a99a09cd2f0f49cc355ecab314c26b493151f41d8cbdb7e7236"
+  }
+}

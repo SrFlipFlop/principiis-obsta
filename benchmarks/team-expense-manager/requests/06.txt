@@ -1,0 +1,7 @@
+Request 6 — Categories and a monthly spending guide
+
+Add an optional category to expenses: travel, meals, supplies or other. New and existing expenses default to other. Creators can change it whenever they can edit the expense. Add category to summaries/details, create/PATCH input, list/report/export filters and CSV after description. Invalid category is a product-input error. All earlier omitted-filter behavior stays the same.
+
+Owners can set a monthly EUR budget for a team. It is a spending guide, not an approval limit: going over it does not block submission or approval. PUT /api/teams/{id}/budgets/{YYYY-MM} {amount_cents} sets a nonnegative integer budget up to 1000000000; DELETE clears it. Owners/reviewers GET the same URL -> {month,budget_cents,approved_cents,remaining_cents,currency:'EUR'}, using null budget/remaining when unset. approved_cents sums only approved expenses whose spent_on is in that month; remaining may be negative.
+
+Show a monthly budget summary in team reports and let owners edit it in the browser. Categories, budgets and existing claim history survive restart. Ordinary members do not see team-wide budget totals.

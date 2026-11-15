@@ -1,0 +1,7 @@
+Request 3 — Submit a claim for approval
+
+Team expenses should be submitted to a reviewer. A creator can submit their team draft to a currently assigned team owner or reviewer other than themselves. The reviewer must be selected explicitly in the browser. If nobody eligible exists, the draft stays editable and submission returns a useful error. Personal-ledger expenses cannot be submitted.
+
+Submission changes draft to submitted. Submitted expenses and receipts are read-only and cannot move or be deleted. The selected reviewer can approve or reject with a required nonempty comment. Approved and rejected expenses are final and read-only for now. Only the selected reviewer decides; team ownership alone does not replace that assignment. All existing role-based viewing rules still apply.
+
+POST /api/expenses/{id}/submit {reviewer_id} -> 200 expense; POST .../decision {decision:'approve'|'reject',comment} -> 200 expense. Details/summaries add reviewer_id (string or null). Details add history: oldest-first [{id,action,actor_id,comment,created_at}], with actions submitted, approved or rejected. New drafts have empty history. Each successful action adds one history event; invalid/repeated actions return 4xx without changing status or history. Retain reviewer/actor identities in history even if a member later leaves. All state survives restart.

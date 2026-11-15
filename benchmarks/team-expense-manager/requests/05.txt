@@ -1,0 +1,7 @@
+Request 5 — Find expenses and export the monthly report
+
+Add case-insensitive literal substring search over merchant and description, plus status, from_date and to_date filters on GET /api/expenses. Dates use YYYY-MM-DD and inclusive spent_on boundaries. Filters combine within the existing personal default or explicitly selected team and current viewing rules. Empty q matches all; invalid status/date, or from_date after to_date, returns 4xx. Add corresponding browser filters.
+
+Team owners/reviewers need CSV and totals for the current filtered team result. GET /api/teams/{id}/report accepts the same q/status/date filters and returns {count,total_cents,currency:'EUR'}, counting every matching expense once and summing stored cents exactly. GET /api/teams/{id}/export uses the same filters and returns UTF-8 CSV with header expense_id,merchant,description,spent_on,amount_cents,currency,status,creator_email,reviewer_email. Sort rows by string expense ID ascending; use ordinary CSV quoting and an empty reviewer_email when unassigned. CSV contains metadata, not receipt bytes or history.
+
+The report defaults to all visible team statuses, including drafts, when status is omitted. Ordinary members keep their list/search workflow but have no team-wide report/export action. Lists remain arrays. Counts, totals and CSV rows must refer to the same filtered set; an empty result is count 0, total_cents 0 and a header-only CSV. No external spreadsheet integration is needed.
