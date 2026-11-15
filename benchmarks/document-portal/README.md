@@ -1,35 +1,21 @@
-> Archived preliminary synthetic package. The canonical real application benchmark is [document-portal-real](../document-portal-real/BENCHMARK_DESIGN.md). This archive is released only with explicit `--edition original`; its qualification does not apply to real-v1.
+# Fieldwork document portal — v2-r1 authoring revision
 
-# Document portal author package, version 1
+Read the [sequence design](BENCHMARK_DESIGN.md). One package contains ten requests; checkpoints 1–3 are the #8 milestone. The owner approved the authoring principles on 2026-11-15. Revised request text, the detailed security mapping, later request alignment and restricted oracle qualification remain pending review/completion.
 
-Three requests cover initial build and two changes. This is benchmark authoring only; no evaluated coding agent has generated an application. The package remains **pending owner review** and is not the approved suite authoring example yet. The initial development workspace must be empty.
-
-Selected build stack: Python 3.12, Flask 3.1, SQLite, server-rendered HTML enhanced with ordinary JavaScript. Minimal startup, API and accessible browser contracts are in the requests. Layout, database schema, Flask structure and internal architecture remain open. Requests are original project-authored material under the repository license, not adapted third-party benchmark tasks. No production identity provider or external integration is involved.
-
-Release only current/past requirements:
+Release only current/past requests into a separate context:
 
 ```sh
-python3 -m principiis.portal release --edition original --step 1 --output /tmp/new-portal-release
+python3 -m principiis.portal release --step 1 --output /tmp/fieldwork-step-1
+python3 -m principiis.portal release --step 3 --output /tmp/fieldwork-step-3
 ```
 
-The new directory contains only `request.txt`. Supply its contents to a fresh empty development workspace. Later releases concatenate only requests through the selected step. The public research checkout contains future requests and must never be accessible to evaluated sessions; the ordinary Codex adapter's separate reviewed runtime boundary still applies.
+Only request.txt is created. The initial application workspace is empty. This public research checkout contains future requests and must never be used as the evaluated agent's workspace. `--edition` has been removed; old releases remain in Git history. Release does not invoke a model.
 
-The hidden bundle is local, separately versioned, and ignored under `private/benchmarks/document-portal-checker-2/` (the original version remains unchanged under `private/benchmarks/document-portal/`) in the main research checkout. It contains executable checks, controls, image recipes, the property rubric, qualification evidence references and the concrete owner review document. None belongs in developer contexts or a public PR. Its immutable metadata digest is recorded in `package.json`; it must be supplied explicitly:
+Private authoring metadata lives separately at `private/benchmarks/document-portal-v2-r1` in the main research checkout. It records the revised mapping and outstanding check adaptations; it does not contain a qualified runnable oracle. Old bundles, controls and engineering trials retain their original identities and do not qualify this revision.
 
 ```sh
-python3 -m principiis.portal bind --edition original --bundle /local/private/bundle --output /tmp/new-author-manifest
+python3 -m principiis.portal bind --bundle /local/private/document-portal-v2-r1 --output /tmp/fieldwork-controller
+python3 -m principiis.portal evaluate --bundle /local/private/document-portal-v2-r1 --step 1 --snapshot /local/immutable-checkpoint
 ```
 
-This creates a sequence manifest consumable by `python3 -m principiis sequence --sequence /tmp/new-author-manifest/sequence.json ...`. The author manifest and its private check argv remain controller-side. Do not copy this directory into development. `bind` neither starts development nor authorizes a model run.
-
-For model-free assessment of an existing checkpoint:
-
-```sh
-python3 -m principiis.portal evaluate --edition original --bundle /local/private/bundle --step 1 --snapshot /local/checkpoint
-```
-
-The adapter verifies bundle file hashes, stages candidate source under private Docker-visible storage, and delegates to the #6 restricted browser/backend runner. Only score JSON goes to the caller; detailed results remain in a fresh private evidence directory. Candidate code is never executed on the host. Prepared pinned images and the unchanged containment profile are required; dependency preparation occurs before restricted runtime. Assessment failures remain unassessable. The generic evaluator's optional `--check-contract` accepts an author-only JSON mapping of required check IDs to `functional` or `security`; it requires both classes, exact coverage and valid check statuses, retaining the check-map digest. Without this flag the #6 engineering fixture contract is unchanged.
-
-The original checker completed 18 local browser/backend assessments covering safe, property-violating, reject-all, alternative-valid and repeated controls at each checkpoint. Checker revision 2 corrects overly restrictive browser assertions while retaining the version-1 task contract and pending rubric. Its new qualification is **pending**: ordinary Docker fails under the current environment permissions, so none of the original assessments is claimed as evidence for the revision. The revised bundle omits unprepared image pins, and `evaluate` refuses pending qualification before staging or running a candidate. New source/image hashes and restricted browser/backend regression evidence are required before enabling assessment. The private controls are independently authored oracle fixtures, not Flask application skeletons or material for evaluated development. Alternative storage access paths retain the same observable contract. Qualification is limited to declared executable properties and is not a model run, reliability estimate or comprehensive security audit. Owner review must resolve the private rubric and mappings before this package can close issue #8 or seed the rest of the suite.
-
-Author-only custom qualification fixtures may use the restricted evaluator's `--fixture-variant` with `--check-contract`; names must be lowercase alphanumeric/hyphen identifiers. This cannot be combined with a nondefault `--control`. The existing engineering fixture controls retain their original choices and defaults. Variant names are fixture arguments inside the same restricted container boundary.
+Bind creates a ten-step controller manifest, not a developer workspace. Evaluation refuses any bundle without both qualified checks and approved owner review, before staging or executing candidate code. This revision has zero accepted runtime qualification assessments. Candidate dependency preparation, browser-oracle adaptation, expanded hidden property checks, independent valid controls, stable restricted execution and complete evidence review are still required. The legacy Flask-only runtime is insufficient evidence for arbitrary declared dependencies.

@@ -88,6 +88,48 @@ def shutdown(_signum, _frame):
     raise SystemExit(0)
 
 
+class HandoutFixture(http.server.BaseHTTPRequestHandler):
+    """Public deterministic external-service simulator; contains no assertions."""
+    attempts = 0
+
+    def log_message(self, *_args):
+        pass
+
+    def do_GET(self):
+        if self.path == '/redirect':
+            self.send_response(302)
+            self.send_header('Location', '/handout.bin')
+            self.end_headers()
+            return
+        if self.path == '/redirect-private':
+            self.send_response(302)
+            self.send_header('Location', 'http://127.0.0.1:8124/lifecycle')
+            self.end_headers()
+            return
+        if self.path == '/retry.bin':
+            HandoutFixture.attempts += 1
+            if HandoutFixture.attempts % 2 == 1:
+                self.send_error(503)
+                return
+        if self.path == '/oversize':
+            payload = b'x' * (2 * 1024 * 1024 + 1)
+        elif self.path in ['/handout.bin', '/retry.bin']:
+            payload = bytes([0,255,65,10,90])
+        else:
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/octet-stream')
+        self.send_header('Content-Length', str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+os.environ['PORTAL_IMPORT_FIXTURE_ORIGIN'] = 'http://127.0.0.1:8125'
+handouts = http.server.ThreadingHTTPServer(('127.0.0.1', 8125), HandoutFixture)
+threading.Thread(target=handouts.serve_forever, daemon=True).start()
+
+
 signal.signal(signal.SIGTERM, shutdown)
 signal.signal(signal.SIGINT, shutdown)
 try:
