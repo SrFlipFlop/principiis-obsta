@@ -1,0 +1,5 @@
+Request 8 — Make order calculations easier to maintain
+
+Before expanding browsing, review and refactor how the application calculates cart totals, groups seller orders and represents purchased order snapshots. Give the related responsibilities a clear internal boundary. Choose the structure yourself; no class, module or schema is prescribed.
+
+Preserve every observable browser/API behavior through request 7, including stock changes, coupon use, order totals/history, fulfillment/cancellation and exact picture bytes. Existing accounts, listings, carts, coupons and orders must load across upgrade/restart. Use your own tests and notes to explain what you preserved. This adds no endpoint, response field or page-layout requirement. If the current design already has a suitable boundary, retain it and improve its documentation or test evidence.

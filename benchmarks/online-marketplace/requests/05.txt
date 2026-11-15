@@ -1,0 +1,7 @@
+Request 5 — Pictures and a nicer listing description
+
+The listings feel bare. Let a seller attach one picture to each listing, replace it or remove it. Accept JPEG or PNG files, nonempty and at most 2 MiB. Preserve the submitted filename and original bytes. Show the picture on the catalog/detail pages; drafts still belong in the seller dashboard. Existing listings simply have no picture.
+
+Also let listing descriptions use Markdown paragraphs, emphasis, lists and links. Keep the original text in description and add rendered_description_html for browser/API display. Titles and names stay plain text. Choose an ordinary compatible Markdown library or implementation yourself.
+
+PUT /api/listings/{id}/picture accepts multipart file -> 200 updated listing; DELETE the same route removes it (204, including an already absent picture). Listing responses add picture:{filename,size,url} or null. GET /api/listings/{id}/picture returns current bytes with the corresponding image content type. A replacement updates the listing picture and earlier picture URLs may show the new bytes. Orders keep their purchased title/price snapshots; they do not snapshot pictures or descriptions. Make the new actions available in the browser and preserve data across restart.

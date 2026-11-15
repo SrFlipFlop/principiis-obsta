@@ -1,0 +1,7 @@
+Request 4 — Seller promotion codes
+
+Sellers want a simple fixed-amount discount code for their own stall. Each code has a nonempty code string (1–40 ASCII letters/digits/hyphens), amount_cents (positive integer), minimum_subtotal_cents (nonnegative integer), max_uses (positive integer) and active (boolean). Code names are case-insensitive and unique across the marketplace. Creation starts active with uses=0; a seller can deactivate/reactivate a code but cannot edit its amount, threshold or cap. A code applies only to that seller's order within a checkout.
+
+Checkout accepts one optional coupon_code. If supplied, it must name an active code with uses remaining and the cart must contain its seller's goods meeting the minimum. Otherwise fail the whole checkout. Deduct min(amount_cents, that seller's subtotal); other sellers' totals are unchanged. A successful checkout consumes one use; failed checkouts consume none. Successful checkouts together cannot exceed the cap. Snapshot the applied code string and discount on the seller order; without one, coupon_code is null. A discounted order may total zero. This still uses payment at pickup.
+
+Seller browser pages should create/list/toggle codes; checkout should accept a code and show the resulting placed-order totals. GET /api/seller/coupons -> array of {id,code,amount_cents,minimum_subtotal_cents,max_uses,uses,active}; POST with the creation fields -> 201 coupon; PATCH /api/seller/coupons/{id} {active} -> coupon. POST /api/checkouts now accepts {coupon_code?}; all earlier clients using {} keep working.
