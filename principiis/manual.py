@@ -41,7 +41,9 @@ def develop(args):
     else:
         executor = json.loads(args.executor)
         configuration = executor
-    fingerprint = hashlib.sha256(json.dumps([manifest, requests, configuration], sort_keys=True).encode()).hexdigest()
+    check_files = {str((source.parent / a).resolve()): sha(source.parent / a)
+                   for step in steps for a in step['check'] if (source.parent / a).is_file()}
+    fingerprint = hashlib.sha256(json.dumps([manifest, requests, configuration, check_files], sort_keys=True).encode()).hexdigest()
     journal = root / 'manual.json'
     if journal.exists():
         state = json.loads(journal.read_text())
@@ -98,25 +100,66 @@ def evaluate(args):
     task_path = root / 'tasks' / (args.step + '.json')
     task = json.loads(task_path.read_text())
     check = task['check']
-    provenance = {'version': args.evaluator_version, 'argv': check,
-                  'files': {str(Path(a).resolve()): sha(a) for a in check if Path(a).is_file()}}
     if not args.evaluator_version:
         raise ValueError('nonempty evaluator version required')
+    declaration = Path(args.evaluator_manifest).resolve()
+    bundle = json.loads(declaration.read_text())
+    if bundle.get('version') != args.evaluator_version or bundle.get('complete') is not True or not bundle.get('files'):
+        raise ValueError('complete versioned evaluator dependency manifest required')
+    files = {}
+    for relative, digest in bundle['files'].items():
+        path = (declaration.parent / relative).resolve()
+        if Path(relative).is_absolute() or not path.is_relative_to(declaration.parent):
+            raise ValueError('evaluator manifest paths must stay within its directory')
+        if sha(path) != digest:
+            raise ValueError('evaluator manifest file content changed; select a new evaluator version')
+        files[str(path)] = digest
+    if any(str(Path(a).resolve()) not in files for a in check[1:] if Path(a).is_file()):
+        raise ValueError('evaluator command file absent from dependency manifest')
+    provenance = {'version': args.evaluator_version, 'argv': check, 'files': files,
+                  'manifest_sha256': sha(declaration),
+                  'executable_sha256': sha(check[0]) if Path(check[0]).is_file() else None}
     parent = root / 'evaluations' / args.step
     parent.mkdir(parents=True, exist_ok=True)
+    ledger_path = parent / 'allocations.json'
+    ledger = json.loads(ledger_path.read_text()) if ledger_path.exists() else []
+    # A legacy orphan has no recoverable identity or provenance. Preserve that fact.
+    known = {entry['attempt'] for entry in ledger}
+    for directory in sorted(parent.iterdir()):
+        if directory.is_dir() and directory.name.isdecimal() and int(directory.name) not in known:
+            existing = directory / 'result.json'
+            if existing.exists():
+                ledger.append(json.loads(existing.read_text()))
+            else:
+                ledger.append({'schema_version': 1, 'attempt': int(directory.name),
+                               'role': 'primary' if directory.name == '1' else 'rerun',
+                               'stage': 'independent_evaluation', 'checkpoint': args.step,
+                               'run_id': None, 'session_id': None, 'developer_result_sha256': None,
+                               'allocation_provenance': 'unknown_legacy',
+                               'provenance': {'version': None}, 'outcome': 'evaluator_error',
+                               'functional': 'unknown', 'security': 'unknown', 'evaluation': {},
+                               'error': 'interrupted legacy allocation; identity and provenance unknown'})
+    for entry in ledger:
+        directory = parent / str(entry['attempt'])
+        directory.mkdir(exist_ok=True)
+        if not (directory/'result.json').exists():
+            write_json(directory/'result.json', dict(entry, error=entry.get('error', 'controller interrupted after allocation')))
+    write_json(ledger_path, ledger)
     for historical in parent.glob('*/result.json'):
         previous = json.loads(historical.read_text())
         if previous['provenance']['version'] == args.evaluator_version and previous['provenance'] != provenance:
             raise ValueError('evaluator content changed; select a new evaluator version')
-    number = len(list(parent.iterdir())) + 1
+    number = max((e['attempt'] for e in ledger), default=0) + 1
     output = parent / str(number)
-    output.mkdir(exist_ok=False)
     result = {'schema_version': 1, 'run_id': state['run_id'], 'session_id': str(uuid.uuid4()),
               'stage': 'independent_evaluation', 'role': 'primary' if number == 1 else 'rerun',
               'attempt': number, 'checkpoint': args.step, 'provenance': provenance,
               'developer_result_sha256': sha(checkpoint/'result.json'),
               'snapshot': str(snapshot), 'snapshot_manifest_sha256': sha(snapshot.with_suffix('.json')) if snapshot.with_suffix('.json').exists() else None, 'outcome': 'evaluator_error',
               'functional': 'unknown', 'security': 'unknown', 'evaluation': {}}
+    ledger.append(result)
+    write_json(ledger_path, ledger)
+    output.mkdir(exist_ok=False)
     write_json(output/'result.json', result)
     try:
         validate(snapshot)
@@ -146,6 +189,7 @@ def main():
     dev.add_argument('--retry', action='store_true')
     ev = sub.add_parser('evaluate')
     ev.add_argument('--evaluator-version', required=True)
+    ev.add_argument('--evaluator-manifest', required=True)
     for command in (dev, ev):
         command.add_argument('--output', required=True)
         command.add_argument('--step', required=True)

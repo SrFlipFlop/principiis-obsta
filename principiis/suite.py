@@ -189,7 +189,7 @@ def report(output):
                     primary = root / 'evaluations' / checkpoint['id'] / '1' / 'result.json'
                     if primary.exists():
                         assessment = read(primary)
-                        if assessment['developer_result_sha256'] != sha(artifact):
+                        if assessment.get('developer_result_sha256') != sha(artifact) and assessment.get('allocation_provenance') != 'unknown_legacy':
                             raise ValueError('manual primary developer provenance mismatch')
                         result = dict(result, developer_outcome=result['outcome'],
                                       primary_assessment_ref=str(primary), primary_provenance=assessment['provenance'],
@@ -242,10 +242,10 @@ def markdown(value):
     for app in value['applications']:
         lines.append(f"| {app['id']} | {app['status']} | {app['sequence']['id']} @ {app['sequence']['version']} | {app['condition']['id']} @ {app['condition']['version']} |")
     lines += ['', 'Primary attempt outcomes: ' + json.dumps(value['outcomes']),
-              'Security: ' + json.dumps(value['security']), '', '| Application | Checkpoint | Attempt | Outcome | Functional | Security | Evidence |',
-              '| --- | --- | --- | --- | --- | --- | --- |']
+              'Security: ' + json.dumps(value['security']), '', '| Application | Checkpoint | Attempt | Outcome | Functional | Security | Developer outcome | Primary assessment | Evaluator version | Developer evidence |',
+              '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |']
     for a in value['attempts']:
-        lines.append(f"| {a['application']} | {a['checkpoint']} | {a.get('attempt', 'unknown')} | {a['outcome']} | {a['functional']} | {a['security']} | {a['artifact']} |")
+        lines.append(f"| {a['application']} | {a['checkpoint']} | {a.get('attempt', 'unknown')} | {a['outcome']} | {a['functional']} | {a['security']} | {a.get('developer_outcome', a['outcome'])} | {a.get('primary_assessment_ref', 'unknown')} | {a.get('primary_provenance', {}).get('version') or 'unknown'} | {a['artifact']} |")
     lines += ['', 'Controller errors: ' + json.dumps(value['controller_errors']),
               'Separate evaluator reruns: ' + json.dumps(value['evaluations']),
               'Supplementary claims: ' + json.dumps(value['supplementary']['claims']),

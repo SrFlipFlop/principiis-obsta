@@ -1,5 +1,7 @@
+import hashlib
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -19,6 +21,11 @@ class ManualCLI(unittest.TestCase):
             (b/'sequence.json').write_text(json.dumps(m))
             (b/'suite.json').write_text(json.dumps({'id':'suite','version':'1','applications':[{'id':'sample','sequence':'sequence.json'}]}))
             def cli(*args):
+                if args[0] == 'evaluate':
+                    version = args[args.index('--evaluator-version') + 1]
+                    manifest = b/'evaluator.json'
+                    manifest.write_text(json.dumps({'version':version,'complete':True,'files':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in b.glob('*.py')}}))
+                    args = (*args, '--evaluator-manifest', str(manifest))
                 p=subprocess.run([sys.executable,'-m','principiis.manual',*args],cwd=ROOT,capture_output=True,text=True)
                 self.assertEqual(p.returncode,0,p.stderr)
             prepare=subprocess.run([sys.executable,'-m','principiis.suite','prepare','--suite',str(b/'suite.json'),'--output',str(b/'suite-run')],cwd=ROOT,capture_output=True,text=True)
@@ -46,6 +53,10 @@ class ManualCLI(unittest.TestCase):
             self.assertTrue(suite_report['attempts'][0]['primary_assessment_ref'].endswith('/evaluations/one/1/result.json'))
             self.assertEqual(len(suite_report['evaluations']),1)
             self.assertEqual(suite_report['resources']['totals']['evaluation']['attempts_present'],1)
+            markdown=subprocess.run([sys.executable,'-m','principiis.suite','report','--output',str(b/'suite-run'),'--format','markdown'],cwd=ROOT,capture_output=True,text=True)
+            self.assertIn(first['provenance']['version'], markdown.stdout)
+            self.assertIn('/evaluations/one/1/result.json', markdown.stdout)
+            self.assertIn('pending_evaluation', markdown.stdout)
             resources=subprocess.run([sys.executable,'-m','principiis.resource',str(b/'run')],cwd=ROOT,capture_output=True,text=True)
             self.assertEqual(resources.returncode,0,resources.stderr)
             report=json.loads(resources.stdout)
@@ -54,6 +65,10 @@ class ManualCLI(unittest.TestCase):
             self.assertEqual(report['totals']['development']['tokens']['total_tokens'],5)
             cli('develop','--sequence',str(b/'sequence.json'),'--output',str(b/'run'),'--step','two','--executor',json.dumps([sys.executable,str(b/'agent.py')]))
             self.assertEqual((b/'run/steps/two/snapshot/notes').read_text(),'first\n\nsecond')
+            (b/'check.py').write_text('raise SystemExit(1)')
+            changed=subprocess.run([sys.executable,'-m','principiis.manual','develop','--sequence',str(b/'sequence.json'),'--output',str(b/'run'),'--step','two','--executor',json.dumps([sys.executable,str(b/'agent.py')])],cwd=ROOT,capture_output=True,text=True)
+            self.assertNotEqual(changed.returncode,0)
+            self.assertIn('configuration changed',changed.stderr)
 
     def test_interrupted_attempt_retains_usage_and_explicit_retries_stop_at_three(self):
         import time
@@ -90,9 +105,15 @@ class ManualCLI(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             b=Path(d)
             (b/'request').write_text('visible')
-            (b/'check.py').write_text('raise SystemExit(1)')
+            (b/'policy.py').write_text('raise SystemExit(1)')
+            (b/'check.py').write_text('import policy')
             (b/'sequence').write_text(json.dumps({'id':'sample','version':'1','condition':{'id':'ordinary','version':'1'},'steps':[{'id':'one','version':'1','sequence_version':'1','request':'request','check':[sys.executable,'check.py']}]}))
             def cli(*args):
+                if args[0] == 'evaluate':
+                    version = args[args.index('--evaluator-version') + 1]
+                    manifest = b/'evaluator.json'
+                    manifest.write_text(json.dumps({'version':version,'complete':True,'files':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in b.glob('*.py')}}))
+                    args = (*args, '--evaluator-manifest', str(manifest))
                 return subprocess.run([sys.executable,'-m','principiis.manual',*args],cwd=ROOT,capture_output=True,text=True)
             p=cli('develop','--sequence',str(b/'sequence'),'--output',str(b/'run'),'--step','one','--executor',json.dumps([sys.executable,'-c','pass']))
             self.assertEqual(p.returncode,0,p.stderr)
@@ -101,11 +122,58 @@ class ManualCLI(unittest.TestCase):
             primary=b/'run/evaluations/one/1/result.json'
             original=primary.read_bytes()
             self.assertEqual(json.loads(original)['outcome'],'evaluator_error')
-            (b/'check.py').write_text("print('{\"functional\":\"pass\",\"security\":\"pass\"}')")
+            # Persisted crash fixture: allocation ledger committed, directory not created yet.
+            allocated=json.loads(original)
+            shutil.rmtree(primary.parent)
+            self.assertEqual(cli(*evaluation,'1').returncode,0)
+            recovered=json.loads(primary.read_text())
+            self.assertEqual(recovered['session_id'],allocated['session_id'])
+            self.assertEqual(recovered['provenance'],allocated['provenance'])
+            self.assertEqual((recovered['role'],recovered['outcome']),('primary','evaluator_error'))
+            self.assertIn('interrupted',recovered['error'])
+            original=primary.read_bytes()
+            (b/'policy.py').write_text("print('{\"functional\":\"pass\",\"security\":\"pass\"}')")
             p=cli(*evaluation,'1')
             self.assertNotEqual(p.returncode,0)
             self.assertIn('new evaluator version',p.stderr)
             self.assertEqual(cli(*evaluation,'2').returncode,0)
             self.assertEqual(primary.read_bytes(),original)
-            rerun=json.loads((b/'run/evaluations/one/2/result.json').read_text())
+            rerun=json.loads((b/'run/evaluations/one/3/result.json').read_text())
             self.assertEqual((rerun['role'],rerun['outcome']),('rerun','joint_pass'))
+
+    def test_legacy_orphan_is_retained_as_unknown_primary(self):
+        with tempfile.TemporaryDirectory() as d:
+            b=Path(d)
+            (b/'request').write_text('visible')
+            (b/'check.py').write_text("print('{\"functional\":\"pass\",\"security\":\"pass\"}')")
+            (b/'sequence').write_text(json.dumps({'id':'sample','version':'1','condition':{'id':'ordinary','version':'1'},'steps':[{'id':'one','version':'1','sequence_version':'1','request':'request','check':[sys.executable,'check.py']}]}))
+            def cli(*args):
+                return subprocess.run([sys.executable,'-m','principiis.manual',*args],cwd=ROOT,capture_output=True,text=True)
+            p=cli('develop','--sequence',str(b/'sequence'),'--output',str(b/'run'),'--step','one','--executor',json.dumps([sys.executable,'-c','pass']))
+            self.assertEqual(p.returncode,0,p.stderr)
+            orphan=b/'run/evaluations/one/1'
+            orphan.mkdir(parents=True)
+            (orphan/'evidence').write_text('retained')
+            manifest=b/'manifest.json'
+            manifest.write_text(json.dumps({'version':'1','complete':True,'files':{'check.py':hashlib.sha256((b/'check.py').read_bytes()).hexdigest()}}))
+            p=cli('evaluate','--output',str(b/'run'),'--step','one','--evaluator-version','1','--evaluator-manifest',str(manifest))
+            self.assertEqual(p.returncode,0,p.stderr)
+            primary=json.loads((orphan/'result.json').read_text())
+            self.assertEqual((primary['role'],primary['outcome']),('primary','evaluator_error'))
+            self.assertIsNone(primary['provenance']['version'])
+            self.assertIn('unknown',primary['error'])
+            self.assertEqual((orphan/'evidence').read_text(),'retained')
+            resources=subprocess.run([sys.executable,'-m','principiis.resource',str(b/'run')],cwd=ROOT,capture_output=True,text=True)
+            self.assertEqual(resources.returncode,0,resources.stderr)
+            self.assertEqual(len(json.loads(resources.stdout)['attempts']),3)
+            (b/'suite.json').write_text(json.dumps({'id':'suite','version':'1','applications':[{'id':'sample','sequence':'sequence'}]}))
+            prepared=subprocess.run([sys.executable,'-m','principiis.suite','prepare','--suite',str(b/'suite.json'),'--output',str(b/'suite-run')],cwd=ROOT,capture_output=True,text=True)
+            self.assertEqual(prepared.returncode,0,prepared.stderr)
+            (b/'suite-run/applications').mkdir()
+            (b/'suite-run/applications/sample').symlink_to(b/'run',target_is_directory=True)
+            report=subprocess.run([sys.executable,'-m','principiis.suite','report','--output',str(b/'suite-run'),'--format','markdown'],cwd=ROOT,capture_output=True,text=True)
+            self.assertEqual(report.returncode,0,report.stderr)
+            self.assertIn('/evaluations/one/1/result.json',report.stdout)
+            self.assertIn('evaluator_error',report.stdout)
+            self.assertIn('pending_evaluation',report.stdout)
+            self.assertEqual(json.loads((b/'run/evaluations/one/2/result.json').read_text())['role'],'rerun')

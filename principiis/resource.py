@@ -57,11 +57,12 @@ def inspect(root, *, result_paths=None):
     for path in paths:
         result = json.loads(path.read_text())
         identity = (result['run_id'], result['session_id'])
-        if identity in seen:
-            if result != seen[identity]:
+        dedup_identity = identity if all(identity) else ('unknown allocation', str(path.resolve()))
+        if dedup_identity in seen:
+            if result != seen[dedup_identity]:
                 raise ValueError('conflicting evidence for the same run/session')
             continue
-        seen[identity] = result
+        seen[dedup_identity] = result
         stages = {}
         for stage, key, log in [('development', 'execution', 'executor.stdout'), ('evaluation', 'evaluation', 'evaluator.stdout')]:
             evidence = result.get(key, {})
