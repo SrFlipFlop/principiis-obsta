@@ -17,8 +17,8 @@ class RealPortalRelease(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertEqual([p.name for p in out.iterdir()], ['request.txt'])
             request = (out / 'request.txt').read_text()
-            for phrase in ['password', 'SQLite', 'Upload', '/api/documents', 'Download']:
-                self.assertIn(phrase, request)
+            for phrase in ['password', 'sqlite', 'upload', '/api/documents', 'download']:
+                self.assertIn(phrase, request.lower())
             self.assertNotIn('/api/collections', request)
             self.assertNotIn('/api/search', request)
             self.assertNotIn('X-User', request)
@@ -26,7 +26,7 @@ class RealPortalRelease(unittest.TestCase):
     def test_second_release_retains_build_without_future_archive_change(self):
         with tempfile.TemporaryDirectory() as temp:
             out = pathlib.Path(temp) / 'released'
-            r = subprocess.run([sys.executable, '-m', 'principiis.portal', 'release', '--edition', 'real-v1', '--step', '2', '--output', str(out)], cwd=ROOT, capture_output=True, text=True)
+            r = subprocess.run([sys.executable, '-m', 'principiis.portal', 'release', '--step', '2', '--output', str(out)], cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stderr)
             request = (out / 'request.txt').read_text()
             self.assertIn('/api/session', request)
@@ -40,8 +40,8 @@ class RealPortalRelease(unittest.TestCase):
             (root/'principiis').mkdir()
             (root/'principiis/__init__.py').touch()
             shutil.copyfile(ROOT/'principiis/portal.py',root/'principiis/portal.py')
-            package=root/'benchmarks/document-portal-real'
-            shutil.copytree(ROOT/'benchmarks/document-portal-real',package)
+            package=root/'benchmarks/document-portal'
+            shutil.copytree(ROOT/'benchmarks/document-portal',package)
             with (package/'requests/01.txt').open('a') as f:f.write('Unexpected changed requirement')
             out=root/'released'
             r=subprocess.run([sys.executable,'-m','principiis.portal','release','--step','1','--output',str(out)],cwd=root,capture_output=True,text=True)

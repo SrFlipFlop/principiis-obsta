@@ -12,7 +12,7 @@ import urllib.request
 import json
 
 ROOT=Path(__file__).resolve().parents[1]
-LIFECYCLE=ROOT/'benchmarks/document-portal-real/executor/lifecycle.py'
+LIFECYCLE=ROOT/'benchmarks/document-portal/executor/lifecycle.py'
 
 class TrustedLifecycle(unittest.TestCase):
     def test_restart_retains_data_and_does_not_forward_fixture_metadata(self):

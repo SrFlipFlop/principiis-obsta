@@ -9,8 +9,7 @@ import sys
 import uuid
 
 SOURCE = Path(__file__).resolve().parents[1]
-PACKAGE = SOURCE / 'benchmarks/document-portal-real'
-FULL_PACKAGE = SOURCE / 'benchmarks/document-portal-full'
+PACKAGE = SOURCE / 'benchmarks/document-portal'
 
 
 def load_bundle(path, package=PACKAGE):
@@ -39,15 +38,13 @@ def main():
     evaluate.add_argument('--bundle', type=Path, required=True)
     evaluate.add_argument('--step', type=int, choices=range(1, 11), required=True)
     evaluate.add_argument('--snapshot', type=Path, default=Path('.'))
-    for command in (release, bind, evaluate):
-        command.add_argument('--edition', choices=['real-v1', 'full-v1'], default='real-v1')
     args = parser.parse_args()
-    package = {'real-v1': PACKAGE, 'full-v1': FULL_PACKAGE}[args.edition]
+    package = PACKAGE
     metadata = json.loads((package / 'package.json').read_text())
     version = metadata.get('version', '1')
     steps = metadata.get('steps', 3)
     if hasattr(args, 'step') and not 1 <= args.step <= steps:
-        parser.error('step outside selected edition')
+        parser.error('step outside benchmark sequence')
     for name, expected in metadata.get('files', {}).items():
         item = (package / name).resolve()
         if not item.is_relative_to(package.resolve()) or hashlib.sha256(item.read_bytes()).hexdigest() != expected:
@@ -66,11 +63,12 @@ def main():
             name = f'{step:02}.txt'
             shutil.copyfile(package / 'requests' / name, args.output / name)
             manifest['steps'].append(dict(id=f'portal-{step}', version=version, sequence_version=version, request=name,
-                check=[sys.executable, str(Path(__file__).resolve()), 'evaluate', '--bundle', str(root), '--step', str(step), '--edition', args.edition]))
+                check=[sys.executable, str(Path(__file__).resolve()), 'evaluate', '--bundle', str(root), '--step', str(step)]))
         (args.output / 'sequence.json').write_text(json.dumps(manifest, indent=2) + '\n')
         return
-    if bundle.get('qualification_status') == 'pending':
-        raise ValueError('checker qualification pending; prepare and qualify revised images before evaluation')
+    if (bundle.get('qualification_status') != 'qualified'
+            or bundle.get('owner_review') != 'approved'):
+        raise ValueError('checker qualification pending or owner review unapproved; qualify and review revised artifacts before evaluation')
     # Stage only candidate source under Docker-visible private storage. Never run it on host.
     snapshot = args.snapshot.resolve()
     from principiis.evaluation import digest

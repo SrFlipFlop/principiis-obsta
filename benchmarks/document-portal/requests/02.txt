@@ -1,0 +1,7 @@
+Request 2 — Can we share engagement folders?
+
+We're duplicating handouts between consultants. Please add named project collections. Whoever creates one owns it and can add existing users by email as readers or editors, change their role, or remove them. Readers view/download; editors also add and edit documents. The owner handles membership, deletion and moving documents. Ownership stays with the creator for now.
+
+Keep personal libraries. Owners can move their personal documents into a collection they own and move documents from their collection back to their library. Documents in a collection belong to that collection. Don't duplicate or renumber them. Let us browse a collection, see its members/roles and do this work in the browser without copying IDs. Keep the existing accounts, files and note workflow.
+
+Client integration: GET/POST /api/collections lists {id,name,role} / creates from {name} (201, role 'owner'). Names are nonempty, up to 200 characters. GET /api/collections/{id}/members lists {user_id,email,role}; PUT the same URL with {email,role:'reader'|'editor'} adds/changes a member; DELETE .../members/{user_id} removes one (204). Document responses add collection_id (string or null); list accepts ?collection_id={id}; creation accepts collection_id; PATCH a document with collection_id sets its location. Existing response formats otherwise stay the same.

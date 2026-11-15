@@ -1,0 +1,14 @@
+Request 1 — Fieldwork document library
+
+We are a small consultancy. Engagement notes and client handouts are scattered across people's laptops. Build a usable document portal where people register with email and password, log in, keep a personal library and log out. Each person's library belongs to them. No email delivery or password recovery is needed for this first release.
+
+People need to upload handouts, write notes, correct titles/descriptions and note content, download original files, and delete documents. Show the library and document details in browser pages, with forms/actions for the entire workflow. Include navigation and visible confirmation when work is saved or deleted. Preserve uploaded bytes and original filenames. Notes download as UTF-8 note.txt. Titles are nonempty and at most 200 characters; uploads are nonempty and at most 2 MiB. Descriptions and notes are text. Visual design, page arrangement and application internals are yours.
+
+Use Python 3.12, Flask 3.1 and SQLite, with server-rendered pages and JavaScript where useful. You may use additional compatible dependencies; list the dependencies needed to install the application in requirements.txt. Start from the empty project. No external service is needed.
+
+Deployment/integration contract: supply app.py so `python app.py` serves on 0.0.0.0:8123 after dependency installation. GET /ready returns 200 when ready. PORTAL_DATA_DIR (default ./data) contains durable application data. A fresh directory starts empty; restarting with the same directory retains accounts, documents and file bytes. Browser and API clients use cookie login. Registration and login are separate operations.
+
+API for an existing client (additional routes/fields are fine):
+- POST /api/users {email,password} -> 201 {id,email}; duplicate email -> 409. POST /api/session {email,password} -> 200 {user:{id,email}} and cookie; incorrect credentials -> 401. GET /api/session -> {user:{id,email}} or 401. DELETE /api/session -> 204.
+- GET /api/documents -> array of {id,title,description,filename,kind}, where id is a string and kind is 'note' or 'file'. POST /api/documents {title,description,content} creates a note; POST /api/uploads accepts multipart title, description and file. Both return 201 document.
+- GET /api/documents/{id} returns a document (including content for notes). PATCH accepts title, description and note content, returning the updated document. DELETE returns 204. GET /api/documents/{id}/download returns original bytes as an attachment. Invalid product input returns a 4xx JSON error.
