@@ -1,0 +1,7 @@
+Request 10 — Let sellers pause their stall
+
+Sellers need a holiday switch. Add Pause stall and Reopen stall to the seller dashboard. A new account's stall is open. While paused, its active listings leave the public catalog/detail, favorites and picture views. The seller can still inspect/edit both active and draft listings in their own dashboard. Reopening makes active listings visible again; preserve each listing's state, ID, stock, picture and metadata.
+
+A paused seller's items may remain in carts, with available:false so buyers can see why checkout cannot proceed. Extend cart items with available for all listings (false also for draft listings); existing title/price/stock fields retain their current values. Checkout containing any unavailable item fails as a whole under the existing rule. An order already placed continues through ready/collected or pending cancellation while the stall is paused. Coupons retain their active/use state; pausing neither consumes nor restores uses.
+
+GET /api/seller/profile -> {id,name,paused}; PATCH the same route {paused:boolean} -> updated profile. A seller changes only their own stall. Add seller_paused to the caller's own listing objects so the dashboard can explain visibility. Public list/search/pagination defaults now also exclude paused sellers, and an unavailable public detail/picture returns 404 (the owner can still use it). Other sellers and historical orders keep their behavior. Pause/reopen survives restart. This supersedes only the earlier assumption that every active listing is publicly visible.

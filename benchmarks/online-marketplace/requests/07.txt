@@ -1,0 +1,7 @@
+Request 7 — Check the receipt mix-ups
+
+The team has a QA report about orders changing after sellers edit their listings. Please check these examples in the browser and API. Fix defects if present; if the application already handles them, retain the behavior and record regression coverage in your own tests or notes.
+
+Place an order, then change its listing's title and price. The purchased order should still show the original title, unit price and total. Make a second listing with the same title but different price, put both in a cart and check out. Their two listing IDs and quantities should remain distinct in the resulting order.
+
+Also place an order with a coupon, deactivate the code, then cancel that pending order. Its displayed discount and total should remain the purchased values, and its coupon use should remain consumed. Restart the app and check the histories again. These examples clarify existing business behavior; they add no new route or lifecycle state.

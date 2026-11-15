@@ -1,0 +1,9 @@
+Request 2 — Let people place pickup orders
+
+Add a personal cart and checkout. A buyer can add active listings sold by other accounts, set quantities from 1 to 100, or remove them. Keep at most one cart line per listing. Cart lines survive navigation and restart but reserve no stock. Display current title, unit price, quantity, available stock and line total. The same cart may include several sellers.
+
+Checkout buys the whole current cart at current listing prices, creating one pending order per seller in a checkout group. Decrease stock and empty the cart only when the whole checkout succeeds. Empty carts, unavailable listings or insufficient stock fail with 4xx and make no order or stock change. If buyers compete for the last stock, successful orders together cannot exceed the available amount. Returning a listing to draft makes it unavailable to checkout even if it was already in a cart.
+
+Store the purchased listing ID, title, unit_price_cents, quantity and line_total_cents on each order line. Later listing edits do not change those purchased values. Each seller order has id, checkout_id, buyer {id,name}, seller {id,name}, status ('pending'), lines, subtotal_cents, discount_cents (initially 0), total_cents and created_at. Totals are sums of purchased lines, with no delivery charge or tax calculation. Buyers pay the displayed total to each seller at pickup; the app handles no money.
+
+GET /api/cart -> {items:[{listing_id,title,unit_price_cents,quantity,stock,line_total_cents}],subtotal_cents}; PUT /api/cart/items/{listing_id} {quantity} adds/replaces quantity; DELETE removes it (204). POST /api/checkouts {} -> 201 {id,orders:[seller order objects]}. Implement the entire flow in the browser and preserve earlier behavior.

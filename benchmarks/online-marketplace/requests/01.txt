@@ -1,0 +1,14 @@
+Request 1 — Cornerstall neighborhood marketplace
+
+Build a usable marketplace where neighbors list goods and arrange pickup. People register with email, name and password, sign in/out, and use the same account to buy or sell. Anyone can browse the catalog; signed-in people manage their own listings. Give the app a browser interface with client-side TypeScript for catalog browsing and forms. Framework, page design and internals are yours.
+
+A listing has a string id, seller {id,name}, title, description, price_cents, stock and state ('draft' or 'active'). All money is EUR integer cents; price_cents is an integer from 1 to 10000000 and stock an integer from 0 to 1000000. Titles are nonempty, at most 200 characters; descriptions are plain text. New listings default to draft. Sellers create/edit their listings and publish or return them to draft. Active listings appear publicly even at zero stock; drafts appear only in the owner's dashboard. Listing deletion is not needed.
+
+Use Node.js 22, TypeScript and SQLite. Compatible dependencies are allowed; declare them in package.json. Start from an empty project. After npm install and npm run build, npm start serves on 0.0.0.0:8123. GET /ready returns 200. MARKET_DATA_DIR (default ./data) holds durable state: fresh storage is empty and restarting preserves accounts/listings.
+
+Minimal API (extra routes/fields are fine):
+- POST /api/users {email,name,password} -> 201 {id,email,name}; duplicate email -> 409. POST /api/session {email,password} -> 200 {user:{id,email,name}} and cookie; wrong credentials -> 401. GET /api/session returns that user shape or 401; DELETE -> 204.
+- GET /api/listings -> array of active listing objects, ordered by string ID ascending. GET /api/listings/{id} -> listing, public for active listings and owner-only for drafts. GET /api/seller/listings -> caller's listings in both states.
+- POST /api/listings {title,description,price_cents,stock,state?} -> 201 listing. PATCH /api/listings/{id} accepts any editable fields -> updated listing.
+
+Invalid product input returns 4xx JSON; unauthenticated account actions return 401. Provide browser registration/login/logout, public catalog/detail and seller listing management. No checkout, payment provider, email or external integration is needed yet.
