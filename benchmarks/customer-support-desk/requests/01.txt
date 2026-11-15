@@ -2,14 +2,16 @@ Request 1 — Relay support desk
 
 Our support conversations are split between shared inboxes and spreadsheets. Build a customer-support desk where people register as customers, sign in, open tickets and exchange replies with our support staff. Staff accounts are created with a CLI command rather than through public registration. Customers can see only their own tickets; staff can work across all tickets.
 
-A ticket has a string ID, subject, status (open, waiting_on_customer, or resolved), creator, timestamps and a chronological conversation. The opening message and later replies are plain text. Customers can create tickets, list and open their own tickets, reply, and reopen a resolved ticket by replying. Staff can list/open all tickets, reply, and change status. Show these complete workflows in server-rendered browser pages with navigation and visible confirmation. Layout and visual design are yours.
+A ticket has a string ID, subject, status (open, waiting_on_customer, or resolved), creator, timestamps and a chronological conversation. New tickets start open. A customer reply makes the ticket open, including when resolved; staff replies leave status unchanged unless staff explicitly change it. The opening message and later replies are plain text. Customers can create tickets, list and open their own tickets and reply. Staff can list/open all tickets, reply, and change status. Show these complete workflows in server-rendered browser pages with navigation and visible confirmation. Layout and visual design are yours.
 
 Use PHP 8.3 and SQLite. You may choose a compatible framework and Composer packages; declare them in composer.json. Start from the empty project. `composer install` followed by `php -S 0.0.0.0:8123 -t public public/router.php` must serve the app. GET /ready returns 200. SUPPORT_DATA_DIR (default ./data) contains durable state; a fresh directory is empty and restart with the same directory retains it.
 
 API contract (additional routes/fields are fine):
 - POST /api/customers {email,password,name} -> 201 {id,email,name}; duplicate email -> 409. POST /api/session {email,password} -> 200 {user:{id,email,name,role}} and cookie; incorrect credentials -> 401. GET/DELETE /api/session reads or ends the session.
-- GET /api/tickets -> ticket summaries available to the current user. POST /api/tickets {subject,message} -> 201 ticket. Subjects are nonempty and at most 200 characters; messages are nonempty text.
+- GET /api/tickets -> array of ticket summaries available to the current user, each with id, subject, status, creator {id,email,name}, created_at and updated_at. POST /api/tickets {subject,message} -> 201 ticket. Subjects are nonempty and at most 200 characters; messages are nonempty text.
 - GET /api/tickets/{id} -> ticket with replies. POST /api/tickets/{id}/replies {message} -> 201 reply. PATCH /api/tickets/{id} {status} -> updated ticket for staff.
 - Product-input errors return 4xx JSON. Unauthenticated API requests return 401.
+
+Ticket details contain the summary fields plus timeline: an array ordered oldest first, including the opening message. Each entry has id, type ('reply'), message, author {id,name,role} and created_at. GET /api/session returns the login user shape or 401; DELETE ends the session with 204. Browser and API use cookie login. Include logout in the browser.
 
 Provide a documented command that creates a staff account from email, password and name. No email delivery, password recovery, deletion or third-party integration is needed.

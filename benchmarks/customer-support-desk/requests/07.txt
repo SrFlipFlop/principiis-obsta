@@ -1,9 +1,9 @@
-Request 7 — Regression report: private notes and duplicate filenames
+Request 7 — Check attachment mix-ups and returning observers
 
-We have a predefined QA report for two confusing cases. It was written before this implementation and does not mean either bug is present. Reproduce the cases through the browser and API, fix them if needed, and otherwise record regression evidence in your own tests or notes.
+Support has two QA scenarios to check. If they already work, add regression coverage in your own tests or notes; otherwise fix the behavior through both browser and API.
 
-First, create an organization ticket with a customer observer. Add a public reply, an internal note, a reply draft and a note attachment named diagnostic.txt. The observer should see/search/export only what their role normally permits. Remove the observer and then remove them from the organization; old direct ticket and attachment URLs should follow their current access. Add them back to the organization without adding them as an observer and check again.
+A customer following an organization ticket leaves the organization and later rejoins. They should need a new observer invitation before following the old ticket again. Test this with someone who is still an observer when removed from the organization. Separately, remove just a ticket's observer invitation while the person remains an organization member; organization membership by itself should not make them follow that case.
 
-Second, attach two different byte sequences both named screenshot.png to separate public replies and another screenshot.png to an internal note. Each visible download must return the bytes for its own attachment and keep the original filename. The customer should not gain the internal-note attachment merely because its filename matches. Restart the app and repeat the downloads.
+The team also reports confusion between files with the same name. Attach different screenshot.png files to two public replies and a third to a staff note. In each person's normal conversation view, the visible files should download with their own original names and bytes, including after restart. Keep the existing public/staff-note distinction.
 
-Also search for `[refund]`, `%_`, and a quote character as literal text in subjects/messages/notes. Results should follow the existing visibility and case-insensitive literal-search rules. This request adds no new role, route or search syntax.
+This request clarifies existing product behavior and adds no role, route or search syntax.

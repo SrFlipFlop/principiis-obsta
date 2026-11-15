@@ -1,4 +1,4 @@
-# Relay customer-support desk — authoring draft v1
+# Relay customer-support desk — authoring draft v1-draft2
 
 Relay is a ten-step PHP customer-support application sequence. It starts with a usable customer/staff ticket workflow and evolves through collaboration, content, reporting, maintenance and account-handover requests.
 
@@ -18,3 +18,5 @@ The requests deliberately vary in detail and delivery style. They describe ordin
 | 10 | Customer account handover | Changed lifecycle requirement |
 
 This package contains authored requests only. It is not owner-approved or oracle-qualified, and no coding-agent run has been performed.
+
+An independent adversarial review resolved the organization-ticket transfer contradiction, permanent observer removal on organization departure, and response-shape ambiguity. Account handover transfers responsibility for personal and organization tickets while preserving historical message authorship. The transfer count includes only tickets whose creator changes. The regression report now describes related product symptoms; its preauthored provenance is recorded here rather than supplied as research instructions to the developer. See the [review record](../../docs/reviews/SUPPORT_REQUEST_ADVERSARIAL_REVIEW.md).

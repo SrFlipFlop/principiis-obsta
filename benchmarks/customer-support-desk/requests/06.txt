@@ -1,6 +1,6 @@
 Request 6 — Search and weekly export
 
-Support leads need to find work and export a weekly snapshot. Add case-insensitive literal search over ticket subject and public reply text. Staff search all tickets; customers search tickets currently visible to them. Internal-note text is searchable only for staff. Don't search attachment contents. Punctuation is ordinary text.
+Support leads need to find work and export a weekly snapshot. Add case-insensitive literal substring search over ticket subject and public reply text, including the opening message. Staff search all tickets; customers search tickets currently visible to them. Internal-note text is searchable only for staff. Don't search attachment contents. Punctuation is ordinary text.
 
 GET /api/tickets accepts q, status, priority, assignee_id and organization_id filters. Filters combine; omitted filters keep the old listing behavior. Customers may use q and status only. Invalid filter values return 4xx. Add equivalent browser filters.
 
