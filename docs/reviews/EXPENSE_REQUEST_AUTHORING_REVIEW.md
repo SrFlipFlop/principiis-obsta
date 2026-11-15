@@ -15,3 +15,5 @@ Scope: public Tally requests authored from the approved baseline specification a
 Author checks cover cumulative statuses, submitted reassignment after reviewer departure, returned corrections, owner transfer, receipt persistence and original creator attribution. The departure feature explicitly clears self-assigned or departed reviewer assignments while retaining submitted claims for owner reassignment. Counts can overlap and are defined per distinct expense.
 
 No benchmark agent has developed the app. Owner review, hidden expectation/property mappings, browser/backend checks, alternative-valid controls and runtime qualification remain outstanding. Hash checks identify authored bytes only.
+
+The parent agent separately reviewed all ten requests before publication. It checked cumulative draft/returned/submitted/final behavior, removal versus transferred responsibility, reassignment after reviewer departure or self-assignment, report/budget status semantics, response shapes, and maintenance/regression framing. No blocking public-contract contradiction was identified. This textual review is not executable oracle qualification.
