@@ -13,7 +13,7 @@ def write_json(path, value):
     temporary.replace(path)
 
 
-def execute_sequence(source, manifest, requests, executor, output, run, *, resume, retry_incomplete):
+def execute_sequence(source, manifest, requests, executor, output, run, *, resume, retry_incomplete, stop_requested=lambda: False):
     output = Path(output).resolve()
     if retry_incomplete and not resume:
         raise ValueError('--retry-incomplete requires --resume')
@@ -70,6 +70,10 @@ def execute_sequence(source, manifest, requests, executor, output, run, *, resum
     if incomplete and not retry_incomplete:
         raise ValueError('incomplete attempt retained; explicit --retry-incomplete required')
     for index, step in enumerate(manifest['steps']):
+        if stop_requested():
+            summary['status'] = 'interrupted'
+            write_json(output / 'sequence.json', summary)
+            return summary
         if step['id'] in completed:
             continue
         previous = [item for item in summary['checkpoints'] if item['id'] == step['id']]
@@ -94,6 +98,10 @@ def execute_sequence(source, manifest, requests, executor, output, run, *, resum
         summary['active_attempt'] = None
         summary['status'] = 'incomplete' if result['outcome'] == 'incomplete' else 'running'
         write_json(output / 'sequence.json', summary)
+        if stop_requested():
+            summary['status'] = 'interrupted'
+            write_json(output / 'sequence.json', summary)
+            return summary
         if result['outcome'] == 'incomplete':
             return summary
         prior_snapshot = destination / 'snapshot'
