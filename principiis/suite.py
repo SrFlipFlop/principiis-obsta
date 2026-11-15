@@ -10,7 +10,7 @@ import tempfile
 import time
 import uuid
 
-from .__main__ import run_sequence
+from .__main__ import evaluator_scores, run_sequence
 from .execution import execute
 from .resource import inspect as inspect_resources
 from .resume import write_json
@@ -110,7 +110,13 @@ def evaluate(args, stop_requested=lambda: False):
         if not (root / 'sequence.json').exists():
             continue
         sequence = read(root / 'sequence.json')
-        for checkpoint in sequence['checkpoints']:
+        checkpoints = list(sequence['checkpoints'])
+        active = sequence.get('active_attempt')
+        if active:
+            result_path = root / active['artifact'] / 'result.json'
+            if result_path.exists() and read(result_path).get('completed'):
+                checkpoints.append(active)
+        for checkpoint in checkpoints:
             source = root / checkpoint['artifact']
             if checkpoint.get('outcome') == 'incomplete':
                 continue
@@ -144,11 +150,7 @@ def evaluate(args, stop_requested=lambda: False):
                 if record['execution']['exit_status'] != 0:
                     raise ValueError('evaluator exited unsuccessfully')
                 scores = read(destination / 'stdout')
-                if not isinstance(scores, dict) or any(scores.get(key) not in ('pass', 'fail', 'unassessable') for key in ('functional', 'security')):
-                    raise ValueError('invalid evaluator scores')
-                record.update({key: scores[key] for key in ('functional', 'security')})
-                record['outcome'] = ('joint_pass' if scores['functional'] == scores['security'] == 'pass' else
-                                     'candidate_failure' if 'fail' in scores.values() else 'unassessable')
+                record.update(evaluator_scores(scores))
                 validate(snapshot)
             except (OSError, ValueError, TypeError, KeyError, KeyboardInterrupt) as error:
                 record.update(outcome='evaluator_error', functional='unassessable', security='unassessable', error=str(error))

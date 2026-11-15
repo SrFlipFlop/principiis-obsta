@@ -182,6 +182,34 @@ class SuiteCLI(unittest.TestCase):
         self.assertEqual(report['resources']['totals']['development']['attempts_present'], 1)
         self.assertEqual(len(report['supplemental_resources']['evaluation_reruns']), 2)
 
+    def test_evaluator_reruns_completed_active_attempt_without_resuming_writer(self):
+        self.cli('run', '--application', 'alpha')
+        root = self.output / 'applications/alpha'
+        journal = root / 'sequence.json'
+        sequence = json.loads(journal.read_text())
+        sequence['active_attempt'] = sequence['checkpoints'].pop()
+        sequence['active_attempt'].pop('outcome')
+        sequence['status'] = 'running'
+        journal.write_text(json.dumps(sequence))
+        primary = {str(path.relative_to(root)): path.read_bytes()
+                   for path in root.rglob('*') if path.is_file()}
+        self.assertEqual(self.report()['denominators']['completed_checkpoints'], 1)
+        (self.base / 'executor.py').write_text('raise RuntimeError("writer must not run")')
+        self.cli('evaluate', '--application', 'alpha', '--evaluator-version', 'v2')
+        assessments = self.report()['evaluations']
+        self.assertEqual(len(assessments), 1)
+        self.assertEqual(assessments[0]['outcome'], 'joint_pass')
+        for name, content in primary.items():
+            self.assertEqual((root / name).read_bytes(), content, name)
+
+    def test_evaluator_additional_fields_do_not_change_scores(self):
+        (self.base / 'check.py').write_text('print(\'{"functional":"pass","security":"unassessable","diagnostic":"fail"}\')')
+        self.cli('run', '--application', 'alpha')
+        self.cli('evaluate', '--application', 'alpha', '--evaluator-version', 'v2')
+        report = self.report()
+        self.assertEqual(report['outcomes']['unassessable'], 1)
+        self.assertEqual(report['evaluations'][0]['outcome'], 'unassessable')
+
     def test_candidate_and_evaluator_failures_remain_distinct(self):
         (self.base / 'check.py').write_text("print('{\"functional\":\"fail\",\"security\":\"pass\"}')")
         self.cli('run', '--application', 'alpha')
