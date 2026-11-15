@@ -67,7 +67,7 @@ def inspect(root, *, result_paths=None):
             evidence = result.get(key, {})
             # Initial result artifacts precede process launch. Missing final execution
             # metadata must not discard an attempt or its already emitted usage.
-            present = stage == 'development' or bool(evidence)
+            present = (stage == 'development' and result.get('stage') != 'independent_evaluation') or bool(evidence)
             stages[stage] = dict(evidence, tokens=token_usage(path.parent / log) if stage == 'development' else evidence.get('tokens')) if present else {}
         attempts.append({'run_id': identity[0], 'session_id': identity[1], 'checkpoint': result['checkpoint'],
                          'attempt': result['attempt'], 'outcome': result['outcome'], 'artifact': str(path), 'stages': stages})

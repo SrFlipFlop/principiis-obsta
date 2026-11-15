@@ -39,7 +39,7 @@ def investigate(args):
         raise ValueError('investigation output must be outside retained snapshot')
     config_path, prompt_path = Path(args.config).resolve(), Path(args.prompt).resolve()
     config = json.loads(config_path.read_text())
-    for field in ('version', 'model', 'settings', 'agent', 'timeout_seconds', 'evidence'):
+    for field in ('version', 'model', 'settings', 'timeout_seconds', 'evidence'):
         if field not in config:
             raise ValueError('missing evaluator configuration: ' + field)
     if not isinstance(config['evidence'], dict) or any(
@@ -47,11 +47,13 @@ def investigate(args):
             or not isinstance(v.get('scope'), str) or not v['scope'] or 'argv' not in v
             for v in config['evidence'].values()):
         raise ValueError('evidence requires operator-declared root cause, scope and argv')
-    commands = [config['agent'], *[v['argv'] for v in config['evidence'].values()]]
+    if ('agent' in config) == ('codex_config' in config):
+        raise ValueError('select exactly one agent argv or codex_config')
+    commands = ([config['agent']] if 'agent' in config else []) + [v['argv'] for v in config['evidence'].values()]
     if any(not isinstance(c, list) or not c or any(not isinstance(v, str) or not v for v in c) for c in commands):
         raise ValueError('commands must be nonempty argv arrays')
-    if not isinstance(config['timeout_seconds'], (int, float)) or config['timeout_seconds'] <= 0:
-        raise ValueError('positive timeout required')
+    if config['timeout_seconds'] is not None and (not isinstance(config['timeout_seconds'], (int, float)) or isinstance(config['timeout_seconds'], bool) or config['timeout_seconds'] <= 0):
+        raise ValueError('positive timeout or null required')
     prompt = prompt_path.read_text()
     original = digest(primary)
     output.mkdir(parents=True, exist_ok=False)
@@ -70,10 +72,33 @@ def investigate(args):
         with tempfile.TemporaryDirectory(prefix='principiis-investigation-') as temporary:
             workspace = Path(temporary) / 'checkpoint'
             shutil.copytree(snapshot, workspace, symlinks=True)
-            agent, response = execute(config['agent'], workspace,
-                json.dumps({'prompt': prompt, 'prompt_version': args.prompt_version,
-                            'checkpoint': str(workspace)}), config['timeout_seconds'], output, 'agent')
+            if 'codex_config' in config:
+                from .codex import Codex
+                adapter = Codex(config['codex_config'], output, snapshot)
+                if config['timeout_seconds'] is not None:
+                    raise ValueError('ordinary Codex evaluator uses unlimited timeout; set timeout_seconds null')
+                with (output / 'agent.stdout').open('w') as stdout, (output / 'agent.stderr').open('w') as stderr:
+                    agent = adapter.execute(workspace, prompt, stdout, stderr)
+                agent.update(stdout_ref='agent.stdout', stderr_ref='agent.stderr',
+                             tokens=token_usage(output / 'agent.stdout'))
+                messages = []
+                for line in (output / 'agent.stdout').read_text().splitlines():
+                    try:
+                        event = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(event, dict) and event.get('type') == 'item.completed':
+                        item = event.get('item', {})
+                        if isinstance(item, dict) and item.get('type') == 'agent_message':
+                            messages.append(item.get('text', ''))
+                response = messages[-1] if messages else ''
+                (output / 'agent.final.txt').write_text(response)
+            else:
+                agent, response = execute(config['agent'], workspace,
+                    json.dumps({'prompt': prompt, 'prompt_version': args.prompt_version,
+                                'checkpoint': str(workspace)}), config['timeout_seconds'], output, 'agent')
             report['agent'] = agent
+            report['resources']['reported_tokens'] = agent.get('tokens')
             if agent['exit_status'] != 0:
                 raise ValueError('evaluator agent failed')
             claims = json.loads(response)['claims']
@@ -110,9 +135,9 @@ def investigate(args):
                 report['claims'].append(finding)
             report['verified_root_causes'] = sorted({c['root_cause'] for c in report['claims'] if c['status'] == 'verified'})
             report['status'] = 'completed'
-    except (ValueError, KeyError, TypeError) as error:
+    except (ValueError, KeyError, TypeError, OSError, KeyboardInterrupt) as error:
         report['status'] = 'evaluator_error'
-        report['error'] = str(error)
+        report['error'] = str(error) or 'controller interrupted'
     finally:
         report['resources']['elapsed_seconds'] = time.monotonic() - started
         report['primary']['unchanged'] = digest(primary) == original

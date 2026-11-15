@@ -50,19 +50,25 @@ class Codex:
         runtime_home.mkdir()
         env = dict(self.env, HOME=str(runtime_home))
         argv = [c['executable'], '--no-daemon', 'exec', '--ephemeral', '--ignore-user-config',
-                '--ignore-rules', '--skip-git-repo-check', '--json', '--model', c['model'],
+                '--ignore-rules', '--skip-git-repo-check', '--json',
                 '--sandbox', c['sandbox'], '--cd', str(workspace)]
-        settings = {'model_reasoning_effort': c['reasoning_effort'], 'approval_policy': c['approval_policy'],
+        if c['model'] != 'default':
+            argv.extend(['--model', c['model']])
+        settings = {'approval_policy': c['approval_policy'],
                     'sandbox_workspace_write.network_access': c['network_access'], 'web_search': c['web_search'],
                     'model_provider': 'openai',
                     'cli_auth_credentials_store': 'file'}
+        if c['reasoning_effort'] != 'default':
+            settings['model_reasoning_effort'] = c['reasoning_effort']
         for key, value in settings.items():
             argv.extend(['-c', key + '=' + json.dumps(value)])
         argv.append('-')
         evidence = {'argv': argv, 'exit_status': None, 'codex': {
             'harness': 'codex-cli', 'version': self.version,
             'access_mode': 'existing-chatgpt-subscription', 'authentication_verified': None,
-            'model': c['model'], 'settings': settings, 'clean_runtime_review': c['clean_runtime_review'],
+            'model': None if c['model'] == 'default' else c['model'],
+            'reasoning_effort': None if c['reasoning_effort'] == 'default' else c['reasoning_effort'],
+            'requested_model': c['model'], 'requested_reasoning_effort': c['reasoning_effort'], 'settings': settings, 'clean_runtime_review': c['clean_runtime_review'],
             'reported_usage': None, 'hosted_model_memory': None,
             'filesystem_boundary': 'normal Codex permissions; host reads are not isolated'}}
         evidence.update(execute(argv, workspace, request, stdout, stderr, env=env, transform=redact))
