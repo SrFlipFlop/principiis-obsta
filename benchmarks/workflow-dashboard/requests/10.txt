@@ -1,0 +1,9 @@
+Request 10 — Hand over a workspace
+
+When an operations lead changes teams, they need to hand their workspace to another registered user. Add an owner-only transfer action with replacement email, a checkbox to retain the former owner as operator (unchecked by default), and confirmation. The replacement need not already be a member.
+
+POST /api/workspaces/{w}/transfer {email,retain_former_owner:boolean} -> 200 {id,name,owner_id,former_owner_role:'operator'|null}. On success the replacement becomes sole owner, the former owner becomes an operator or leaves according to the checkbox, and other members keep their roles. The replacement's previous membership is replaced by owner. The owner cannot transfer to themselves or a nonexistent account; invalid input returns 4xx with no changes.
+
+Preserve every connection, workflow, state, inbound URL, accepted event ID, run ID and attempt record. Historical initiated_by stays unchanged. Current roles govern configuration, manual runs, retries, history and exports immediately. Accepted external event handling continues under the same trigger/lifecycle rules. Personal accounts and other workspaces are unaffected. Preserve the result across restart.
+
+This operation supersedes the original fixed-creator ownership rule. Ordinary member management still cannot remove or demote the owner. No account deletion or global offboarding is part of this request.

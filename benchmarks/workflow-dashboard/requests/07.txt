@@ -1,0 +1,7 @@
+Request 7 — Check the repeated-notification complaint
+
+Operations reports that retrying a workflow after its second delivery fails can send the first notification again. Please check a two-action workflow: accept the first delivery, make the second return 503, then restore that service and retry. We expect one accepted first delivery and one accepted second delivery, with the original run ID and separate attempt history.
+
+Also check an upstream tool resending the same event ID after a restart. It should get the existing run ID rather than starting another run. A different workflow may still use that event ID for its own run.
+
+Exercise these cases through the API and browser history where applicable. If the behavior is already correct, preserve it and add regression coverage in your own tests or notes. This adds no new role, trigger format or retry policy.

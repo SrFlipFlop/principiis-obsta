@@ -1,0 +1,5 @@
+Request 2 — Let colleagues share a workspace
+
+Please add a team to each workspace. Owners invite existing registered users by email as operators or viewers, change their role, and remove them. Operators can run workflows and browse configuration/history; viewers only browse. The owner still creates/edits connections and workflows and manages the team. Membership changes take effect for subsequent actions; historical run authorship does not make someone a member.
+
+Add member management and a workspace selector in the browser. GET /api/workspaces now lists all current memberships with role owner, operator or viewer. GET /api/workspaces/{w}/members -> [{user_id,email,name,role}] for members. PUT the same endpoint with {email,role:'operator'|'viewer'} adds/changes membership; DELETE .../members/{user_id} removes it (204). The owner cannot be removed/demoted through these operations. Each run now includes initiated_by (user ID), retaining null for unavailable pre-upgrade history. Keep IDs, data and earlier workflows.

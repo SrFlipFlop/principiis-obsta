@@ -1,0 +1,21 @@
+{
+  "id": "workflow-dashboard",
+  "version": "v1-draft1",
+  "steps": 10,
+  "owner_review": "pending",
+  "qualification_status": "not_started",
+  "files": {
+    "README.md": "b477e5bcd8bdbb7ad8f5f81bf1ede1290d7be4277c5aefd79edc86e9a0184cc1",
+    "BENCHMARK_DESIGN.md": "e3b6f20aefcf91bdb846e666167633b32a29fffa9c5b28605a11aa057f88738e",
+    "requests/01.txt": "63993136cee36f2fd3c2350b1a8b35e03019bb8fb3151a3acdb33b8965b9264f",
+    "requests/02.txt": "af5f73706787896df169895cc7cdf8d24a3d58aa355f265500a07f899090da0b",
+    "requests/03.txt": "0df1de81d4dbe71499f7f0e3abde6589538e3bf19a40a7a800b2fa63d06b612b",
+    "requests/04.txt": "5f712c4f44764603d443516ab9a36aa38998c9320dc5336d97ddec955c544fe3",
+    "requests/05.txt": "34849045056fe5435a945d2a92f528dcaa75bbbe704ee61a225d0fed1db89fbb",
+    "requests/06.txt": "f2fda9c24fc1afea6fca34e37d2c579ace55976ce8874ce1d558d7cdaad4a0bb",
+    "requests/07.txt": "8ea639886cccdc7b5d5db1c47c667dc64f6e6035dc612ddb53d1542a8749ca14",
+    "requests/08.txt": "ec843063cd585ed431c0d8a1889405e56d132e4b13e9cebf61f6b47dcf1bc8aa",
+    "requests/09.txt": "25460eb3e040c4e7e93938cda755a6918428e996995f47b984bd72aa42065d76",
+    "requests/10.txt": "17f806bf407c4c988b06b2017faf6db8ca9ca612a099fdf01493242b4ac754a8"
+  }
+}

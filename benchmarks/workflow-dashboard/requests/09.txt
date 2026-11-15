@@ -1,0 +1,7 @@
+Request 9 — Pause workflows and retire old ones
+
+We need to stop new work without throwing away history. Add state active, paused or archived to workflows; owners change it from the workflow page or PATCH /api/workflows/{id} {state}. Existing workflows start active. Paused workflows can be edited and resumed. Archived workflows are read-only until restored to paused or active. Owners can change state from any state; no permanent deletion is needed.
+
+Only active workflows accept new manual runs or previously unseen incoming events. Paused/archived ones return 409 without creating a run/event record. An already accepted event ID still returns its existing run, including while paused/archived or its trigger is now disabled. This lookup supersedes request 4's blanket disabled-trigger response for already accepted events. Work already executing finishes normally. Pausing permits retry of existing failed runs; archiving blocks retry until the workflow leaves archived state.
+
+Workflow lists default to active and paused. GET /api/workspaces/{w}/workflows?state=archived lists the archive; state=all includes everything. Details and summaries add state. Members can browse archived workflows and their run history under their existing roles. Reports include all run history regardless of current workflow state. Add pause/resume, archive/restore and archive browsing to the UI. Keep action IDs, trigger setting/URL, event IDs and run attempts across lifecycle changes/restart.

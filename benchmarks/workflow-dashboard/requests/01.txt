@@ -1,0 +1,18 @@
+Request 1 — Switchboard delivery dashboard
+
+Our operations team keeps copying messages into other tools by hand. Build a usable dashboard where people register with email, name and password, log in/out, and create named workspaces. A new workspace belongs to its creator. For now only that owner uses its connections, workflows and run history.
+
+In a workspace, let the owner create HTTP connections with a name, base_url and api_token, and edit them. A workflow has a name, one connection and a message template. Manual Run asks for message and customer strings. In the template, replace {{message}} and {{customer}} with those values; missing values are empty strings. Send the resulting message to the connection and show whether the run succeeded or failed. Keep an execution record with the original input, rendered message, time, connection name, response status and response body. Workflow/connection edits affect later runs, while earlier records keep the values they used. Names are nonempty, at most 100 characters. No deletion is needed yet.
+
+Use Go 1.23 and SQLite, with server-rendered pages and JavaScript where useful. Compatible dependencies are allowed; declare them in go.mod/go.sum. Start from the empty project. `go build -o switchboard ./cmd/switchboard` then `./switchboard` serves on 0.0.0.0:8123. GET /ready returns 200. SWITCHBOARD_DATA_DIR (default ./data) holds durable state. Fresh storage is empty; restarting with the same directory retains accounts, configuration and runs.
+
+Delivery client contract: POST {base_url}/deliver with JSON {delivery_id,message,customer}, Authorization: Bearer {api_token}, and Content-Type application/json. base_url is an absolute http/https origin, without a path. A final 2xx response means success; other statuses, network errors or a response taking over five seconds mean failure. Each run's delivery_id is a distinct string. Our controlled integration service returns 200 {receipt_id,delivery_id} for an accepted delivery. Sending the same delivery_id and body again returns the same receipt without another delivery; changing its body returns 409. No real vendor account is required. Record response text up to 64 KiB and mark truncation if larger.
+
+JSON API, with cookie login:
+- POST /api/users {email,name,password} -> 201 {id,email,name}; duplicate email -> 409. POST /api/session {email,password} -> 200 {user:{id,email,name}}; incorrect credentials -> 401. GET /api/session returns the same user shape or 401; DELETE -> 204.
+- GET/POST /api/workspaces -> [{id,name,role:'owner'}] / create {name} -> 201 workspace.
+- GET/POST /api/workspaces/{w}/connections -> [{id,name,base_url}] / create {name,base_url,api_token} -> 201 connection. PATCH /api/connections/{id} accepts those configuration fields and returns the connection summary.
+- GET/POST /api/workspaces/{w}/workflows -> [{id,name}] / create {name,connection_id,message_template} -> 201 workflow. GET/PATCH /api/workflows/{id} reads/edits the name, connection_id and message_template.
+- POST /api/workflows/{id}/runs {input:{message,customer}} -> 201 completed run. GET /api/workspaces/{w}/runs -> [{id,workflow_id,workflow_name,status,created_at}]. GET /api/runs/{id} adds input and delivery {delivery_id,connection_name,message,response_status,response_body,truncated,error}; absent status is null and error is nonempty only on failure.
+
+IDs are strings, times UTC RFC3339, status is succeeded or failed. Invalid product input returns 4xx JSON; unauthenticated API requests return 401. Provide complete browser forms and navigation for account, workspace, connection, workflow, run and detail pages. Visual layout and internals are yours.

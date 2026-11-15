@@ -1,0 +1,5 @@
+Request 8 — Make run state easier to maintain
+
+Before adding lifecycle controls, review and refactor how workflows, runs, attempts and action outcomes are represented. Give execution-state transitions a clear shared internal boundary. Choose your design, module names and storage approach.
+
+Preserve every browser/API behavior through request 7: action ordering, original execution configuration, completed-delivery retention, retry limits and attempts, event deduplication, collaboration, literal search and CSV output. Existing accounts/configuration/history must survive upgrade and restart. Use your own tests and brief notes to explain what was preserved. This adds no route, role or response field. If the design already has an appropriate boundary, document it and improve coverage instead of changing structure unnecessarily.
