@@ -48,9 +48,10 @@ def token_usage(path):
     return result
 
 
-def inspect(root):
+def inspect(root, *, result_paths=None):
     root = Path(root)
-    paths = [root / 'result.json'] if (root / 'result.json').is_file() else sorted(root.rglob('result.json'))
+    paths = (list(result_paths) if result_paths is not None else
+             [root / 'result.json'] if (root / 'result.json').is_file() else sorted(root.rglob('result.json')))
     attempts = []
     seen = {}
     for path in paths:

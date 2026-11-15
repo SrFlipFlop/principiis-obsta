@@ -91,7 +91,7 @@ def save_result(output, result):
         f"Functional: {result['functional']}; security: {result['security']}\n")
 
 
-def run_sequence(sequence_path, executor, output, *, resume=False, retry_incomplete=False):
+def run_sequence(sequence_path, executor, output, *, resume=False, retry_incomplete=False, stop_requested=lambda: False):
     sequence_path = Path(sequence_path).resolve()
     manifest = json.loads(sequence_path.read_text())
     condition = manifest.get('condition')
@@ -115,7 +115,7 @@ def run_sequence(sequence_path, executor, output, *, resume=False, retry_incompl
         requests.append((sequence_path.parent / step['request']).read_text())
     from .resume import execute_sequence
     return execute_sequence(sequence_path, manifest, requests, executor, output, run,
-                            resume=resume, retry_incomplete=retry_incomplete)
+                            resume=resume, retry_incomplete=retry_incomplete, stop_requested=stop_requested)
 
 
 def main():
