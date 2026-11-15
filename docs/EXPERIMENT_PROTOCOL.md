@@ -1,4 +1,4 @@
-> Current authority: [approved baseline pilot spec](BASELINE_PILOT_SPEC.md), accepted by the owner on 2026-11-14. This document retains research proposals and the alignment record; historical multi-arm pilot, fixed-stack and offline-development suggestions are not current scope. Initial comparative interventions and actual pilot execution settings are deferred.
+> Current authority: [approved baseline pilot spec](BASELINE_PILOT_SPEC.md), accepted by the owner on 2026-11-14, with execution decisions added on 2026-11-15. This document retains research proposals and the alignment record; historical multi-arm pilot, fixed-stack and offline-development suggestions are not current scope. Comparative interventions remain deferred; current baseline execution settings are in the approved spec.
 
 # Experimental protocol — research proposals and alignment record
 

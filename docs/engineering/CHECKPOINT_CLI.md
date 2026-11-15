@@ -1,5 +1,7 @@
 # Fixture checkpoint interface (#1)
 
+For the current baseline, use the [manual checkpoint workflow](../MANUAL_CHECKPOINT_WORKFLOW.md). The `run`/`sequence` paths and original slice records below retain engineering-fixture and compatibility behavior; current execution settings are governed by the [approved spec](../BASELINE_PILOT_SPEC.md).
+
 Implementation decision (2026-11-14): use Python 3.10+ and its standard library, JSON task/results and local filesystem artifacts. This keeps the first vertical slice runnable without dependency installation, a database, services or a plugin framework. It is engineering scaffolding, not a research finding or a new benchmark application.
 
 From the repository root, one command runs the harmless fixture without any model:

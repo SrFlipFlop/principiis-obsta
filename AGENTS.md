@@ -1,10 +1,10 @@
 # Principiis Obsta: agent working agreement
 
-Read `docs/START_HERE.md`, `docs/BASELINE_PILOT_SPEC.md`, `CONTEXT.md`, and `docs/OPEN_DECISIONS.md` before implementation. The charter and protocol retain research rationale and alignment history.
+Read `docs/START_HERE.md`, `docs/BASELINE_PILOT_SPEC.md`, `GLOSSARY.md`, and `docs/OPEN_DECISIONS.md` before implementation. The charter and protocol retain research rationale and alignment history.
 
-## Current phase: baseline implementation planning
+## Current phase: baseline implementation and qualification
 - The owner completed `/grill-with-docs` and approved `docs/BASELINE_PILOT_SPEC.md` on 2026-11-14. That spec governs baseline scaffolding, benchmark authoring and evaluation; it supersedes earlier research proposals. Security interventions are later phases, not initial implementation scope.
-- Model/settings and practical limits are deferred until pilot execution. Do not start paid runs, publish results or expand scope based on this approval.
+- Execution settings and retry limits were selected on 2026-11-15; see the approved spec. Technical qualification and separate pilot launch approval remain required. Do not start paid runs, publish results or expand scope based on this approval.
 - It is acceptable to initialize Git, organize documentation, install approved skills, and perform source-grounded literature / tool research. Do not create unnecessary production code, deploy infrastructure, push to remote, or start paid model runs without explicit approval.
 - Preserve distinctions between **verified literature findings**, **hypotheses**, **proposals**, and **decisions**. Cite primary papers, repos, and official docs with URL, date checked, and uncertainty. Don't fabricate support.
 
@@ -36,4 +36,4 @@ Use the five standard triage roles; see `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
-Single context: `CONTEXT.md` and `docs/adr/`, created lazily during alignment; see `docs/agents/domain.md`.
+Single context: `GLOSSARY.md` and `docs/adr/`; see `docs/agents/domain.md` for terminology and decision records. For alignment, planning and review, see `docs/agents/workflow.md`.

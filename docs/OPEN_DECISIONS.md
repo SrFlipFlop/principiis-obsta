@@ -1,6 +1,6 @@
 # Remaining decisions and authoring work
 
-Owner completed `/grill-with-docs` and approved [baseline pilot specification](BASELINE_PILOT_SPEC.md) on 2026-11-14. Agreed vocabulary is in [CONTEXT.md](../CONTEXT.md); the five themes/backend assignments are in [application catalog](BENCHMARK_APPLICATIONS.md). Do not reopen accepted scope to settle routine implementation details.
+Owner completed `/grill-with-docs` and approved [baseline pilot specification](BASELINE_PILOT_SPEC.md) on 2026-11-14. Agreed vocabulary is in [GLOSSARY.md](../GLOSSARY.md); the five themes/backend assignments are in [application catalog](BENCHMARK_APPLICATIONS.md). Do not reopen accepted scope to settle routine implementation details.
 
 ## Agreed baseline scope
 

@@ -1,6 +1,6 @@
 # Benchmark application catalog
 
-Status: five themes confirmed by the owner during `/grill-with-docs`. This catalog records research scope, not executable task specifications. Feature examples and risk opportunities below are candidate content; ten steps per application are confirmed; exact requests, requirements, risk matrix and evaluator contracts remain open. Do not expose researcher risk labels or hidden checks to baseline coding agents.
+Status: five themes confirmed by the owner during `/grill-with-docs`. This catalog records research scope, not executable task specifications. Feature examples and risk opportunities below are the original candidate content; ten steps per application are confirmed. Consult each `benchmarks/<application>/` package and its current work items for authored request versions, requirements and evaluator qualification. Do not expose researcher risk labels or hidden checks to baseline coding agents.
 
 | Agreed application | Candidate functionality | Candidate risk opportunities |
 | --- | --- | --- |

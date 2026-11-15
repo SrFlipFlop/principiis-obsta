@@ -1,5 +1,7 @@
 # Suite execution and reporting
 
+For the current baseline, use the [manual checkpoint workflow](../MANUAL_CHECKPOINT_WORKFLOW.md) with suite preparation/reporting. The automatic `run` and suite-wide `evaluate` commands below retain compatibility behavior; they do not replace separate manual checkpoint triggers.
+
 Issue #18 adds `python3 -m principiis.suite`. It composes the existing sequence,
 resume, resource and independent-evaluation artifact interfaces. It has no benchmark
 folder or edition assumptions and adds no dependencies. It does not launch a run

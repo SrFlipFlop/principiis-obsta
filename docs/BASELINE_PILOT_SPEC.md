@@ -1,6 +1,6 @@
 # Baseline pilot specification — approved
 
-Status: reviewed and approved by the owner on 2026-11-14 after `/grill-with-docs`. Baseline scaffolding, benchmark authoring and independent evaluation are approved in scope. Actual pilot execution still requires qualified machinery and separate launch approval; execution settings were subsequently selected on 2026-11-15 below. Paid API experiments remain unauthorized. Routine engineering choices below are proposals, not experimental conclusions. This document takes precedence over superseded pilot recommendations in the research notes; the glossary remains in `CONTEXT.md`.
+Status: reviewed and approved by the owner on 2026-11-14 after `/grill-with-docs`. Baseline scaffolding, benchmark authoring and independent evaluation are approved in scope. Actual pilot execution still requires qualified machinery and separate launch approval; execution settings were subsequently selected on 2026-11-15 below. Paid API experiments remain unauthorized. Routine engineering choices below are proposals, not experimental conclusions. This document takes precedence over superseded pilot recommendations in the research notes; terminology is in [GLOSSARY.md](../GLOSSARY.md).
 
 ## Purpose and scope
 

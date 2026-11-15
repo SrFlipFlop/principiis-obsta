@@ -1,3 +1,7 @@
 # Domain documentation
 
-Single-context project. Read root `CONTEXT.md`, when present, and relevant `docs/adr/` records before domain or architecture work. The installed `/grill-with-docs` creates these lazily as terms and consequential decisions are agreed. Do not prepopulate them with unapproved hypotheses or implementation plans. `CONTEXT.md` is a glossary, not a specification. Use its agreed vocabulary and flag ADR conflicts. Before research or implementation proposals also read `docs/START_HERE.md`, the charter, protocol, open decisions and research synthesis. Current upstream renamed the glossary to `GLOSSARY.md`; retain the installed convention unless deliberately migrated. Research interventions remain separate versioned artifacts, never global project instructions.
+Read root [GLOSSARY.md](../../GLOSSARY.md) and relevant [ADRs](../adr/) before domain or architecture work. This project has one domain context. Use the agreed vocabulary and flag ADR conflicts.
+
+Use `/domain-modeling` when changing terminology or recording a consequential decision. Keep definitions in the glossary, approved scope in the [baseline specification](../BASELINE_PILOT_SPEC.md), and rationale in ADRs. Add an ADR only for a hard-to-reverse, non-obvious choice between real alternatives; routine implementation choices belong in engineering documentation. Create records as decisions are agreed rather than filling templates speculatively.
+
+For research proposals, also read the charter, protocol and research synthesis linked from [START_HERE](../START_HERE.md). Keep findings, hypotheses, proposals and decisions distinct. Experimental interventions remain separately versioned benchmark artifacts, outside project-wide instructions.
