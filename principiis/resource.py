@@ -48,25 +48,27 @@ def token_usage(path):
     return result
 
 
-def inspect(root):
+def inspect(root, *, result_paths=None):
     root = Path(root)
-    paths = [root / 'result.json'] if (root / 'result.json').is_file() else sorted(root.rglob('result.json'))
+    paths = (list(result_paths) if result_paths is not None else
+             [root / 'result.json'] if (root / 'result.json').is_file() else sorted(root.rglob('result.json')))
     attempts = []
     seen = {}
     for path in paths:
         result = json.loads(path.read_text())
         identity = (result['run_id'], result['session_id'])
-        if identity in seen:
-            if result != seen[identity]:
+        dedup_identity = identity if all(identity) else ('unknown allocation', str(path.resolve()))
+        if dedup_identity in seen:
+            if result != seen[dedup_identity]:
                 raise ValueError('conflicting evidence for the same run/session')
             continue
-        seen[identity] = result
+        seen[dedup_identity] = result
         stages = {}
         for stage, key, log in [('development', 'execution', 'executor.stdout'), ('evaluation', 'evaluation', 'evaluator.stdout')]:
             evidence = result.get(key, {})
             # Initial result artifacts precede process launch. Missing final execution
             # metadata must not discard an attempt or its already emitted usage.
-            present = stage == 'development' or bool(evidence)
+            present = (stage == 'development' and result.get('stage') != 'independent_evaluation') or bool(evidence)
             stages[stage] = dict(evidence, tokens=token_usage(path.parent / log) if stage == 'development' else evidence.get('tokens')) if present else {}
         attempts.append({'run_id': identity[0], 'session_id': identity[1], 'checkpoint': result['checkpoint'],
                          'attempt': result['attempt'], 'outcome': result['outcome'], 'artifact': str(path), 'stages': stages})

@@ -21,10 +21,15 @@ Owner completed `/grill-with-docs` and approved [baseline pilot specification](B
 
 These are work items within approved scope, not blockers requiring a new alignment session for every detail. Avoid copying benchmark answer keys into evaluated contexts.
 
+## Owner execution decisions — 2026-11-15
+
+Developer and evaluator both use ordinary Codex subscription access with harness default model/reasoning. Record effective values when exposed, otherwise unknown. No step or sequence time limits apply; measure elapsed time and reported tokens. At most three explicit retries per step are permitted, preserving all attempts. The owner manually triggers development and evaluation separately at each checkpoint. Controller support must implement these decisions before use.
+
+Issue #8's revised request/rubric intent is owner-approved. Technical qualification remains pending, including a clock regression found during a subsequent safe-control trial; #8 remains open.
+
 ## Deliberately deferred until execution
 
-- Actual developer/evaluator model identifiers and settings. Current personal usage GPT-6.1-Sol/default is not a study pin.
-- Practical step/sequence time/resource limits, account capacity and bounded retry rules. Subscription access does not authorize paid APIs.
+- Account capacity and any further practical resource decisions. Subscription access does not authorize paid APIs.
 - Scheduling the 50-step baseline after the machinery and oracles are qualified. Preserve all failed/incomplete attempts and make no efficacy claim from the pilot.
 
 ## Later research phases

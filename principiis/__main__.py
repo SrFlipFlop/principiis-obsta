@@ -10,7 +10,17 @@ import tempfile
 import uuid
 
 
-def run(task_path, executor, output, *, prior_snapshot=None, run_id=None, sequence=None, visible_request=None, attempt=1):
+def evaluator_scores(scores):
+    """Validate the two evaluator properties and ignore additional fields."""
+    if not isinstance(scores, dict) or any(scores.get(key) not in ('pass', 'fail', 'unassessable') for key in ('functional', 'security')):
+        raise ValueError('invalid evaluator scores')
+    properties = {key: scores[key] for key in ('functional', 'security')}
+    outcome = ('joint_pass' if properties['functional'] == properties['security'] == 'pass'
+               else 'candidate_failure' if 'fail' in properties.values() else 'unassessable')
+    return dict(properties, outcome=outcome)
+
+
+def run(task_path, executor, output, *, prior_snapshot=None, run_id=None, sequence=None, visible_request=None, attempt=1, defer_evaluation=False):
     task_path = Path(task_path).resolve()
     task = json.loads(task_path.read_text())
     request = visible_request if visible_request is not None else (task_path.parent / task['request']).read_text()
@@ -51,6 +61,10 @@ def run(task_path, executor, output, *, prior_snapshot=None, run_id=None, sequen
         result['snapshot_error'] = str(error)
         save_result(output, result)
         return result
+    if defer_evaluation:
+        result.update(outcome='pending_evaluation', completed=True)
+        save_result(output, result)
+        return result
     check = list(task['check'])
     # Relative existing file arguments belong to the task package, not the candidate.
     check = check_argv(task_path.parent, check)
@@ -67,11 +81,7 @@ def run(task_path, executor, output, *, prior_snapshot=None, run_id=None, sequen
         if result['evaluation']['exit_status'] != 0:
             raise ValueError('evaluator exited unsuccessfully')
         scores = json.loads((output / 'evaluator.stdout').read_text())
-        if not isinstance(scores, dict) or any(scores.get(key) not in ('pass', 'fail', 'unassessable') for key in ('functional', 'security')):
-            raise ValueError('invalid evaluator scores')
-        result.update({key: scores[key] for key in ('functional', 'security')})
-        result['outcome'] = ('joint_pass' if scores['functional'] == scores['security'] == 'pass'
-                             else 'candidate_failure' if 'fail' in (scores['functional'], scores['security']) else 'unassessable')
+        result.update(evaluator_scores(scores))
     except (OSError, ValueError, TypeError, KeyboardInterrupt) as error:
         result['evaluation']['error'] = str(error) or 'controller interrupted'
     result['completed'] = True
@@ -91,7 +101,7 @@ def save_result(output, result):
         f"Functional: {result['functional']}; security: {result['security']}\n")
 
 
-def run_sequence(sequence_path, executor, output, *, resume=False, retry_incomplete=False):
+def run_sequence(sequence_path, executor, output, *, resume=False, retry_incomplete=False, stop_requested=lambda: False):
     sequence_path = Path(sequence_path).resolve()
     manifest = json.loads(sequence_path.read_text())
     condition = manifest.get('condition')
@@ -115,7 +125,7 @@ def run_sequence(sequence_path, executor, output, *, resume=False, retry_incompl
         requests.append((sequence_path.parent / step['request']).read_text())
     from .resume import execute_sequence
     return execute_sequence(sequence_path, manifest, requests, executor, output, run,
-                            resume=resume, retry_incomplete=retry_incomplete)
+                            resume=resume, retry_incomplete=retry_incomplete, stop_requested=stop_requested)
 
 
 def main():

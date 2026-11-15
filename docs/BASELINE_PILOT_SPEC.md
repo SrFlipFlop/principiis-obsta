@@ -1,6 +1,6 @@
 # Baseline pilot specification — approved
 
-Status: reviewed and approved by the owner on 2026-11-14 after `/grill-with-docs`. Baseline scaffolding, benchmark authoring and independent evaluation are approved in scope. Actual pilot execution still needs the deferred model/settings and practical run limits selected. Paid API experiments remain unauthorized. Routine engineering choices below are proposals, not experimental conclusions. This document takes precedence over superseded pilot recommendations in the research notes; the glossary remains in `CONTEXT.md`.
+Status: reviewed and approved by the owner on 2026-11-14 after `/grill-with-docs`. Baseline scaffolding, benchmark authoring and independent evaluation are approved in scope. Actual pilot execution still requires qualified machinery and separate launch approval; execution settings were subsequently selected on 2026-11-15 below. Paid API experiments remain unauthorized. Routine engineering choices below are proposals, not experimental conclusions. This document takes precedence over superseded pilot recommendations in the research notes; the glossary remains in `CONTEXT.md`.
 
 ## Purpose and scope
 
@@ -58,6 +58,16 @@ Later compare incremental development with a fresh upfront-development run recei
 
 Scaffolding is ready when the full baseline path can deliver requests, run ordinary Codex, retain correct state, hide future/evaluator content, preserve artifacts and failures, resume at checkpoints, evaluate browser/backend behavior and report resource use. Verify these properties before scheduling the full 50-step pilot. Passing the pilot does not require every generated application to be secure or functional.
 
-Remaining authoring work: exact ten-step sequences, application framework/database choices, browser/API contracts, security properties and evaluator controls. Remaining execution-time choices: model/reasoning, practical time/resource ceilings, interruption classification and bounded retry policy. Implementation details can be resolved with simple documented choices; they need not become new research dimensions.
+Remaining authoring work: exact ten-step sequences, application framework/database choices, browser/API contracts, security properties and evaluator controls. Execution settings and retry limits were selected on 2026-11-15 below; interruption classification and qualification remain implementation work. Implementation details can be resolved with simple documented choices; they need not become new research dimensions.
 
 Implementation plan: the owner-approved breakdown is published as GitHub issues #1–#19, linked from the local planning document. Begin with issue #1 and respect dependencies. No benchmark implementation or experiment was performed during alignment or issue publication.
+
+## Owner clarification — 2026-11-15
+
+Issue #8 alignment clarified the existing baseline boundary: requests vary in detail and technical prescription, retain ordinary business policy and omit researcher-added secure-development guidance. Hidden security properties can apply even when absent from requests; absence is a visibility label, not an exemption from security evaluation. Compatible third-party dependencies remain the evaluated agent's choice. Minimal integration contracts must accommodate legitimate implementations. These principles supersede the early Fieldwork authoring choices that restricted dependencies and mapped primary security exclusively to supplied rules. See [ADR 0001](adr/0001-separate-baseline-requests-from-security-expectations.md). Concrete revised request/rubric intent was subsequently approved as recorded below; oracle qualification remains pending. No pilot launch or paid run is authorized.
+
+## Owner execution decisions — 2026-11-15
+
+The owner selected ordinary Codex subscription access for both developer and evaluator, using the harness default model and reasoning settings. Record effective model/reasoning values when exposed; otherwise record unknown. Apply no step or sequence time limits, and measure elapsed time and reported tokens. Allow at most three explicit retries per step, preserving every attempt. Development and evaluation must be separately triggered manually for each checkpoint; do not automatically execute the whole sequence. These decisions supersede the earlier deferral of settings, time limits and retry policy and require corresponding controller support.
+
+The owner also approved issue #8's concrete revised request/rubric intent. Technical oracle and runtime qualification remain pending; a subsequent safe-control trial exposed a clock regression. Intent approval does not complete #8 or authorize a pilot launch or paid calls.

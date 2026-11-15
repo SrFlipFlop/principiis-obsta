@@ -69,7 +69,10 @@ The research agent or person defining application scenarios, development request
 The agent whose development output is measured under a condition. It receives the released task contract and permitted project context, without hidden evaluator materials or benchmark-author notes.
 
 **Task contract**:
-The observable requirements for a development task, including the minimal external API routes, request/response formats and behavior needed for evaluation. It leaves internal architecture and frontend design open within the application's selected technology constraints.
+The developer-visible requirements for a development task, including any minimal external interfaces needed for evaluation. Its detail and technical prescription may vary; hidden security expectations are defined separately and are not limited to what the request states.
+
+**Security expectation**:
+A predefined property used to assess an application’s security, justified independently of whether a developer request states it. Its visibility in the request is recorded as stated, implied or absent.
 
 **Evaluator agent**:
 An independent agent that runs hidden functional/security checks and investigates additional vulnerabilities using reproducible evidence. Primary scores come from predefined executable checks, while agent-discovered findings are separately validated and reported; neither is returned to the evaluated coding agent.

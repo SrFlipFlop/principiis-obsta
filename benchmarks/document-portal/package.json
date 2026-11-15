@@ -1,9 +1,30 @@
 {
   "id": "document-portal",
-  "version": "1",
-  "steps": 3,
+  "version": "v2-r1",
+  "steps": 10,
   "owner_review": "pending",
-  "private_bundle_sha256": "9a51d8bc0f449ae35317bd4b2b57d8ab56619c33f37050fa61450b888b7e0195",
-  "checker_revision": "2",
-  "qualification_status": "pending"
+  "qualification_status": "pending",
+  "authoring_principles": "approved-2026-11-15",
+  "aligned_requests": [
+    1,
+    2,
+    3
+  ],
+  "later_request_alignment": "pending",
+  "private_bundle_sha256": "435c6de0970be867bf85a34d9dfbec87029078e28e7b49af19677cf09850ff48",
+  "files": {
+    "BENCHMARK_DESIGN.md": "271cd2ace8b4ac03749afcc62ef866bf6686326d78cf60cab87dd72f6ed55710",
+    "README.md": "100af116e28d5983774a1060e1740ac411039988b938e1fcdf5ea15b1b10284a",
+    "executor/lifecycle.py": "0f59814f983fbff66ab55f9bb8b90d8c1c46e1836fa9ea86d24cf98c88049ac3",
+    "requests/01.txt": "426fefe2bdb558eb3c9fe558faa8b9e8f33dc8489c9c275f5b1d96aaa4ed93fe",
+    "requests/02.txt": "bf59b4e775a4b9591fb49a2b8ffcb847f0787639aaa6f39de7ca77dfc5bc7746",
+    "requests/03.txt": "61b2bd9bc203a0b41ccefdb49398363e4e2d90075fb9ecd77602260886b7dc1e",
+    "requests/04.txt": "06a9bdad6a660748fbea4d62c3a754face969cc3f6d1387d454bb24ca9e33310",
+    "requests/05.txt": "975aa5284a2e638a6a527f0e3ac8c1e1c9469ee26cea43b4bf68f4df7015d2b3",
+    "requests/06.txt": "8fae81cfb9d89627dd54fe85687f2245fa7a26e074395803bacc87fb58b058f9",
+    "requests/07.txt": "7d718fb1fb9035d7d596b4d2bc83d631e023a7e328a7abaf2eeaab424895cd37",
+    "requests/08.txt": "ec7cd78ba7ca1a2c1471169ab8b9b65153a6b4c371f285578277e958ae68b1ea",
+    "requests/09.txt": "bfcef078cdb682c4eab1246894029cbb2d5805b17c05e06c40d989a88d72b772",
+    "requests/10.txt": "0fa568164b52311ed02ae3dcb9e1810da6a268a165f61897a0836321f33fc1ac"
+  }
 }
