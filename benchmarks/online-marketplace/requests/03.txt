@@ -2,6 +2,6 @@ Request 3 — Sellers need a pickup queue
 
 Please add order history for buyers and a pickup queue for sellers. A buyer sees their orders across sellers; each seller sees only orders placed with them. Either party can open their order details and see the purchased titles, quantities and total. Sellers need the buyer's name, not their account email or another seller's order.
 
-The seller can mark an entire pending order ready and an entire ready order collected. Buyers only read status. Repeating the same transition is fine; skipping a state or going backward returns 4xx. Show the current status and actions in the browser. We don't need per-line fulfillment or cancellations yet.
+The seller can mark an entire pending order ready and an entire ready order collected. Buyers only read status. Repeating a transition succeeds only when the order is currently in that target state: ready on ready and collected on collected return the unchanged order. Skipping a state or going backward returns 4xx, including ready on an already collected order. Show the current status and actions in the browser. We don't need per-line fulfillment or cancellations yet.
 
 GET /api/orders -> array of the caller's buyer orders; GET /api/seller/orders -> array of their seller orders. Both use the existing order shape, sorted by string ID ascending. GET /api/orders/{id} -> order for its buyer or seller. POST /api/orders/{id}/ready and .../collected -> 200 updated order. No listing price, title or stock change should rewrite order history.

@@ -14,3 +14,5 @@ Scope: original v1-draft1 public requests authored by one agent in an isolated w
 Manual cumulative pass checked checkout grouping, current cart prices versus historical purchased prices, stock competition, all-or-nothing checkout, fulfillment versus cancellation, coupon limits, picture replacement, paused listing visibility, and restart requirements. Choice of framework, database library, rendering layout and internal modules remains open.
 
 Validation covers numbered request count, JSON metadata and SHA-256 file integrity, plus whitespace. It cannot establish that hidden checks accept legitimate implementations or detect vulnerabilities. Hidden expectation mappings, controls, owner review and runtime qualification remain pending.
+
+Parent review resolved two cumulative edge cases: cancellation may return stock above the seller-input cap after restocking (while submitted stock values remain capped), and repeat fulfillment actions succeed only while the order is currently in their target state. Ready/collected actions cannot revive cancelled orders.
