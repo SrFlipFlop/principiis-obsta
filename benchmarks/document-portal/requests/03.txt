@@ -1,6 +1,6 @@
 Request 3 — Handover and recovering deleted work
 
-We need two things for engagement handovers: find old notes and download a selection of documents together. Add case-insensitive literal search over titles, descriptions and note text, across the library or within one collection. Don't search uploaded binary contents. Search punctuation should behave like ordinary text.
+We need two things for engagement handovers: find old notes and download a selection of documents together. Add case-insensitive literal substring search over titles, descriptions and note text, in the caller's personal library by default or within the selected collection. Don't search uploaded binary contents. Search punctuation should behave like ordinary text.
 
 Also, people keep deleting the wrong thing. Change Delete to archive instead of permanent removal. Archived items leave normal lists and search. The archive is an owner-only workspace: the personal-library owner or collection owner can browse it, download documents and restore them. While archived, a document is read-only. Restoring keeps its ID, location, metadata and bytes. There is no permanent-delete feature yet; already deleted items need not reappear.
 

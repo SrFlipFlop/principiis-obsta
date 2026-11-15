@@ -15,6 +15,8 @@ PACKAGE = SOURCE / 'benchmarks/document-portal'
 def load_bundle(path, package=PACKAGE):
     raw = (path / 'bundle.json').read_bytes()
     expected = json.loads((package / 'package.json').read_text())['private_bundle_sha256']
+    if not expected:
+        raise ValueError('revised requests require a new private evaluator bundle; binding pending')
     if hashlib.sha256(raw).hexdigest() != expected:
         raise ValueError('private bundle metadata digest mismatch')
     bundle = json.loads(raw)

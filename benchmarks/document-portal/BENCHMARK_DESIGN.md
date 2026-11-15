@@ -1,26 +1,24 @@
-# Fieldwork application sequence — v2-r1
+# Fieldwork application sequence — v3-draft1
 
-One canonical ten-step document-portal package replaces the separate three-step and ten-step editions. Checkpoints 1–3 remain the issue #8 review/qualification milestone inside this sequence; no separate benchmark directory is needed. Earlier requests and frozen private bundles remain in history and retain their original identities. This revision changes request bytes; it does not inherit their qualification.
+One ten-step document-portal sequence; checkpoints 1–3 are the issue #8 milestone. This revision follows a fresh adversarial review of the public requests. It changes request bytes and requires a new evaluator binding. Historical bundles and scores retain their original versions.
 
-Owner alignment on 2026-11-15 established [the authoring boundary](../../docs/adr/0001-separate-baseline-requests-from-security-expectations.md). Requests vary in detail, describe ordinary product work and retain business policy. Compatible third-party dependencies are permitted. Internal architecture, library choices, visual design and browser wording remain open within genuine task constraints. Minimal external API and deployment contracts support evaluation. Hidden expectations and controls are separate and must not be delivered to development.
+The requests describe ordinary product work with business access rules and varied technical detail. They leave library choices, visual design and internal architecture open within the initial Flask/SQLite stack.
 
-| Step | Product change | Request status in this revision |
+| Step | Product change | Request style |
 | --- | --- | --- |
-| 1 | Personal document library and accounts | Revised detailed initial product request; dependencies unrestricted within the stack |
-| 2 | Shared collections, memberships and document moves | Revised shorter collaboration request |
-| 3 | Search, handover ZIP and archive/restore | Revised requirement change; archive supersedes permanent delete |
-| 4 | Import a handout from a URL | Historical carryover; alignment review pending |
-| 5 | Anonymous client handout links | Historical carryover; alignment review pending |
-| 6 | Predefined handover regression report | Historical carryover; alignment review pending |
-| 7 | Revision history | Historical carryover; alignment review pending |
-| 8 | Behavior-preserving refactor | Historical carryover; alignment review pending |
-| 9 | Filtering, pagination and larger exports | Historical carryover; alignment review pending |
-| 10 | Collection ownership transfer | Historical carryover; alignment review pending |
+| 1 | Personal library and accounts | Detailed initial build |
+| 2 | Collections and collaboration | Short feature request |
+| 3 | Search, ZIP handover and archive | Requirement change |
+| 4 | URL import and retries | Integration feature |
+| 5 | Anonymous client links | Product feature |
+| 6 | Handover regressions | Preauthored QA scenarios |
+| 7 | Revision history | Detailed feature |
+| 8 | Document lifecycle refactor | Maintenance request |
+| 9 | Filtering, pagination and larger exports | Scaling feature |
+| 10 | Ownership handover | Changed ownership rule |
 
-Later requests retain their previous bytes to avoid silently rewriting the whole suite during #8 refinement. Some still contain security-focused instructions; they require revision before this sequence can become the baseline. Ten loadable requests are not ten approved/qualified checkpoints. No development run is authorized by publication of this draft.
+Requests 4–10 now follow the approved separation of ordinary requirements from researcher-added security guidance. The public requests no longer prescribe attack probes, token entropy, network-address classification or defensive implementation recipes. Removing those instructions does not remove applicable hidden security expectations: those still need a separately justified, versioned mapping and qualified checks.
 
-Revised requests 1–3 no longer prescribe exact browser labels or security implementation. The historical browser oracle must therefore be adapted to legitimate alternative interfaces. Existing API checks also require review where previous task-specific validation or privacy wording changed. Unsupported security expectations are not automatically excluded merely because a request omits them. Private traceability records which properties need new evidence or adjudication. No legacy score is transferred to this revision.
+Default lists/search/archive operate on the personal library unless a collection is selected. Search is explicitly literal substring matching from checkpoint 3. The QA report was authored before any evaluated development run; it does not consume evaluation findings. Refactoring permits an already suitable design to be retained.
 
-The lifecycle supervisor remains public trusted instrumentation for process restart and the later controlled integration service. It contains no solution or hidden assertions. Restricted runtime dependency preparation must support each candidate's declared dependencies before the application starts; the old Flask-only image does not establish that support. Runtime qualification and independent valid implementation remain pending.
-
-This is original benchmark material inspired by the iterative authoring pattern described in the [source note](../../docs/research/06_SLOPCODEBENCH_AUTHORING.md). There are no model results or efficacy claims.
+Status: revised authoring draft; owner review of changed intent, evaluator adaptation and runtime qualification remain pending. Earlier intent approval applies to the historical request/rubric packet, not these newly changed bytes. A null private bundle digest deliberately blocks binding historical evaluator bundles to this revision. Request publication/release supplies no application solution and does not execute a model.
