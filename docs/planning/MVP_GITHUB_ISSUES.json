@@ -1,0 +1,132 @@
+{
+  "publication_date": "2026-11-16",
+  "status": "published-and-verified",
+  "repository": "SrFlipFlop/principiis-obsta",
+  "source_plan": "docs/planning/MVP_DELIVERY_PLAN.md",
+  "source_breakdown": "docs/planning/MVP_ISSUE_DRAFTS.md",
+  "note": "Publication record only; current GitHub issues are authoritative for status. All nine issue bodies, labels, milestone assignments and open states verified. Existing issues were not modified.",
+  "milestones": [
+    {
+      "key": 1,
+      "number": 1,
+      "title": "MVP 1 — Real development, preview and development metrics",
+      "url": "https://github.com/SrFlipFlop/principiis-obsta/milestone/1"
+    },
+    {
+      "key": 2,
+      "number": 2,
+      "title": "MVP 2 — Real checkpoint evaluation and evaluation metrics",
+      "url": "https://github.com/SrFlipFlop/principiis-obsta/milestone/2"
+    },
+    {
+      "key": 3,
+      "number": 3,
+      "title": "MVP 3 — Real final security assessment and complete MVP acceptance",
+      "url": "https://github.com/SrFlipFlop/principiis-obsta/milestone/3"
+    }
+  ],
+  "issues": [
+    {
+      "key": "D1",
+      "number": 40,
+      "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/40",
+      "title": "[MVP 1] Build and preview portal request 1 with actual Codex",
+      "milestone": 1,
+      "label": "ready-for-human",
+      "dependencies": []
+    },
+    {
+      "key": "D2",
+      "number": 41,
+      "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/41",
+      "title": "[MVP 1] Develop portal requests 2–3 with fresh sessions and retained code",
+      "milestone": 1,
+      "label": "ready-for-agent",
+      "dependencies": [
+        40
+      ]
+    },
+    {
+      "key": "D3",
+      "number": 42,
+      "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/42",
+      "title": "[MVP 1] Recover an interrupted real run and reconcile development exports",
+      "milestone": 1,
+      "label": "ready-for-human",
+      "dependencies": [
+        40,
+        41
+      ]
+    },
+    {
+      "key": "E1",
+      "number": 43,
+      "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/43",
+      "title": "[MVP 2] Evaluate the generated portal at checkpoint 1",
+      "milestone": 2,
+      "label": "ready-for-agent",
+      "dependencies": [
+        42,
+        8
+      ]
+    },
+    {
+      "key": "E2",
+      "number": 44,
+      "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/44",
+      "title": "[MVP 2] Evaluate generated checkpoints 2–3 and retain reruns",
+      "milestone": 2,
+      "label": "ready-for-agent",
+      "dependencies": [
+        43
+      ]
+    },
+    {
+      "key": "E3",
+      "number": 45,
+      "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/45",
+      "title": "[MVP 2] Demonstrate ten real development/evaluation checkpoints",
+      "milestone": 2,
+      "label": "ready-for-human",
+      "dependencies": [
+        44,
+        9
+      ]
+    },
+    {
+      "key": "F1",
+      "number": 46,
+      "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/46",
+      "title": "[MVP 3] Run a real final security assessment on checkpoint 10",
+      "milestone": 3,
+      "label": "ready-for-human",
+      "dependencies": [
+        45
+      ]
+    },
+    {
+      "key": "F2",
+      "number": 47,
+      "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/47",
+      "title": "[MVP 3] Reproduce final-assessment findings and export their status",
+      "milestone": 3,
+      "label": "ready-for-agent",
+      "dependencies": [
+        46
+      ]
+    },
+    {
+      "key": "F3",
+      "number": 48,
+      "url": "https://github.com/SrFlipFlop/principiis-obsta/issues/48",
+      "title": "[MVP 3] Complete the real MVP acceptance walkthrough and report",
+      "milestone": 3,
+      "label": "ready-for-human",
+      "dependencies": [
+        42,
+        45,
+        47
+      ]
+    }
+  ]
+}
