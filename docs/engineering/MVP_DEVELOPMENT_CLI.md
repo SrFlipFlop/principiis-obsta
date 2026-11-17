@@ -32,8 +32,10 @@ The saved `configuration.json` identifies a **development rehearsal** with an
 **unbound evaluator**. No dummy evaluator is needed. It is possible to rehearse
 development before hidden checks are qualified, but this does not qualify an
 experiment. The manual evaluator refuses this unbound run before allocating an
-assessment. Explicit versioned evaluator binding belongs to milestone 2; changing
-evaluator readiness must never rewrite development provenance.
+assessment. The [MVP evaluation CLI](MVP_EVALUATION_CLI.md) adds explicit versioned
+binding separately from development provenance. Current #8/#9 package qualification
+still blocks live evaluation; changing evaluator readiness must never rewrite the
+retained development fingerprint.
 
 After the owner has reviewed the runtime and explicitly authorized a scoped live
 launch, retain that actual approval in a private UTF-8 file. Its scope should identify
