@@ -79,8 +79,12 @@ def initialize(args):
     root = run_directory(args)
     package = REPOSITORY / 'benchmarks' / args.application
     metadata = json.loads((package / 'package.json').read_text())
+    count = getattr(args, 'steps', 3)
+    if count == 10:
+        from .qualification import load_qualified_package
+        metadata = load_qualified_package(package, expected_steps=10)
     steps, requests = [], {}
-    for number in range(1, 4):
+    for number in range(1, count + 1):
         relative = f'requests/{number:02}.txt'
         source = package / relative
         if digest(source) != metadata['files'][relative]:
@@ -100,7 +104,7 @@ def initialize(args):
     write_json(root / 'sequence.json', sequence)
     configuration = {
         'schema_version': 1, 'run_name': args.run, 'application': args.application,
-        'run_mode': 'development-rehearsal', 'evaluator_binding': 'unbound',
+        'run_mode': 'qualification' if count == 10 else 'development-rehearsal', 'evaluator_binding': 'unbound',
         'package_version': metadata['version'], 'package_sha256': digest(package / 'package.json'),
         'frozen_files': {name: digest(root / name) for name in ('runtime.json', 'sequence.json', *requests)},
         'qualification': 'pending runtime review and scoped live acceptance; no primary scores',
@@ -122,11 +126,19 @@ def load_run(args):
 
 
 def step_identity(selection):
-    if selection in ('1', '2', '3'):
-        return f'step-{int(selection):02}'
-    if selection in ('step-01', 'step-02', 'step-03'):
-        return selection
-    raise ValueError('select portal request 1, 2 or 3')
+    choices = {str(number): f'step-{number:02}' for number in range(1, 11)}
+    choices.update({value: value for value in choices.values()})
+    if selection not in choices:
+        raise ValueError('select portal request 1 through 10')
+    return choices[selection]
+
+
+def selected_step(root, selection):
+    step = step_identity(selection)
+    sequence = json.loads((root / 'sequence.json').read_text())
+    if step not in [entry['id'] for entry in sequence['steps']]:
+        raise ValueError('selected checkpoint is outside the frozen run; use a new run for a longer sequence')
+    return step
 
 
 def allocations(root, sequence):
@@ -145,6 +157,7 @@ def allocations(root, sequence):
 
 
 def build_status(root, configuration):
+    from .assessment import inspect as inspect_assessments
     active = active_operation(root)
     sequence = json.loads((root / 'sequence.json').read_text())
     records, run_id = allocations(root, sequence)
@@ -164,7 +177,10 @@ def build_status(root, configuration):
                 'stages': {'development': {'tokens': resource.token_usage(entry['directory'] / 'executor.stdout')},
                            'evaluation': {}},
             })
-    resources = resource.summarize(ordered)
+    assessment_evidence = inspect_assessments(root, configuration)
+    assessments = assessment_evidence['assessments']
+    assessment_binding = assessment_evidence['binding']
+    resources = resource.summarize(ordered + assessment_evidence['resources']['attempts'])
     cleanups = []
     cleanup_index = root / 'runtime-cleanups/index.json'
     if cleanup_index.exists():
@@ -189,7 +205,7 @@ def build_status(root, configuration):
                                         'cleanup_argv': allocation.get('cleanup_argv')})
     checkpoints = []
     next_action = {'action': 'development-complete', 'step': None, 'retry': False,
-                   'explanation': 'Requests 1–3 retained. Preview/report remain available; evaluator is unbound.'}
+                   'explanation': 'All frozen requests retained. Preview/report remain available; evaluator is unbound.'}
     for step in sequence['steps']:
         attempts = [entry for entry in records if entry['allocation']['id'] == step['id']]
         latest = attempts[-1] if attempts else None
@@ -203,12 +219,26 @@ def build_status(root, configuration):
                       'stdout': str(directory / 'executor.stdout') if directory else None,
                       'stderr': str(directory / 'executor.stderr') if directory else None,
                       'snapshot_manifest_sha256': digest(directory / 'snapshot.json') if complete and (directory / 'snapshot.json').is_file() else None}
+        checkpoint['assessments'] = [assessment for assessment in assessments if assessment['checkpoint'] == step['id']]
+        checkpoint['primary_assessment'] = next((assessment for assessment in checkpoint['assessments']
+                                                 if assessment['role'] == 'primary'), None)
         checkpoints.append(checkpoint)
         if not complete and next_action['step'] is None and next_action['action'] == 'development-complete':
             next_action = {'action': 'retry' if attempts else 'develop', 'step': step['id'], 'retry': bool(attempts),
                            'explanation': 'Scoped live authorization and reviewed runtime required.'}
             if len(attempts) >= 4:
                 next_action.update(action='new-run-required', explanation='Three additional retries exhausted; retain this run.')
+    if configuration['run_mode'] == 'qualification' and not assessment_binding:
+        next_action = {'action': 'bind-evaluator', 'step': None, 'retry': False,
+                       'explanation': 'Freeze the qualified evaluator from #9 before the first development session.'}
+    elif assessment_binding:
+        pending = next((checkpoint for checkpoint in checkpoints
+                        if checkpoint['completed'] and not checkpoint['primary_assessment']), None)
+        if pending:
+            next_action = {'action': 'evaluate', 'step': pending['id'], 'retry': False,
+                           'explanation': 'Explicitly assess the retained snapshot with scoped evaluation authorization.'}
+        elif next_action['action'] == 'development-complete':
+            next_action['explanation'] = 'All frozen checkpoints and primary assessments retained. Owner acceptance remains separate.'
     if pending_cleanup:
         next_action = {'action': 'cleanup', 'step': pending_cleanup[0]['step'], 'retry': False,
                        'explanation': 'Retained runtime cleanup is unresolved. Run the explicit cleanup command before further development.'}
@@ -225,6 +255,7 @@ def build_status(root, configuration):
             previews.append(dict(item, evidence=json.loads(metadata_path.read_text()) if metadata_path.is_file() else None))
     return dict(configuration, root=str(root), run_id=run_id, checkpoints=checkpoints,
                 next_action=next_action, resources=resources, previews=previews, active_operation=active,
+                assessment_binding=assessment_binding, assessments=assessments,
                 runtime_cleanup_required=pending_cleanup, runtime_cleanups=cleanups)
 
 
@@ -232,9 +263,15 @@ def develop(args):
     from .manual import develop as manual_develop
     root, configuration = load_run(args)
     with operation(root, 'development'):
-        if build_status(root, configuration)['runtime_cleanup_required']:
+        status = build_status(root, configuration)
+        if status['runtime_cleanup_required']:
             raise ValueError('retained runtime requires explicit cleanup before further development')
-        step = step_identity(args.step)
+        step = selected_step(root, args.step)
+        if configuration['run_mode'] == 'qualification':
+            if not status['assessment_binding']:
+                raise ValueError('ten-step qualification requires a qualified evaluator binding before development')
+            if any(checkpoint['completed'] and not checkpoint['primary_assessment'] for checkpoint in status['checkpoints']):
+                raise ValueError('separately evaluate the previous completed checkpoint before further qualification development')
         approval = Path(args.authorization).resolve()
         text = approval.read_text()
         if not text.strip():
@@ -250,10 +287,35 @@ def develop(args):
     return build_status(root, configuration)
 
 
+def bind_evaluator(args):
+    from .assessment import bind
+    root, configuration = load_run(args)
+    with operation(root, 'evaluator binding'):
+        bind(root, configuration, args.evaluator_manifest)
+    return build_status(root, configuration)
+
+
+def evaluate(args):
+    root, configuration = load_run(args)
+    with operation(root, 'independent evaluation'):
+        if not (root / 'evaluator-binding.json').exists():
+            raise ValueError('evaluator is unbound; bind a qualified package from #8 before evaluation')
+        from .assessment import evaluate as assess
+        step = selected_step(root, args.step)
+        approval = Path(args.authorization).resolve()
+        text = approval.read_text()
+        if not text.strip():
+            raise ValueError('nonempty scoped evaluation authorization record required')
+        authorization = {'source': str(approval), 'sha256': digest(approval), 'recorded_text': text,
+                         'step': step, 'rerun': args.rerun}
+        assess(root, configuration, step, rerun=args.rerun, authorization=authorization)
+    return build_status(root, configuration)
+
+
 def cleanup(args):
     from .development_runtime import cleanup_runtime
     root, configuration = load_run(args)
-    step = step_identity(args.step)
+    step = selected_step(root, args.step)
     with operation(root, 'development runtime cleanup'):
         pending = [entry for entry in build_status(root, configuration)['runtime_cleanup_required'] if entry['step'] == step]
         if not pending:
@@ -278,7 +340,7 @@ def preview(args):
 
 def operate_preview(args, root, configuration):
     from . import preview as runtime_preview
-    step = step_identity(args.step)
+    step = selected_step(root, args.step)
     index_path = root / 'previews/index.json'
     index = json.loads(index_path.read_text()) if index_path.exists() else []
     if args.stop:
@@ -316,9 +378,11 @@ def display(value):
 
 
 def markdown(report):
+    binding = report.get('assessment_binding')
+    evaluator = binding['version'] if binding else report['evaluator_binding']
     lines = [f"Run: {report['run_name']} ({report['run_mode']})", '',
              f"Application: {report['application']} @ {report['package_version']}",
-             f"Evaluator: {report['evaluator_binding']}; primary scores unavailable.",
+             f"Evaluator: {evaluator}" + ('.' if binding else '; primary scores unavailable.'),
              f"Artifacts: {report['root']}", '',
              '| Checkpoint | Status | Attempts | Retained source |', '| --- | --- | --- | --- |']
     for checkpoint in report['checkpoints']:
@@ -326,9 +390,18 @@ def markdown(report):
     for checkpoint in report['checkpoints']:
         if checkpoint['stdout']:
             lines.extend(['', f"{checkpoint['id']} logs: {checkpoint['stdout']} ; {checkpoint['stderr']}"])
+    assessments = report.get('assessments', [])
+    if assessments:
+        lines.extend(['', '| Checkpoint | Assessment | Role | Functional | Security | Outcome | Evidence |',
+                      '| --- | --- | --- | --- | --- | --- | --- |'])
+        for assessment in assessments:
+            lines.append(f"| {assessment['checkpoint']} | {assessment['attempt']} | {assessment['role']} | "
+                         f"{assessment['functional']} | {assessment['security']} | {assessment['outcome']} | {assessment['artifact']} |")
     lines.extend(['', resource.markdown(report['resources'])])
     for attempt in report['resources']['attempts']:
         evidence = attempt['stages']['development']
+        if not evidence:
+            continue
         container_memory = evidence.get('container_memory') or {}
         lines.append(f"{attempt['checkpoint']} attempt {attempt['attempt']} sampled container memory (bytes): "
                      + display(container_memory.get('peak_sampled_bytes')) + '; ' + container_memory.get('scope', 'scope unknown'))
@@ -348,7 +421,8 @@ def markdown(report):
 
 
 CSV_FIELDS = ('run_name', 'run_id', 'checkpoint', 'attempt', 'session_id', 'outcome', 'artifact',
-              'source', 'stdout', 'stderr', 'development_seconds', 'started_at', 'finished_at',
+              'stage', 'role', 'functional', 'security', 'evaluator_version', 'evaluator_manifest_sha256',
+              'snapshot_manifest_sha256', 'source', 'stdout', 'stderr', 'development_seconds', 'evaluation_seconds', 'started_at', 'finished_at',
               *resource.CATEGORIES, 'total_tokens', 'local_peak_sampled_rss_bytes', 'local_memory_scope',
               'container_peak_sampled_bytes', 'container_memory_scope', 'actual_spending', 'hosted_model_memory')
 
@@ -358,15 +432,24 @@ def csv_report(report):
     writer = csv.DictWriter(stream, fieldnames=CSV_FIELDS)
     writer.writeheader()
     for attempt in report['resources']['attempts']:
-        evidence = attempt['stages']['development']
+        stage = 'evaluation' if attempt['stages']['evaluation'] and not attempt['stages']['development'] else 'development'
+        evidence = attempt['stages'][stage]
         tokens, memory = evidence.get('tokens') or {}, evidence.get('memory') or {}
         container_memory = evidence.get('container_memory') or {}
         directory = Path(attempt['artifact']).parent
         result = json.loads(Path(attempt['artifact']).read_text()) if Path(attempt['artifact']).is_file() else {}
         row = {key: attempt.get(key) for key in ('run_id', 'checkpoint', 'attempt', 'session_id', 'outcome', 'artifact')}
-        row.update(run_name=report['run_name'], source=str(directory / ('snapshot' if result.get('completed') else 'workspace')),
-                   stdout=str(directory / 'executor.stdout'), stderr=str(directory / 'executor.stderr'),
-                   development_seconds=evidence.get('elapsed_seconds'), started_at=evidence.get('started_at'),
+        provenance = result.get('provenance') or {}
+        row.update(run_name=report['run_name'], stage=stage, role=result.get('role'),
+                   functional=result.get('functional'), security=result.get('security'),
+                   evaluator_version=provenance.get('version'), evaluator_manifest_sha256=provenance.get('manifest_sha256'),
+                   snapshot_manifest_sha256=result.get('snapshot_manifest_sha256'),
+                   source=result.get('snapshot') if stage == 'evaluation' else str(directory / ('snapshot' if result.get('completed') else 'workspace')),
+                   stdout=str(directory / ('evaluator.stdout' if stage == 'evaluation' else 'executor.stdout')),
+                   stderr=str(directory / ('evaluator.stderr' if stage == 'evaluation' else 'executor.stderr')),
+                   development_seconds=evidence.get('elapsed_seconds') if stage == 'development' else None,
+                   evaluation_seconds=evidence.get('elapsed_seconds') if stage == 'evaluation' else None,
+                   started_at=evidence.get('started_at'),
                    finished_at=evidence.get('finished_at'), local_peak_sampled_rss_bytes=memory.get('peak_sampled_rss_bytes'),
                    local_memory_scope=memory.get('scope'), container_peak_sampled_bytes=container_memory.get('peak_sampled_bytes'),
                    container_memory_scope=container_memory.get('scope'), actual_spending=None, hosted_model_memory=None)
@@ -389,7 +472,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
     commands = {}
-    for name in ('init', 'develop', 'status', 'preview', 'cleanup', 'report'):
+    for name in ('init', 'develop', 'bind-evaluator', 'evaluate', 'status', 'preview', 'cleanup', 'report'):
         command = sub.add_parser(name)
         commands[name] = command
         command.add_argument('--run', required=True)
@@ -397,9 +480,14 @@ def main():
         command.add_argument('--format', choices=('markdown', 'json', 'csv') if name == 'report' else ('markdown', 'json'), default='markdown')
     commands['init'].add_argument('--application', choices=('document-portal',), required=True)
     commands['init'].add_argument('--runtime-config', required=True)
+    commands['init'].add_argument('--steps', type=int, choices=(3, 10), default=3)
     commands['develop'].add_argument('--step', required=True)
     commands['develop'].add_argument('--retry', action='store_true')
     commands['develop'].add_argument('--authorization', required=True, help='file recording reviewed runtime and scoped owner launch authorization')
+    commands['bind-evaluator'].add_argument('--evaluator-manifest', required=True)
+    commands['evaluate'].add_argument('--step', required=True)
+    commands['evaluate'].add_argument('--rerun', action='store_true')
+    commands['evaluate'].add_argument('--authorization', required=True, help='file recording scoped owner evaluation authorization')
     commands['preview'].add_argument('--step', required=True)
     commands['preview'].add_argument('--preview-config')
     commands['preview'].add_argument('--stop', action='store_true')
@@ -410,6 +498,10 @@ def main():
             report = initialize(args)
         elif args.command == 'develop':
             report = develop(args)
+        elif args.command == 'bind-evaluator':
+            report = bind_evaluator(args)
+        elif args.command == 'evaluate':
+            report = evaluate(args)
         elif args.command == 'preview':
             report = preview(args)
         elif args.command == 'cleanup':
