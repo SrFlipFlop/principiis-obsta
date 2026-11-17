@@ -230,3 +230,41 @@ else: print('engineering Docker boundary fixture')
             self.assertEqual(result['outcome'], expected, result.get('error'))
             self.assertEqual(result['security'], 'unassessable')
             self.assertTrue((output / 'trace.zip').exists())
+
+    def test_runtime_copy_grants_service_writes_without_changing_retained_modes(self):
+        docker = self.base / 'permissions-docker'
+        docker.write_text('''#!/usr/bin/python3
+import json, pathlib, stat, sys
+args=sys.argv[1:]
+if args[:1]==['--host']: args=args[2:]
+if args[:2]==['image','inspect']: print(json.dumps([{'Id':args[2]}]))
+elif args[:1]==['run'] and '-d' in args:
+ mount=next(arg for arg in args if 'dst=/workspace' in arg)
+ root=pathlib.Path(mount.split('src=')[1].split(',')[0])
+ writable=(bool(root.stat().st_mode & stat.S_IWOTH) and bool((root/'private.db').stat().st_mode & stat.S_IWOTH)
+           and bool((root/'startup').stat().st_mode & stat.S_IXOTH)
+           and not bool((root/'readonly').stat().st_mode & stat.S_IWOTH))
+ print('service write granted' if writable else 'service write denied')
+ sys.exit(0 if writable else 1)
+else: print('{}')
+''')
+        docker.chmod(0o755)
+        snapshot = self.base / 'snapshot'
+        snapshot.mkdir(mode=0o700)
+        (snapshot / 'private.db').write_bytes(b'retained sqlite control bytes')
+        (snapshot / 'private.db').chmod(0o600)
+        (snapshot / 'startup').write_text('#!/bin/sh\nexit 0\n')
+        (snapshot / 'startup').chmod(0o700)
+        (snapshot / 'readonly').write_text('read-only application data')
+        (snapshot / 'readonly').chmod(0o400)
+        output = self.base / 'permissions-assessment'
+        process = subprocess.run([sys.executable, '-m', 'principiis.evaluation', '--snapshot', str(snapshot),
+            '--output', str(output), '--app-image', self.image, '--evaluator-image', self.checker_image,
+            '--docker', str(docker), '--app-command', '["python", "app.py"]'],
+            cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(process.returncode, 0, process.stderr)
+        result = json.loads((output / 'assessment.json').read_text())
+        launch = next(index for index, command in enumerate(result['commands']) if 'run' in command and '-d' in command)
+        self.assertEqual(result['exit_statuses'][launch], 0)
+        self.assertEqual(snapshot.stat().st_mode & 0o777, 0o700)
+        self.assertEqual((snapshot / 'private.db').stat().st_mode & 0o777, 0o600)

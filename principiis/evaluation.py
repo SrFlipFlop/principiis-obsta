@@ -5,6 +5,8 @@ import json
 import pathlib
 import re
 import shutil
+import os
+import stat
 import subprocess
 import time
 import uuid
@@ -112,6 +114,18 @@ def main():
         if app_command:
             application = output / 'runtime-state'
             shutil.copytree(snapshot, application, symlinks=True)
+            # A host-owned disposable copy must be writable by the fixed nonroot
+            # service UID. Never chmod a link or alter the retained input tree.
+            for directory, folders, files in os.walk(application, followlinks=False):
+                folder = pathlib.Path(directory)
+                mode = stat.S_IMODE(folder.stat().st_mode)
+                folder.chmod(mode | ((mode & 0o700) >> 6))
+                for filename in files:
+                    item = pathlib.Path(directory) / filename
+                    if not item.is_symlink():
+                        mode = stat.S_IMODE(item.stat().st_mode)
+                        item.chmod(mode | ((mode & 0o700) >> 6))
+            record['runtime_permissions'] = 'disposable owner permission bits mirrored for nonroot service UID; links untouched; retained input modes unchanged'
             record['runtime_state'] = str(application)
             record['runtime_input_sha256'] = record['snapshot_sha256']
         run(['run', '-d', '--name', names[0], '--network', 'none', *common, '--mount',
