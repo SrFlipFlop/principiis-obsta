@@ -1,0 +1,7 @@
+{
+  "id": "manual-walkthrough",
+  "version": "1",
+  "applications": [
+    {"id": "engineering-greeting", "sequence": "manual-sequence.json"}
+  ]
+}

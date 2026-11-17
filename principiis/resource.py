@@ -72,6 +72,11 @@ def inspect(root, *, result_paths=None):
             stages[stage] = dict(evidence, tokens=token_usage(path.parent / log) if stage == 'development' else evidence.get('tokens')) if present else {}
         attempts.append({'run_id': identity[0], 'session_id': identity[1], 'checkpoint': result['checkpoint'],
                          'attempt': result['attempt'], 'outcome': result['outcome'], 'artifact': str(path), 'stages': stages})
+    return summarize(attempts)
+
+
+def summarize(attempts):
+    """Aggregate already selected controller records, including incomplete allocations."""
     totals = {}
     durations = []
     starts, ends = [], []

@@ -1,0 +1,15 @@
+The development seccomp_profile.json derives from ../evaluation/seccomp_profile.json,
+which retains its source and license in ../evaluation/NOTICE and LICENSE.seccomp.
+The same Apache License 2.0 is included here as LICENSE.seccomp.
+
+Project modifications for the development sandbox, 2026-11-16:
+- explicitly set defaultErrnoRet to EPERM (1), retaining default-deny behavior;
+- permit mount, umount2 and pivot_root for bubblewrap inside an unprivileged user namespace;
+- permit openat2 and faccessat2 for modern path operations;
+- return ENOSYS (38) for clone3 so libc falls back to the existing clone policy.
+
+The inherited namespace rules allow clone, setns and unshare; inherited chroot support
+remains. No host capability grant is part of this profile. Runtime must retain nonroot
+UID, all capabilities dropped, no-new-privileges and read-only outer root. This profile
+is used for development/preflight only; restricted candidate preview keeps its existing
+policy. See docs/engineering/DEVELOPMENT_RUNTIME.md for qualification and limitations.

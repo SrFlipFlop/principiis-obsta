@@ -1,5 +1,9 @@
 # Manual checkpoint operation
 
+For an operator walkthrough with per-stage checklists and a findings template, start with
+[HITL issue #38](https://github.com/SrFlipFlop/principiis-obsta/issues/38). It distinguishes
+the runnable fixture rehearsal from the currently blocked portal evaluator setup.
+
 The owner's 2026-11-15 settings select ordinary subscription Codex, harness defaults,
 no model-stage timeout, and at most three explicit additional development attempts.
 Qualification and separate launch approval are still required. Commands below are
