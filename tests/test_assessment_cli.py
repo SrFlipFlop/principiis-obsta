@@ -125,11 +125,12 @@ class QualifiedAssessmentCLI(unittest.TestCase):
         self.assertIn('No such file', result['error'])
         self.assertTrue((snapshot / 'python').is_symlink())
 
-    def generate_checkpoint(self):
+    def generate_checkpoint(self, command=None):
+        command = command or "from pathlib import Path; Path('app.py').write_text('print(42)')"
         process = subprocess.run([sys.executable, '-m', 'principiis.manual', 'develop',
             '--sequence', str(self.root / 'sequence.json'), '--output', str(self.root / 'development'),
             '--step', 'step-01', '--development-only', '--executor',
-            json.dumps([sys.executable, '-c', "from pathlib import Path; Path('app.py').write_text('print(42)')"])],
+            json.dumps([sys.executable, '-c', command])],
             cwd=self.source, capture_output=True, text=True)
         self.assertEqual(process.returncode, 0, process.stderr)
 
@@ -373,3 +374,32 @@ else: print('engineering lifecycle boundary')
         self.assertIn('cleanup', rejected.stderr)
         ledger = self.root / 'development/evaluations/step-01/allocations.json'
         self.assertEqual(len(json.loads(ledger.read_text())), 1)
+
+    def test_candidate_copy_failure_does_not_require_runtime_cleanup(self):
+        import resource
+        self.generate_checkpoint("from pathlib import Path; Path('payload').write_bytes(b'x' * 262144)")
+        self.assertEqual(self.cli('bind', '--declaration', str(self.path)).returncode, 0)
+
+        def limit_new_file_size():
+            resource.setrlimit(resource.RLIMIT_FSIZE, (131072, 131072))
+
+        command = [sys.executable, '-m', 'principiis.assessment', 'evaluate',
+                   '--root', str(self.root), '--step', 'step-01']
+        first = subprocess.run(command, cwd=self.source, capture_output=True, text=True,
+                               preexec_fn=limit_new_file_size)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        result_path = self.root / 'development/evaluations/step-01/1/result.json'
+        original = result_path.read_bytes()
+        result = json.loads(original)
+        self.assertEqual(result['outcome'], 'evaluator_error')
+        self.assertIn('File too large', result['error'])
+        self.assertFalse(result['cleanup_pending'])
+        self.assertEqual(result['evaluation'], {})
+        self.assertFalse(Path(result['evidence']).parent.exists())
+        inspected = self.cli('inspect')
+        self.assertEqual(inspected.returncode, 0, inspected.stderr)
+        self.assertEqual(json.loads(inspected.stdout)['cleanup_required'], [])
+        rerun = subprocess.run([*command, '--rerun'], cwd=self.source,
+                               capture_output=True, text=True, preexec_fn=limit_new_file_size)
+        self.assertEqual(rerun.returncode, 0, rerun.stderr)
+        self.assertEqual(result_path.read_bytes(), original)

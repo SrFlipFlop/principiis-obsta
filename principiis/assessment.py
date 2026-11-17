@@ -279,6 +279,7 @@ def evaluate(root, configuration, step, *, rerun=False, authorization=None):
     write_json(ledger_path, ledger)
     output.mkdir(exist_ok=False)
     write_json(output / 'result.json', result)
+    runtime_launch_attempted = False
     try:
         candidate = output / 'input'
         shutil.copytree(snapshot, candidate, symlinks=True)
@@ -297,6 +298,7 @@ def evaluate(root, configuration, step, *, rerun=False, authorization=None):
         result['controller_sources'] = {name: sha(Path(__file__).parent / name)
                                        for name in ('assessment.py', 'evaluation.py', 'execution.py', 'snapshot.py')}
         with (output / 'evaluator.stdout').open('w') as stdout, (output / 'evaluator.stderr').open('w') as stderr:
+            runtime_launch_attempted = True
             result['evaluation'] = dict(execute(command, Path(__file__).resolve().parents[1], '', stdout, stderr,
                                                       termination_grace_seconds=75), tokens=None)
         if result['evaluation']['exit_status'] != 0:
@@ -314,7 +316,8 @@ def evaluate(root, configuration, step, *, rerun=False, authorization=None):
                       error=str(error) or 'controller interrupted')
     finally:
         runtime_allocation = output / 'restricted/runtime-allocation.json'
-        result['cleanup_pending'] = True
+        result['runtime_launch_attempted'] = runtime_launch_attempted
+        result['cleanup_pending'] = runtime_launch_attempted
         try:
             if runtime_allocation.is_file():
                 allocation = json.loads(runtime_allocation.read_text())
