@@ -431,13 +431,16 @@ def csv_report(report):
     stream = io.StringIO()
     writer = csv.DictWriter(stream, fieldnames=CSV_FIELDS)
     writer.writeheader()
+    assessments = {entry['artifact']: entry for entry in report.get('assessments', [])}
     for attempt in report['resources']['attempts']:
         stage = 'evaluation' if attempt['stages']['evaluation'] and not attempt['stages']['development'] else 'development'
         evidence = attempt['stages'][stage]
         tokens, memory = evidence.get('tokens') or {}, evidence.get('memory') or {}
         container_memory = evidence.get('container_memory') or {}
         directory = Path(attempt['artifact']).parent
-        result = json.loads(Path(attempt['artifact']).read_text()) if Path(attempt['artifact']).is_file() else {}
+        result = assessments.get(attempt['artifact'])
+        if result is None:
+            result = json.loads(Path(attempt['artifact']).read_text()) if Path(attempt['artifact']).is_file() else {}
         row = {key: attempt.get(key) for key in ('run_id', 'checkpoint', 'attempt', 'session_id', 'outcome', 'artifact')}
         provenance = result.get('provenance') or {}
         row.update(run_name=report['run_name'], stage=stage, role=result.get('role'),

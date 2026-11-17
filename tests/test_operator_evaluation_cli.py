@@ -138,6 +138,19 @@ class OperatorEvaluationCLI(unittest.TestCase):
         self.assertTrue(all(row['evaluator_version'] == 'engineering-1' for row in rows[1:]))
         for path, contents in before.items():
             self.assertEqual(path.read_bytes(), contents)
+        # A controller can die after its durable allocation and before a result
+        # write. The allocation still supplies identity/provenance, never scores.
+        Path(rerun['assessments'][1]['artifact']).unlink()
+        interrupted = operator('report')
+        self.assertEqual(interrupted['resources']['totals']['evaluation']['attempts_present'], 2)
+        self.assertIsNone(interrupted['resources']['totals']['evaluation']['duration_seconds'])
+        with (fixture.root / 'reports/development.csv').open() as stream:
+            interrupted_rows = list(csv.DictReader(stream))
+        self.assertEqual(interrupted_rows[2]['role'], 'rerun')
+        self.assertEqual(interrupted_rows[2]['evaluator_version'], 'engineering-1')
+        self.assertEqual(interrupted_rows[2]['snapshot_manifest_sha256'], primary['snapshot_manifest_sha256'])
+        self.assertEqual(interrupted_rows[2]['source'], primary['snapshot'])
+        self.assertEqual(interrupted_rows[2]['evaluation_seconds'], 'unknown')
 
 
 if __name__ == '__main__':
