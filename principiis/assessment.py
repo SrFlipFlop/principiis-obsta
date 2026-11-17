@@ -226,7 +226,9 @@ def inspect(root, configuration):
                  'outcome': result['outcome'], 'artifact': result['artifact'],
                  'stages': {'development': {}, 'evaluation': dict(result['evaluation'], tokens=None)}}
                 for result in assessments]
-    return {'binding': binding, 'assessments': assessments, 'resources': resource.summarize(attempts)}
+    from .evaluation_cleanup import pending
+    return {'binding': binding, 'assessments': assessments, 'resources': resource.summarize(attempts),
+            'cleanup_required': pending(root, assessments)}
 
 
 def evaluate(root, configuration, step, *, rerun=False, authorization=None):
@@ -236,6 +238,8 @@ def evaluate(root, configuration, step, *, rerun=False, authorization=None):
     binding = evidence['binding']
     if binding is None:
         raise ValueError('development rehearsal evaluator is unbound; bind a qualified evaluator first')
+    if evidence['cleanup_required']:
+        raise ValueError('retained evaluation runtime requires explicit cleanup before another assessment')
     if load_declaration(root, configuration, binding['manifest'],
                         frozen_release=root / 'evaluator-release.json') != binding:
         raise ValueError('retained evaluator binding changed')
@@ -267,7 +271,7 @@ def evaluate(root, configuration, step, *, rerun=False, authorization=None):
               'provenance': binding, 'developer_result_sha256': sha(checkpoint / 'result.json'),
               'snapshot': str(snapshot), 'snapshot_manifest_sha256': sha(snapshot.with_suffix('.json')),
               'outcome': 'evaluator_error', 'functional': 'unassessable', 'security': 'unassessable',
-              'evaluation': {}, 'authorization': authorization, 'evidence': str(output / 'restricted/assessment.json')}
+              'evaluation': {}, 'authorization': authorization, 'cleanup_pending': True, 'evidence': str(output / 'restricted/assessment.json')}
     parent.mkdir(parents=True, exist_ok=True)
     ledger_path = parent / 'allocations.json'
     ledger = json.loads(ledger_path.read_text()) if ledger_path.exists() else []
@@ -293,7 +297,8 @@ def evaluate(root, configuration, step, *, rerun=False, authorization=None):
         result['controller_sources'] = {name: sha(Path(__file__).parent / name)
                                        for name in ('assessment.py', 'evaluation.py', 'execution.py', 'snapshot.py')}
         with (output / 'evaluator.stdout').open('w') as stdout, (output / 'evaluator.stderr').open('w') as stderr:
-            result['evaluation'] = dict(execute(command, Path(__file__).resolve().parents[1], '', stdout, stderr), tokens=None)
+            result['evaluation'] = dict(execute(command, Path(__file__).resolve().parents[1], '', stdout, stderr,
+                                                      termination_grace_seconds=75), tokens=None)
         if result['evaluation']['exit_status'] != 0:
             raise ValueError('restricted evaluator exited unsuccessfully')
         observed = json.loads(Path(result['evidence']).read_text())
@@ -308,6 +313,22 @@ def evaluate(root, configuration, step, *, rerun=False, authorization=None):
         result.update(outcome='evaluator_error', functional='unassessable', security='unassessable',
                       error=str(error) or 'controller interrupted')
     finally:
+        runtime_allocation = output / 'restricted/runtime-allocation.json'
+        result['cleanup_pending'] = True
+        try:
+            if runtime_allocation.is_file():
+                allocation = json.loads(runtime_allocation.read_text())
+                result['runtime_allocation'] = str(runtime_allocation)
+                result['containers'] = allocation.get('containers')
+                result['cleanup_argv'] = allocation.get('cleanup_argv')
+                result['cleanup_pending'] = allocation.get('resources_removed') is not True
+        except (OSError, ValueError, TypeError, AttributeError) as error:
+            result['cleanup_evidence_error'] = str(error)
+        if result.get('evaluation', {}).get('termination', {}).get('forced'):
+            result['cleanup_pending'] = True
+        if result['cleanup_pending']:
+            result.update(outcome='evaluator_error', functional='unassessable', security='unassessable')
+            result.setdefault('error', 'runtime cleanup remains unresolved')
         try:
             validate(snapshot, runtime_image=manifest['runtime_image'])
             if sha(checkpoint / 'result.json') != result['developer_result_sha256']:

@@ -134,10 +134,21 @@ class QualifiedAssessmentCLI(unittest.TestCase):
         self.assertEqual(process.returncode, 0, process.stderr)
 
     def test_real_restricted_runner_failure_is_retained_and_rerun_is_explicit(self):
-        # The actual restricted runner executes; a nonexistent Docker executable
-        # produces infrastructure evidence without running candidate code on host.
+        # The actual restricted runner executes; image inspection fails at the
+        # Docker boundary while cleanup succeeds. No candidate code runs on host.
+        docker = self.base / 'unavailable-image-docker'
+        docker.write_text('''#!/usr/bin/python3
+import sys
+args=sys.argv[1:]
+if args[:1]==['--host']: args=args[2:]
+if args[:1]==['rm']: print('no retained containers')
+else:
+ print('engineering unavailable image',file=sys.stderr)
+ raise SystemExit(1)
+''')
+        docker.chmod(0o755)
         runtime = self.root / 'runtime.json'
-        runtime.write_text(json.dumps({'image': self.image, 'docker': '/nonexistent/docker'}))
+        runtime.write_text(json.dumps({'image': self.image, 'docker': str(docker)}))
         self.configuration['frozen_files']['runtime.json'] = self.digest(runtime)
         (self.root / 'configuration.json').write_text(json.dumps(self.configuration))
         self.generate_checkpoint()
@@ -268,3 +279,97 @@ else: print('{}')
         self.assertEqual(result['exit_statuses'][launch], 0)
         self.assertEqual(snapshot.stat().st_mode & 0o777, 0o700)
         self.assertEqual((snapshot / 'private.db').stat().st_mode & 0o777, 0o600)
+
+    def test_interrupted_assessment_waits_for_detached_application_cleanup(self):
+        import os
+        import signal
+        import time
+        docker = self.base / 'interrupt-docker'
+        docker.write_text('''#!/usr/bin/python3
+import json, os, pathlib, signal, subprocess, sys, time
+args=sys.argv[1:]
+if args[:1]==['--host']: args=args[2:]
+root=pathlib.Path(__file__).parent
+if args[:2]==['image','inspect']: print(json.dumps([{'Id':args[2]}]))
+elif args[:1]==['run'] and '-d' in args:
+ worker="import pathlib,signal,sys,time; p=pathlib.Path(sys.argv[1]); signal.signal(signal.SIGTERM,lambda *_:(p.unlink(missing_ok=True),sys.exit(0))); p.write_text('active'); time.sleep(60)"
+ child=subprocess.Popen([sys.executable,'-c',worker,str(root/'application-active')],
+     start_new_session=True,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+ (root/'application-pid').write_text(str(child.pid))
+ print('detached engineering application')
+elif args[:1]==['exec']:
+ (root/'check-running').write_text('ready to interrupt')
+ time.sleep(60)
+elif args[:1]==['rm']:
+ time.sleep(.35)
+ if args[-1].startswith('po-app-'):
+  pid=int((root/'application-pid').read_text())
+  try: os.kill(pid,signal.SIGTERM)
+  except ProcessLookupError: pass
+  deadline=time.monotonic()+3
+  while (root/'application-active').exists() and time.monotonic()<deadline: time.sleep(.01)
+ print('removed')
+else: print('engineering lifecycle boundary')
+''')
+        docker.chmod(0o755)
+        runtime = self.root / 'runtime.json'
+        runtime.write_text(json.dumps({'image': self.image, 'docker': str(docker)}))
+        self.configuration['frozen_files']['runtime.json'] = self.digest(runtime)
+        (self.root / 'configuration.json').write_text(json.dumps(self.configuration))
+        self.generate_checkpoint()
+        self.assertEqual(self.cli('bind', '--declaration', str(self.path)).returncode, 0)
+        process = subprocess.Popen([sys.executable, '-m', 'principiis.assessment', 'evaluate',
+                                   '--root', str(self.root), '--step', 'step-01'],
+                                  cwd=self.source, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            deadline = time.monotonic() + 5
+            while not (self.base / 'check-running').exists() and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertTrue((self.base / 'application-active').exists())
+            self.assertTrue((self.base / 'check-running').exists())
+            allocated = json.loads((self.root / 'development/evaluations/step-01/allocations.json').read_text())[0]
+            process.terminate()
+            stdout, stderr = process.communicate(timeout=10)
+            self.assertEqual(process.returncode, 0, stderr)
+            self.assertFalse((self.base / 'application-active').exists(), 'detached application survived interrupted assessment')
+            result = json.loads((self.root / 'development/evaluations/step-01/1/result.json').read_text())
+            self.assertEqual(result['session_id'], allocated['session_id'])
+            self.assertEqual((result['role'], result['outcome']), ('primary', 'evaluator_error'))
+            self.assertFalse(result['cleanup_pending'])
+            self.assertFalse(result['evaluation']['termination']['forced'])
+            restricted = json.loads(Path(result['evidence']).read_text())
+            self.assertTrue(restricted['resources_removed'])
+            self.assertIn('interrupt', restricted['error'])
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=5)
+            pid_file = self.base / 'application-pid'
+            if pid_file.exists():
+                try:
+                    os.kill(int(pid_file.read_text()), signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+
+    def test_unresolved_runtime_cleanup_retains_container_identities(self):
+        runtime = self.root / 'runtime.json'
+        runtime.write_text(json.dumps({'image': self.image, 'docker': '/nonexistent/docker'}))
+        self.configuration['frozen_files']['runtime.json'] = self.digest(runtime)
+        (self.root / 'configuration.json').write_text(json.dumps(self.configuration))
+        self.generate_checkpoint()
+        self.assertEqual(self.cli('bind', '--declaration', str(self.path)).returncode, 0)
+        process = self.cli('evaluate', '--step', 'step-01')
+        self.assertEqual(process.returncode, 0, process.stderr)
+        result = json.loads((self.root / 'development/evaluations/step-01/1/result.json').read_text())
+        self.assertTrue(result['cleanup_pending'])
+        self.assertEqual(result['outcome'], 'evaluator_error')
+        allocation = json.loads(Path(result['runtime_allocation']).read_text())
+        self.assertFalse(allocation['resources_removed'])
+        self.assertEqual(result['containers'], allocation['containers'])
+        self.assertEqual(result['cleanup_argv'], allocation['cleanup_argv'])
+        self.assertEqual(set(result['containers']), {'application', 'evaluator'})
+        rejected = self.cli('evaluate', '--step', 'step-01', '--rerun')
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn('cleanup', rejected.stderr)
+        ledger = self.root / 'development/evaluations/step-01/allocations.json'
+        self.assertEqual(len(json.loads(ledger.read_text())), 1)

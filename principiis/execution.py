@@ -8,7 +8,7 @@ import time
 
 
 def execute(argv, workspace, request, stdout, stderr, *, env=None, transform=lambda value: value,
-            clock=time.monotonic, wall_clock=time.time, timeout=None):
+            clock=time.monotonic, wall_clock=time.time, timeout=None, termination_grace_seconds=.2):
     """Run one measured stage, retaining logs and killing its process group on interruption."""
     started = clock()
     evidence = {'argv': argv, 'exit_status': None, 'started_at': wall_clock(),
@@ -66,10 +66,11 @@ def execute(argv, workspace, request, stdout, stderr, *, env=None, transform=lam
             # Also close descendants holding stdout pipes after their parent exits.
             try:
                 os.killpg(process.pid, signal.SIGTERM)
+                evidence['termination'] = {'signal': 'SIGTERM', 'grace_seconds': termination_grace_seconds, 'forced': False}
                 try:
-                    process.wait(timeout=.2)
+                    process.wait(timeout=termination_grace_seconds)
                 except subprocess.TimeoutExpired:
-                    pass
+                    evidence['termination']['forced'] = True
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass

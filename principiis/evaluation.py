@@ -7,10 +7,12 @@ import re
 import shutil
 import os
 import stat
+import signal
 import subprocess
 import time
 import uuid
 from .snapshot import validate, inventory
+from .resume import write_json
 from .development_runtime import docker_environment, docker_command
 
 
@@ -55,11 +57,23 @@ def main():
     names = ['po-app-' + uuid.uuid4().hex, 'po-eval-' + uuid.uuid4().hex]
     start = time.monotonic()
     app_started = False
+    record['containers'] = {'application': names[0], 'evaluator': names[1]}
+    record['cleanup_argv'] = [docker_command(args.docker, ['rm', '-f', name]) for name in reversed(names)]
+    record['resources_removed'] = False
+    allocation_path = output / 'runtime-allocation.json'
+    write_json(allocation_path, record)
+
+    def interrupted(signum, _frame):
+        record['interrupted_signal'] = signum
+        raise KeyboardInterrupt('controller interrupted')
+
+    signal.signal(signal.SIGTERM, interrupted)
 
     def run(arguments, timeout=120):
         command = docker_command(args.docker, arguments)
         record['commands'].append(command)
         index = len(record['commands'])
+        write_json(allocation_path, record)
         try:
             result = subprocess.run(command, capture_output=True, text=True, timeout=timeout, env=docker_environment())
         except subprocess.TimeoutExpired as error:
@@ -68,6 +82,10 @@ def main():
                 (output / f'{index}.{stream}').write_bytes(data.encode() if isinstance(data, str) else data)
             record.setdefault('exit_statuses', []).append('timeout')
             raise
+        except KeyboardInterrupt:
+            (output / f'{index}.stderr').write_text('controller interrupted during Docker command')
+            record.setdefault('exit_statuses', []).append('interrupted')
+            raise
         except OSError as error:
             (output / f'{index}.stderr').write_text(str(error))
             record.setdefault('exit_statuses', []).append('launch_error')
@@ -75,6 +93,7 @@ def main():
         (output / f'{index}.stdout').write_text(result.stdout)
         (output / f'{index}.stderr').write_text(result.stderr)
         record.setdefault('exit_statuses', []).append(result.returncode)
+        write_json(allocation_path, record)
         if result.returncode:
             raise RuntimeError(f'command {index} exited {result.returncode}: {result.stderr[-2000:]}')
         return result.stdout
@@ -159,9 +178,12 @@ print(json.dumps(dict(uid=os.getuid(), status=pathlib.Path('/proc/self/status').
         record.update(checks)
         record['outcome'] = ('joint_pass' if checks['functional'] == checks['security'] == 'pass' else
                              'candidate_failure' if 'fail' in (checks['functional'], checks['security']) else 'unassessable')
-    except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.TimeoutExpired) as error:
-        record['error'] = str(error)
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.TimeoutExpired, KeyboardInterrupt) as error:
+        record['error'] = str(error) or 'controller interrupted'
     finally:
+        # Repeated operator signals must not interrupt the bounded teardown.
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         if app_started:
             try:
                 run(['logs', names[0]], timeout=20)
@@ -173,11 +195,14 @@ print(json.dumps(dict(uid=os.getuid(), status=pathlib.Path('/proc/self/status').
                 run(['rm', '-f', name], timeout=20)
             except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
                 record.setdefault('cleanup_errors', []).append(str(error))
+        record['resources_removed'] = not bool(record.get('cleanup_errors'))
         if record.get('cleanup_errors'):
             record.update(outcome='evaluator_error', functional='unassessable', security='unassessable')
         record['elapsed_seconds'] = time.monotonic() - start
+        write_json(allocation_path, record)
         try:
-            record['snapshot_unchanged'] = digest(snapshot, runtime_image=args.app_image) == record['snapshot_sha256'] if snapshot.is_dir() else None
+            record['snapshot_unchanged'] = (digest(snapshot, runtime_image=args.app_image) == record['snapshot_sha256']
+                                            if record['snapshot_sha256'] is not None and snapshot.is_dir() else None)
         except ValueError:
             record['snapshot_unchanged'] = False if record['snapshot_sha256'] is not None else None
         if record['snapshot_unchanged'] is False:
