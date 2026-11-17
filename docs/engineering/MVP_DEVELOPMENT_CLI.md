@@ -154,3 +154,9 @@ uses that environment. Arbitrary external links remain unsupported. Actual
 subscription access, image/access review, generated-application dependencies and
 restricted browser acceptance remain separate live qualification work. Preserve
 failures instead of regenerating a completed candidate.
+
+The subsequent [authorized #41–#42 qualification](../reviews/ISSUES_41_42_LIVE_QUALIFICATION_20261117.md)
+records actual requests 2–3, restricted generated-portal browser previews, a separately
+identified real interruption/explicit retry and reconciled per-run exports. The owner
+walkthrough and remaining acceptance are recorded there. Hidden evaluation remains
+unbound; these development observations do not supply primary scores.
