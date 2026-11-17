@@ -94,7 +94,12 @@ def main():
         (output / f'{index}.stderr').write_text(result.stderr)
         record.setdefault('exit_statuses', []).append(result.returncode)
         write_json(allocation_path, record)
-        if result.returncode:
+        absent = (arguments[:2] == ['rm', '-f'] and len(arguments) == 3
+                  and re.fullmatch(r'(?:Error response from daemon: )?No such container: '
+                                   + re.escape(arguments[2]), result.stderr.strip()))
+        if absent:
+            record.setdefault('absent_containers', []).append(arguments[2])
+        if result.returncode and not absent:
             raise RuntimeError(f'command {index} exited {result.returncode}: {result.stderr[-2000:]}')
         return result.stdout
 

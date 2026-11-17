@@ -3,10 +3,11 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import subprocess
 import time
 import uuid
 
-from .development_runtime import docker_command, docker_run
+from .development_runtime import docker_command, docker_environment
 from .resume import write_json
 
 
@@ -84,7 +85,19 @@ def cleanup(root, assessments, step):
                 record['commands'].append(command)
                 write_json(path, record)
                 try:
-                    command['stdout'] = docker_run(docker, ['rm', '-f', name], timeout=20)
+                    removed = subprocess.run(command['argv'], capture_output=True, text=True,
+                                             timeout=20, env=docker_environment())
+                    command.update(stdout=removed.stdout, stderr=removed.stderr, exit_status=removed.returncode)
+                    absent = bool(re.fullmatch(r'(?:Error response from daemon: )?No such container: '
+                                              + re.escape(name), removed.stderr.strip()))
+                    command['absent_before_cleanup'] = absent
+                    if removed.returncode and not absent:
+                        raise ValueError('Docker cleanup failed; see retained command stderr')
+                except subprocess.TimeoutExpired as error:
+                    command.update(error='Docker cleanup timed out',
+                                   stdout=(error.stdout or b'').decode(errors='replace') if isinstance(error.stdout, bytes) else error.stdout,
+                                   stderr=(error.stderr or b'').decode(errors='replace') if isinstance(error.stderr, bytes) else error.stderr)
+                    errors.append(command['error'])
                 except (OSError, ValueError, RuntimeError) as error:
                     command['error'] = str(error)
                     errors.append(str(error))

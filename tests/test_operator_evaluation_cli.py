@@ -166,7 +166,9 @@ class OperatorEvaluationCLI(unittest.TestCase):
         docker = fixture.base / 'docker-control'
         docker.write_text('#!' + sys.executable + '\nimport pathlib,sys\n'
                           f'allowed=pathlib.Path({str(marker)!r}).exists()\n'
-                          'sys.exit(0 if "rm" in sys.argv and allowed else 1)\n')
+                          'if "rm" in sys.argv and allowed:\n'
+                          ' print("Error response from daemon: No such container: " + sys.argv[-1], file=sys.stderr)\n'
+                          'sys.exit(1)\n')
         docker.chmod(0o755)
         runtime = fixture.root / 'runtime.json'
         runtime.write_text(json.dumps({'image': fixture.image, 'docker': str(docker)}))
