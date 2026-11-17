@@ -109,4 +109,6 @@ class ReviewRegressions(unittest.TestCase):
             subprocess.run([sys.executable, '-m', 'principiis.evaluation', '--snapshot', str(output / 'snapshot'), '--output', str(report), '--app-image', 'sha256:fixture', '--evaluator-image', 'sha256:fixture', '--docker', str(base / 'must-not-launch')], cwd=ROOT, capture_output=True, text=True)
             result = json.loads((report / 'assessment.json').read_text())
             self.assertIn('snapshot integrity', result['error'])
-            self.assertTrue(all(command[1] == 'rm' for command in result['commands']))
+            self.assertTrue(result['commands'])
+            for command in result['commands']:
+                self.assertEqual(command[1:5], ['--host', 'unix:///var/run/docker.sock', 'rm', '-f'])
