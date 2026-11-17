@@ -139,7 +139,7 @@ def evaluate(args, stop_requested=lambda: False):
                 check = check_argv(Path(app['sequence_path']).parent, task['check'])
                 record['check'] = check
                 record['check_files'] = {arg: sha(Path(arg)) for arg in check if Path(arg).is_file()}
-                validate(snapshot)
+                validate(snapshot, runtime_image=None)
                 # The check is trusted controller code. Generated application code
                 # must be launched by its check through the restricted runner.
                 with tempfile.TemporaryDirectory(prefix='principiis-suite-evaluation-') as temporary:
@@ -151,7 +151,7 @@ def evaluate(args, stop_requested=lambda: False):
                     raise ValueError('evaluator exited unsuccessfully')
                 scores = read(destination / 'stdout')
                 record.update(evaluator_scores(scores))
-                validate(snapshot)
+                validate(snapshot, runtime_image=None)
             except (OSError, ValueError, TypeError, KeyError, KeyboardInterrupt) as error:
                 record.update(outcome='evaluator_error', functional='unassessable', security='unassessable', error=str(error))
             write_json(destination / 'assessment.json', record)

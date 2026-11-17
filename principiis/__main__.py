@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import shutil
 import signal
+import sys
 import tempfile
 import uuid
 
@@ -20,12 +21,13 @@ def evaluator_scores(scores):
     return dict(properties, outcome=outcome)
 
 
-def run(task_path, executor, output, *, prior_snapshot=None, run_id=None, sequence=None, visible_request=None, attempt=1, defer_evaluation=False):
+def run(task_path, executor, output, *, prior_snapshot=None, run_id=None, sequence=None, visible_request=None, attempt=1, defer_evaluation=False, result_metadata=None):
     task_path = Path(task_path).resolve()
     task = json.loads(task_path.read_text())
     request = visible_request if visible_request is not None else (task_path.parent / task['request']).read_text()
+    snapshot_binding = getattr(executor, 'snapshot_binding', None)
     if prior_snapshot is not None:
-        validate(prior_snapshot)
+        validate(prior_snapshot, runtime_image=snapshot_binding['image'] if snapshot_binding else None)
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=False)
     workspace = output / 'workspace'
@@ -42,6 +44,10 @@ def run(task_path, executor, output, *, prior_snapshot=None, run_id=None, sequen
         'outcome': 'incomplete', 'functional': 'unknown', 'security': 'unknown',
         'execution': {}, 'evaluation': {}, 'completed': False,
     }
+    if result_metadata:
+        if set(result_metadata).intersection(result):
+            raise ValueError('result metadata cannot replace controller result fields')
+        result.update(result_metadata)
     save_result(output, result)
     try:
         with (output / 'executor.stdout').open('w') as stdout, (output / 'executor.stderr').open('w') as stderr:
@@ -56,7 +62,7 @@ def run(task_path, executor, output, *, prior_snapshot=None, run_id=None, sequen
         save_result(output, result)
         return result
     try:
-        preserve(workspace, output / 'snapshot')
+        preserve(workspace, output / 'snapshot', runtime_binding=snapshot_binding)
     except (OSError, ValueError) as error:
         result['snapshot_error'] = str(error)
         save_result(output, result)
@@ -73,7 +79,7 @@ def run(task_path, executor, output, *, prior_snapshot=None, run_id=None, sequen
     save_result(output, result)
     try:
         with tempfile.TemporaryDirectory(prefix='principiis-evaluation-') as evaluation:
-            validate(output / 'snapshot')
+            validate(output / 'snapshot', runtime_image=None)
             candidate = Path(evaluation) / 'candidate'
             shutil.copytree(output / 'snapshot', candidate, symlinks=True)
             with (output / 'evaluator.stdout').open('w') as stdout, (output / 'evaluator.stderr').open('w') as stderr:
@@ -129,11 +135,23 @@ def run_sequence(sequence_path, executor, output, *, resume=False, retry_incompl
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] in ('init', 'develop', 'status', 'preview', 'cleanup', 'report'):
+        from .operator import main as operate
+        return operate()
     def interrupted(signum, frame):
         raise KeyboardInterrupt('controller interrupted')
     signal.signal(signal.SIGTERM, interrupted)
     parser = argparse.ArgumentParser(description='Local fixture checkpoint controller')
     sub = parser.add_subparsers(dest='command', required=True)
+    for name, help_text in (
+        ('init', 'Freeze reusable portal development rehearsal configuration'),
+        ('develop', 'Develop one selected checkpoint with the isolated runtime'),
+        ('status', 'Locate retained source, logs and next permissible action'),
+        ('preview', 'Start or stop a restricted disposable checkpoint preview'),
+        ('cleanup', 'Remove retained development containers without rerunning development'),
+        ('report', 'Save development JSON, CSV and readable exports'),
+    ):
+        sub.add_parser(name, add_help=False, help=help_text)
     command = sub.add_parser('run')
     command.add_argument('--task', required=True)
     selection = command.add_mutually_exclusive_group(required=True)

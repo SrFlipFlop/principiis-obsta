@@ -13,6 +13,7 @@ import time
 
 from .execution import execute as measured_execute
 from .resource import token_usage
+from .snapshot import inventory, validate
 
 
 def digest(path):
@@ -37,6 +38,12 @@ def investigate(args):
         raise ValueError('retained snapshot and primary results are required')
     if output == snapshot or snapshot in output.parents or output in snapshot.parents:
         raise ValueError('investigation output must be outside retained snapshot')
+    if snapshot.with_suffix('.json').exists():
+        validate(snapshot, runtime_image=None)
+    else:
+        # Historical investigation fixtures may lack a retained manifest. They
+        # still require self-contained links before any host-side consumer runs.
+        inventory(snapshot)
     config_path, prompt_path = Path(args.config).resolve(), Path(args.prompt).resolve()
     config = json.loads(config_path.read_text())
     for field in ('version', 'model', 'settings', 'timeout_seconds', 'evidence'):
