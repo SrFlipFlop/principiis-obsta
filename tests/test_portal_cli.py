@@ -76,7 +76,8 @@ class PortalRelease(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 record = json.loads((output / 'assessment.json').read_text())
                 self.assertEqual(record['fixture_variant'], variant)
-                self.assertEqual(record['commands'][0], ['/nonexistent/portal-test-docker', 'image', 'inspect', image])
+                self.assertEqual(record['commands'][0], ['/nonexistent/portal-test-docker', '--host',
+                    'unix:///var/run/docker.sock', 'image', 'inspect', image])
                 self.assertEqual(record['outcome'], 'evaluator_error')
                 self.assertEqual(record['security'], 'unassessable')
                 self.assertEqual(record['exit_statuses'][0], 'launch_error')

@@ -294,9 +294,9 @@ def evaluate(root, configuration, step, *, rerun=False, authorization=None):
                    '--check-contract', str(declaration / settings['contract']),
                    '--seccomp', str(declaration / manifest['seccomp']),
                    '--app-command', json.dumps(settings['app_command']), '--docker', runtime.get('docker', 'docker')]
-        result['python_executable'] = {'path': sys.executable, 'sha256': sha(sys.executable)}
-        result['controller_sources'] = {name: sha(Path(__file__).parent / name)
-                                       for name in ('assessment.py', 'evaluation.py', 'execution.py', 'snapshot.py')}
+        result['python_executable'] = {'path': sys.executable, 'sha256': sha(sys.executable), 'version': sys.version}
+        result['controller_sources'] = {path.name: sha(path)
+                                       for path in sorted(Path(__file__).parent.glob('*.py'))}
         with (output / 'evaluator.stdout').open('w') as stdout, (output / 'evaluator.stderr').open('w') as stderr:
             runtime_launch_attempted = True
             result['evaluation'] = dict(execute(command, Path(__file__).resolve().parents[1], '', stdout, stderr,
