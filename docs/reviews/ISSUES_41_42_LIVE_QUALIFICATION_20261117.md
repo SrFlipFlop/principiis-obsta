@@ -181,10 +181,13 @@ or full pilot was launched.
 
 ## Owner acceptance walkthrough and retained artifacts
 
-The automated/live qualification portions of #41 and #42 are complete. **Owner
-acceptance of the milestone remains pending**, as required by
-[issue #42](https://github.com/SrFlipFlop/principiis-obsta/issues/42). No issue was
-closed, branch pushed or result published by this work.
+The automated/live qualification portions of #41 and #42 are complete. At the end of
+qualification, owner acceptance remained pending, as required by
+[issue #42](https://github.com/SrFlipFlop/principiis-obsta/issues/42). The owner then
+accepted the recorded result and instructed: “Great! You can do the PR and merge it.”
+This completes milestone-1 owner acceptance and authorizes publishing and merging the
+documentation PR for #41 and #42. The original local archive retains its pre-acceptance
+status as historical evidence. Hidden evaluation remains unbound.
 
 1. Open **http://127.0.0.1:32769**, register a synthetic account, and inspect the
    actual request-3 portal. The request-2 preview remains at port 32768. Screenshots
@@ -200,9 +203,9 @@ closed, branch pushed or result published by this work.
 4. Compare each run's JSON/CSV/readable exports with its reconciliation record. The
    recovery status names request 3 as technically eligible; this qualification
    exercise ended after its successful request-2 retry. No further step is scheduled.
-5. Accept the real development, preview, continuation, interruption/retry and export
-   evidence before closing milestone 1. Qualified hidden evaluation and explicit
-   evaluator binding remain milestone-2 work with their existing prerequisites.
+5. The owner accepted the real development, preview, continuation, interruption/retry
+   and export evidence before milestone-1 closure. Qualified hidden evaluation and
+   explicit evaluator binding remain milestone-2 work with their existing prerequisites.
 
 ```bash
 python3 -m principiis status --run portal-40-20261117-8b873374 \
