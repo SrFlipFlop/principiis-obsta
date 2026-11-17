@@ -180,6 +180,7 @@ def build_status(root, configuration):
     assessment_evidence = inspect_assessments(root, configuration)
     assessments = assessment_evidence['assessments']
     assessment_binding = assessment_evidence['binding']
+    evaluation_cleanup_required = assessment_evidence.get('cleanup_required', [])
     resources = resource.summarize(ordered + assessment_evidence['resources']['attempts'])
     cleanups = []
     cleanup_index = root / 'runtime-cleanups/index.json'
@@ -242,6 +243,9 @@ def build_status(root, configuration):
     if pending_cleanup:
         next_action = {'action': 'cleanup', 'step': pending_cleanup[0]['step'], 'retry': False,
                        'explanation': 'Retained runtime cleanup is unresolved. Run the explicit cleanup command before further development.'}
+    if evaluation_cleanup_required:
+        next_action = {'action': 'cleanup-evaluation', 'step': evaluation_cleanup_required[0]['checkpoint'], 'retry': False,
+                       'explanation': 'Evaluation runtime cleanup is unresolved; explicitly clean it before development or evaluation.'}
     if active['active']:
         next_action = {'action': 'wait', 'step': None, 'retry': False,
                        'explanation': 'An operator action is active. Retained measurements may still be partial.'}
@@ -256,6 +260,7 @@ def build_status(root, configuration):
     return dict(configuration, root=str(root), run_id=run_id, checkpoints=checkpoints,
                 next_action=next_action, resources=resources, previews=previews, active_operation=active,
                 assessment_binding=assessment_binding, assessments=assessments,
+                evaluation_cleanup_required=evaluation_cleanup_required,
                 runtime_cleanup_required=pending_cleanup, runtime_cleanups=cleanups)
 
 
@@ -266,6 +271,8 @@ def develop(args):
         status = build_status(root, configuration)
         if status['runtime_cleanup_required']:
             raise ValueError('retained runtime requires explicit cleanup before further development')
+        if status['evaluation_cleanup_required']:
+            raise ValueError('evaluation runtime requires explicit cleanup before further development')
         step = selected_step(root, args.step)
         if configuration['run_mode'] == 'qualification':
             if not status['assessment_binding']:
@@ -298,6 +305,9 @@ def bind_evaluator(args):
 def evaluate(args):
     root, configuration = load_run(args)
     with operation(root, 'independent evaluation'):
+        status = build_status(root, configuration)
+        if status['runtime_cleanup_required'] or status['evaluation_cleanup_required']:
+            raise ValueError('retained runtime requires explicit cleanup before further evaluation')
         if not (root / 'evaluator-binding.json').exists():
             raise ValueError('evaluator is unbound; bind a qualified package from #8 before evaluation')
         from .assessment import evaluate as assess
@@ -309,6 +319,16 @@ def evaluate(args):
         authorization = {'source': str(approval), 'sha256': digest(approval), 'recorded_text': text,
                          'step': step, 'rerun': args.rerun}
         assess(root, configuration, step, rerun=args.rerun, authorization=authorization)
+    return build_status(root, configuration)
+
+
+def cleanup_evaluation(args):
+    from .assessment import inspect
+    from .evaluation_cleanup import cleanup
+    root, configuration = load_run(args)
+    with operation(root, 'evaluation runtime cleanup'):
+        evidence = inspect(root, configuration)
+        cleanup(root, evidence['assessments'], selected_step(root, args.step))
     return build_status(root, configuration)
 
 
@@ -409,6 +429,10 @@ def markdown(report):
         lines.extend(['', f"Runtime cleanup pending for {entry['step']}: {entry['allocation']}",
                       f"Cleanup: python3 -m principiis cleanup --runs-root {Path(report['root']).parent} "
                       f"--run {report['run_name']} --step {entry['step']}"])
+    for entry in report.get('evaluation_cleanup_required', []):
+        lines.extend(['', f"Evaluation cleanup pending: {entry['artifact']}",
+                      f"Cleanup: python3 -m principiis cleanup-evaluation --runs-root {Path(report['root']).parent} "
+                      f"--run {report['run_name']} --step {entry['checkpoint']}"])
     for entry in report['previews']:
         evidence = entry['evidence'] or {}
         lines.extend(['', f"{entry['step']} preview evidence: {report['root']}/{entry['artifact']}",
@@ -475,7 +499,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
     commands = {}
-    for name in ('init', 'develop', 'bind-evaluator', 'evaluate', 'status', 'preview', 'cleanup', 'report'):
+    for name in ('init', 'develop', 'bind-evaluator', 'evaluate', 'status', 'preview', 'cleanup', 'cleanup-evaluation', 'report'):
         command = sub.add_parser(name)
         commands[name] = command
         command.add_argument('--run', required=True)
@@ -495,6 +519,7 @@ def main():
     commands['preview'].add_argument('--preview-config')
     commands['preview'].add_argument('--stop', action='store_true')
     commands['cleanup'].add_argument('--step', required=True)
+    commands['cleanup-evaluation'].add_argument('--step', required=True)
     args = parser.parse_args()
     try:
         if args.command == 'init':
@@ -509,6 +534,8 @@ def main():
             report = preview(args)
         elif args.command == 'cleanup':
             report = cleanup(args)
+        elif args.command == 'cleanup-evaluation':
+            report = cleanup_evaluation(args)
         else:
             report = build_status(*load_run(args))
         if args.command == 'report':

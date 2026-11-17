@@ -97,8 +97,11 @@ class OperatorEvaluationCLI(unittest.TestCase):
         fixture = test_assessment_cli.QualifiedAssessmentCLI()
         fixture.setUp()
         self.addCleanup(fixture.temporary.cleanup)
+        docker = fixture.base / 'unavailable-image-docker'
+        docker.write_text('#!' + sys.executable + '\nimport sys\nsys.exit(0 if "rm" in sys.argv else 1)\n')
+        docker.chmod(0o755)
         runtime = fixture.root / 'runtime.json'
-        runtime.write_text(json.dumps({'image': fixture.image, 'docker': '/nonexistent/docker'}))
+        runtime.write_text(json.dumps({'image': fixture.image, 'docker': str(docker)}))
         fixture.configuration.update(run_name='run', run_mode='development-rehearsal', evaluator_binding='unbound')
         fixture.configuration['frozen_files']['runtime.json'] = fixture.digest(runtime)
         (fixture.root / 'configuration.json').write_text(json.dumps(fixture.configuration))
@@ -151,6 +154,52 @@ class OperatorEvaluationCLI(unittest.TestCase):
         self.assertEqual(interrupted_rows[2]['snapshot_manifest_sha256'], primary['snapshot_manifest_sha256'])
         self.assertEqual(interrupted_rows[2]['source'], primary['snapshot'])
         self.assertEqual(interrupted_rows[2]['evaluation_seconds'], 'unknown')
+
+    def test_unresolved_evaluator_cleanup_blocks_reruns_until_explicit_cleanup(self):
+        import test_assessment_cli
+        fixture = test_assessment_cli.QualifiedAssessmentCLI()
+        fixture.setUp()
+        self.addCleanup(fixture.temporary.cleanup)
+        # Fail image inspection, then fail removal until the operator fixes the
+        # external Docker boundary. The frozen runtime configuration never changes.
+        marker = fixture.base / 'cleanup-allowed'
+        docker = fixture.base / 'docker-control'
+        docker.write_text('#!' + sys.executable + '\nimport pathlib,sys\n'
+                          f'allowed=pathlib.Path({str(marker)!r}).exists()\n'
+                          'sys.exit(0 if "rm" in sys.argv and allowed else 1)\n')
+        docker.chmod(0o755)
+        runtime = fixture.root / 'runtime.json'
+        runtime.write_text(json.dumps({'image': fixture.image, 'docker': str(docker)}))
+        fixture.configuration.update(run_name='run', run_mode='development-rehearsal', evaluator_binding='unbound')
+        fixture.configuration['frozen_files']['runtime.json'] = fixture.digest(runtime)
+        (fixture.root / 'configuration.json').write_text(json.dumps(fixture.configuration))
+        fixture.generate_checkpoint()
+
+        def operator(command, *arguments):
+            return subprocess.run([sys.executable, '-m', 'principiis', command,
+                '--run', 'run', '--runs-root', str(fixture.base), '--format', 'json', *arguments],
+                cwd=fixture.source, capture_output=True, text=True)
+
+        self.assertEqual(operator('bind-evaluator', '--evaluator-manifest', str(fixture.path)).returncode, 0)
+        first = operator('evaluate', '--step', '1', '--authorization', str(self.approval))
+        self.assertEqual(first.returncode, 0, first.stderr)
+        report = json.loads(first.stdout)
+        self.assertEqual(report['next_action']['action'], 'cleanup-evaluation')
+        primary = Path(report['assessments'][0]['artifact'])
+        original = primary.read_bytes()
+        blocked = operator('evaluate', '--step', '1', '--rerun', '--authorization', str(self.approval))
+        self.assertNotEqual(blocked.returncode, 0)
+        self.assertIn('cleanup', blocked.stderr)
+        self.assertEqual(len(json.loads((primary.parent.parent / 'allocations.json').read_text())), 1)
+        marker.touch()
+        cleaned = operator('cleanup-evaluation', '--step', '1')
+        self.assertEqual(cleaned.returncode, 0, cleaned.stderr)
+        self.assertEqual(json.loads(cleaned.stdout)['evaluation_cleanup_required'], [])
+        self.assertEqual(primary.read_bytes(), original)
+        rerun = operator('evaluate', '--step', '1', '--rerun', '--authorization', str(self.approval))
+        self.assertEqual(rerun.returncode, 0, rerun.stderr)
+        self.assertEqual(len(json.loads(rerun.stdout)['assessments']), 2)
+        self.assertEqual(primary.read_bytes(), original)
 
 
 if __name__ == '__main__':

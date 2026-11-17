@@ -135,7 +135,7 @@ def run_sequence(sequence_path, executor, output, *, resume=False, retry_incompl
 
 
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] in ('init', 'develop', 'bind-evaluator', 'evaluate', 'status', 'preview', 'cleanup', 'report'):
+    if len(sys.argv) > 1 and sys.argv[1] in ('init', 'develop', 'bind-evaluator', 'evaluate', 'status', 'preview', 'cleanup', 'cleanup-evaluation', 'report'):
         from .operator import main as operate
         return operate()
     def interrupted(signum, frame):
@@ -148,6 +148,7 @@ def main():
         ('develop', 'Develop one selected checkpoint with the isolated runtime'),
         ('bind-evaluator', 'Bind a qualified versioned evaluator without changing development evidence'),
         ('evaluate', 'Assess one retained checkpoint or explicitly append an evaluation rerun'),
+        ('cleanup-evaluation', 'Remove retained evaluator containers without rewriting assessment evidence'),
         ('status', 'Locate retained source, logs and next permissible action'),
         ('preview', 'Start or stop a restricted disposable checkpoint preview'),
         ('cleanup', 'Remove retained development containers without rerunning development'),

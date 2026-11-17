@@ -31,6 +31,26 @@ restricted evaluator in a disposable copy; evaluation never launches development
 repairs the candidate. Keep hidden tests, results and all authorization records outside
 development contexts and public Git.
 
+The declaration includes `version`, `complete`, `qualification_status`, `owner_review`,
+`requests` (released path/hash pairs), `files` (private dependency path/hash pairs),
+`runtime_image`, `evaluator_images` keyed by frozen checkpoint ID, and `steps` mapping
+each checkpoint to its `contract` and `app_command`. `seccomp` and
+`dependency_manifest` name hashed dependencies. The dependency inventory maps exact
+image IDs to resolved package names/versions and hashed preparation receipts.
+Binding retains frozen public/private metadata copies so historical reports remain
+readable after a subsequent author release; evaluation verifies the original private
+dependencies again before allocation.
+
+Candidate-specific dependency installation and a complete inventory of packages
+inside retained virtual environments are not implemented here. Author image
+inventories alone do not establish that completeness. The runtime must match the
+development image for image-bound interpreter links; missing dependencies stay
+evaluator errors. This remains an incomplete part of #43, alongside live acceptance.
+Only the disposable application copy has its owner permission bits mirrored to the
+fixed runtime user's access bits, preserving executable and read-only intent on this
+host. Retained modes and bytes are unchanged. Permission-sensitive checks require
+qualification of this explicit runtime policy.
+
 After recording owner authorization for this specific live scope in a private UTF-8
 file, explicitly evaluate one completed checkpoint:
 
@@ -61,6 +81,22 @@ outcome or evaluator error. Reruns append provenance, logs and measurements and 
 not change the primary result, snapshot or development result. A candidate failing
 evaluation does not become eligible for a development retry. Only incomplete
 development attempts retain the existing explicit retry path.
+
+SIGINT/SIGTERM retain an interrupted assessment and allow up to 75 seconds for bounded
+runner teardown; this is cleanup grace, not a development/model timeout. Runtime
+container identities and cleanup commands are saved before launch. If cleanup fails
+or is interrupted, status names `cleanup-evaluation` and further development and
+evaluation are blocked. Explicitly remove the recorded containers:
+
+```bash
+python3 -m principiis cleanup-evaluation --run portal-first --runs-root /operator/runs --step 3
+```
+
+Cleanup saves separately timed receipts under `evaluation-cleanups/`. Successful
+receipts reconcile the retained runtime allocation without changing primary/rerun
+results. Failed receipts remain evidence and keep the block. Unknown container
+identities require inspection of retained runtime evidence. Cleanup receipts are
+separate operational measurements, outside development/evaluation stage totals.
 
 ```bash
 python3 -m principiis status --run portal-first --runs-root /operator/runs --format json
