@@ -34,7 +34,7 @@ Issue #8's revised request/rubric intent is owner-approved. Technical qualificat
 
 ## Later research phases
 
-- Intervention order and precise artifacts: generic guidance, skills, one-pass review/repair, threat-modeling specs and justified combinations. Threat-model delivery and supplied versus inferred facts remain open.
+- Intervention order and precise artifacts: generic guidance, skills, one-pass review/repair, threat-modeling specs and justified combinations. The owner selected a [custom plan–implement–verify skill direction](DEVELOPMENT_SKILL_CONDITION.md) for later study; its exact artifact, delivery and comparative run still require qualification and approval. Threat-model delivery and supplied versus inferred facts remain open.
 - Generic-review comparator and cost accounting for review studies; exact hook implementation validated before use.
 - Upfront-development comparison, repeated runs, additional harnesses/models, Java and other ecosystem coverage.
 - Fine-tuning requires a separately justified dataset, evaluation and resource plan; no training authorized now.
