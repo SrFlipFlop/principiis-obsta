@@ -46,6 +46,9 @@ def main():
     parser.add_argument('--control', choices=['safe', 'ui-only', 'reject-all', 'alternative'], default='safe')
     parser.add_argument('--fixture-variant', help='author-only fixture mode; requires --check-contract and default --control')
     parser.add_argument('--check-contract', type=pathlib.Path, help='author-only JSON mapping of required check IDs to functional/security')
+    parser.add_argument('--predecessor-snapshot', type=pathlib.Path, help='retained prior checkpoint for data continuation')
+    parser.add_argument('--continuation-path', action='append', default=[], help='relative database file copied into disposable current application')
+    parser.add_argument('--continuation-version', help='version of qualified data-continuation contract')
     parser.add_argument('--docker', default='docker')
     parser.add_argument('--seccomp', type=pathlib.Path, default=pathlib.Path(__file__).resolve().parents[1] / 'fixtures/evaluation/seccomp_profile.json')
     args = parser.parse_args()
@@ -57,6 +60,8 @@ def main():
     names = ['po-app-' + uuid.uuid4().hex, 'po-eval-' + uuid.uuid4().hex]
     start = time.monotonic()
     app_started = False
+    predecessor = None
+    predecessor_digest = None
     record['containers'] = {'application': names[0], 'evaluator': names[1]}
     record['cleanup_argv'] = [docker_command(args.docker, ['rm', '-f', name]) for name in reversed(names)]
     record['resources_removed'] = False
@@ -111,6 +116,30 @@ def main():
             raise ValueError('candidate startup must be a nonempty JSON argv')
         if app_command is not None and (args.fixture_variant is not None or args.control != 'safe'):
             raise ValueError('candidate startup cannot select an author control')
+        continuation = None
+        if args.predecessor_snapshot or args.continuation_path or args.continuation_version:
+            if not (args.predecessor_snapshot and args.continuation_path and args.continuation_version and app_command):
+                raise ValueError('versioned predecessor, database paths and candidate startup are required together')
+            if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}', args.continuation_version):
+                raise ValueError('invalid continuation version')
+            predecessor = args.predecessor_snapshot.resolve()
+            if not predecessor.with_suffix('.json').is_file():
+                raise ValueError('retained predecessor snapshot manifest required')
+            predecessor_digest = digest(predecessor, runtime_image=args.app_image)
+            paths = []
+            for name in args.continuation_path:
+                relative = pathlib.PurePosixPath(name)
+                if (not name or relative.is_absolute() or '..' in relative.parts or '.' in relative.parts
+                        or str(relative) != name or name in paths):
+                    raise ValueError('continuation database path must be unique and relative')
+                source = predecessor / name
+                if source.is_symlink() or not source.is_file() or source.resolve().parent != source.parent:
+                    raise ValueError('continuation predecessor database must be a retained regular file')
+                paths.append(name)
+            continuation = {'version': args.continuation_version, 'predecessor_snapshot': str(predecessor),
+                            'predecessor_sha256': predecessor_digest, 'paths': paths,
+                            'files': {name: hashlib.sha256((predecessor / name).read_bytes()).hexdigest() for name in paths}}
+            record['continuation'] = continuation
         record['app_command'] = app_command
         required = {name: kind for kind, names in [('functional', ['browser-own-read', 'api-own-read', 'api-own-update', 'integration-audit']), ('security', ['backend-cross-user-read', 'backend-cross-user-update'])] for name in names}
         if args.check_contract:
@@ -138,6 +167,16 @@ def main():
         if app_command:
             application = output / 'runtime-state'
             shutil.copytree(snapshot, application, symlinks=True)
+            if continuation:
+                for name in continuation['paths']:
+                    destination = application / name
+                    if (destination.is_symlink() or not destination.parent.is_dir()
+                            or destination.parent.resolve() != destination.parent
+                            or destination.exists() and not destination.is_file()):
+                        raise ValueError('continuation target must be a regular file in the disposable application')
+                    shutil.copy2(predecessor / name, destination)
+                    if hashlib.sha256(destination.read_bytes()).hexdigest() != continuation['files'][name]:
+                        raise ValueError('disposable predecessor database copy differs from retained input')
             # A host-owned disposable copy must be writable by the fixed nonroot
             # service UID. Never chmod a link or alter the retained input tree.
             for directory, folders, files in os.walk(application, followlinks=False):
@@ -208,10 +247,14 @@ print(json.dumps(dict(uid=os.getuid(), status=pathlib.Path('/proc/self/status').
         try:
             record['snapshot_unchanged'] = (digest(snapshot, runtime_image=args.app_image) == record['snapshot_sha256']
                                             if record['snapshot_sha256'] is not None and snapshot.is_dir() else None)
-        except ValueError:
+            if predecessor_digest is not None:
+                record['predecessor_unchanged'] = digest(predecessor, runtime_image=args.app_image) == predecessor_digest
+        except (OSError, ValueError):
             record['snapshot_unchanged'] = False if record['snapshot_sha256'] is not None else None
-        if record['snapshot_unchanged'] is False:
-            record.update(outcome='evaluator_error', functional='unassessable', security='unassessable', error='snapshot changed during evaluation')
+            if predecessor_digest is not None:
+                record['predecessor_unchanged'] = False
+        if record['snapshot_unchanged'] is False or record.get('predecessor_unchanged') is False:
+            record.update(outcome='evaluator_error', functional='unassessable', security='unassessable', error='retained snapshot changed during evaluation')
         (output / 'report.md').write_text(f"Outcome: {record['outcome']}\n\nFunctionality: {record['functional']}\nSecurity: {record['security']}\n\n" + '\n'.join(f"- {c['id']}: {c['status']}" for c in record.get('checks', [])) + '\n')
         record['evidence_sha256'] = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in output.iterdir() if p.is_file()}
         (output / 'assessment.json').write_text(json.dumps(record, indent=2) + '\n')
