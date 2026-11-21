@@ -249,7 +249,7 @@ print(json.dumps(dict(uid=os.getuid(), status=pathlib.Path('/proc/self/status').
                                             if record['snapshot_sha256'] is not None and snapshot.is_dir() else None)
             if predecessor_digest is not None:
                 record['predecessor_unchanged'] = digest(predecessor, runtime_image=args.app_image) == predecessor_digest
-        except ValueError:
+        except (OSError, ValueError):
             record['snapshot_unchanged'] = False if record['snapshot_sha256'] is not None else None
             if predecessor_digest is not None:
                 record['predecessor_unchanged'] = False
