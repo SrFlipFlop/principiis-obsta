@@ -1,6 +1,7 @@
 """Predecessor data reaches only the disposable restricted application copy."""
 import json
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -20,23 +21,27 @@ class ContinuationCLI(unittest.TestCase):
             current = base / 'current'
             before.mkdir()
             current.mkdir()
-            for directory, contents in ((before, b'prior-account'), (current, b'new-version')):
+            for directory, account in ((before, 'prior-account'), (current, 'new-version')):
                 (directory / 'app.py').write_text('raise SystemExit("host execution forbidden")')
-                (directory / 'data.db').write_bytes(contents)
+                with sqlite3.connect(directory / 'data.db') as database:
+                    database.execute('CREATE TABLE accounts (name TEXT NOT NULL)')
+                    database.execute('INSERT INTO accounts VALUES (?)', (account,))
             old = base / 'old-snapshot'
             new = base / 'new-snapshot'
             preserve(before, old)
             preserve(current, new)
             docker = base / 'docker'
             docker.write_text('''#!/usr/bin/python3
-import json,pathlib,sys
+import json,pathlib,sqlite3,sys
 args=sys.argv[1:]
 if args[:1]==['--host']: args=args[2:]
 if args[:2]==['image','inspect']: print(json.dumps([{'Id':args[2]}]))
 elif args[:1]==['run'] and '-d' in args:
  mount=next(arg for arg in args if 'dst=/workspace' in arg)
  root=pathlib.Path(mount.split('src=')[1].split(',')[0])
- if (root/'data.db').read_bytes()!=b'prior-account': raise SystemExit('prior database absent')
+ with sqlite3.connect(root/'data.db') as database:
+  if database.execute('SELECT name FROM accounts').fetchone()!=('prior-account',):
+   raise SystemExit('prior database row absent')
  print('predecessor data seen by disposable candidate')
 else: print('{}')
 ''')
@@ -54,8 +59,10 @@ else: print('{}')
             self.assertEqual(record['continuation']['version'], 'control-v1')
             self.assertEqual(record['continuation']['paths'], ['data.db'])
             self.assertIn('predecessor data seen', (output / '3.stdout').read_text())
-            self.assertEqual((old / 'data.db').read_bytes(), b'prior-account')
-            self.assertEqual((new / 'data.db').read_bytes(), b'new-version')
+            with sqlite3.connect(old / 'data.db') as database:
+                self.assertEqual(database.execute('SELECT name FROM accounts').fetchone(), ('prior-account',))
+            with sqlite3.connect(new / 'data.db') as database:
+                self.assertEqual(database.execute('SELECT name FROM accounts').fetchone(), ('new-version',))
             validate(old)
             validate(new)
 
