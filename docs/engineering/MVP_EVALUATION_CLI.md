@@ -140,3 +140,19 @@ versioned executable continuation fixture. Preserving source is not migration
 evidence. Owner milestone acceptance, actual generated browser/backend evidence and
 resource reconciliation remain separate requirements; these commands do not declare
 milestone 2 complete or establish model reliability or intervention efficacy.
+
+The restricted runner now supports an optional versioned predecessor-data overlay.
+For a step that requires it, the qualified private declaration sets
+`steps.<checkpoint>.continuation` to `{"version":"...", "from_checkpoint":"step-01", "paths":["relative/data.db"]}`.
+Binding rejects a future or missing predecessor, duplicate paths and traversal.
+The operator selects the completed predecessor snapshot from the frozen run; it
+cannot be supplied at evaluation time. The runner validates its retained manifest,
+copies only named regular files into the disposable current application tree before
+launch, and records the predecessor snapshot digest, manifest hash, database hashes,
+contract version and unchanged-input checks. The current snapshot and predecessor
+snapshot remain untouched. The hidden checker must exercise known prior records in
+the new application through its browser/backend contract; a successful file copy is
+preparation evidence, not a passing migration check. Include associated database
+journal files in `paths` when the application requires them. A new continuation
+declaration changes the private bundle hash and therefore requires qualification and
+a new bound run; existing runs cannot be silently rebound.

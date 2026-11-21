@@ -97,7 +97,8 @@ def load_declaration(root, configuration, declaration_path, *, frozen_release=No
         raise ValueError('pinned evaluator images for every frozen checkpoint are required')
     if not isinstance(steps, dict) or set(steps) != ids:
         raise ValueError('matching cumulative checks for every frozen checkpoint are required')
-    for step in steps.values():
+    ordered_ids = [step['id'] for step in sequence['steps']]
+    for step_id, step in steps.items():
         if not isinstance(step, dict):
             raise ValueError('invalid evaluator step declaration')
         _contract(dependency(step.get('contract')))
@@ -105,6 +106,19 @@ def load_declaration(root, configuration, declaration_path, *, frozen_release=No
         if (not isinstance(command, list) or not command
                 or not all(isinstance(arg, str) and arg and '\0' not in arg for arg in command)):
             raise ValueError('explicit candidate startup argv required')
+        continuation = step.get('continuation')
+        if continuation is not None:
+            if (not isinstance(continuation, dict)
+                    or set(continuation) != {'version', 'from_checkpoint', 'paths'}
+                    or not isinstance(continuation['version'], str)
+                    or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}', continuation['version'])
+                    or continuation['from_checkpoint'] not in ordered_ids[:ordered_ids.index(step_id)]
+                    or not isinstance(continuation['paths'], list) or not continuation['paths']
+                    or any(not isinstance(name, str) or not name or Path(name).is_absolute()
+                           or '..' in Path(name).parts or str(Path(name)) != name
+                           for name in continuation['paths'])
+                    or len(set(continuation['paths'])) != len(continuation['paths'])):
+                raise ValueError('versioned continuation must name an earlier frozen checkpoint and relative database paths')
     dependency(manifest.get('seccomp'))
     dependencies = json.loads(dependency(manifest.get('dependency_manifest')).read_text())
     if (not isinstance(dependencies, dict) or dependencies.get('complete') is not True
@@ -199,7 +213,8 @@ def _assessments(root, binding):
             result = json.loads(path.read_text()) if path.is_file() else dict(allocation,
                 error='controller interrupted after allocation; measurements unavailable')
             for key in ('run_id', 'session_id', 'checkpoint', 'attempt', 'role', 'binding_sha256',
-                        'developer_result_sha256', 'snapshot_manifest_sha256'):
+                        'developer_result_sha256', 'snapshot_manifest_sha256',
+                        'predecessor_snapshot', 'predecessor_manifest_sha256'):
                 if result.get(key) != allocation.get(key):
                     raise ValueError('assessment result differs from canonical allocation')
             checkpoint = completed.get(step['id'])
@@ -208,6 +223,12 @@ def _assessments(root, binding):
                     or result.get('snapshot_manifest_sha256') != sha(checkpoint / 'snapshot.json')
                     or result.get('snapshot') != str(checkpoint / 'snapshot')):
                 raise ValueError('assessment identity differs from completed development checkpoint')
+            continuation = binding['declaration']['steps'][step['id']].get('continuation')
+            predecessor = completed.get(continuation['from_checkpoint']) if continuation else None
+            if (result.get('predecessor_snapshot') != (str(predecessor / 'snapshot') if predecessor else None)
+                    or result.get('predecessor_manifest_sha256') !=
+                    (sha(predecessor / 'snapshot.json') if predecessor else None)):
+                raise ValueError('assessment predecessor identity differs from completed development checkpoint')
             records.append(dict(result, artifact=str(path)))
     identities = [result['session_id'] for result in records]
     if len(set(identities)) != len(identities):
@@ -263,6 +284,16 @@ def evaluate(root, configuration, step, *, rerun=False, authorization=None):
     checkpoint = completed[-1]
     snapshot = checkpoint / 'snapshot'
     validate(snapshot, runtime_image=manifest['runtime_image'])
+    settings = manifest['steps'][step]
+    continuation = settings.get('continuation')
+    predecessor = None
+    if continuation:
+        earlier = [directory for record, directory, result in attempts
+                   if record['id'] == continuation['from_checkpoint'] and result and result.get('completed') is True]
+        if not earlier:
+            raise ValueError('completed predecessor checkpoint required for continuation')
+        predecessor = earlier[-1] / 'snapshot'
+        validate(predecessor, runtime_image=manifest['runtime_image'])
     number = len(previous) + 1
     parent = development / 'evaluations' / step
     output = parent / str(number)
@@ -271,6 +302,8 @@ def evaluate(root, configuration, step, *, rerun=False, authorization=None):
               'role': 'primary' if number == 1 else 'rerun', 'binding_sha256': binding['manifest_sha256'],
               'provenance': binding, 'developer_result_sha256': sha(checkpoint / 'result.json'),
               'snapshot': str(snapshot), 'snapshot_manifest_sha256': sha(snapshot.with_suffix('.json')),
+              'predecessor_snapshot': str(predecessor) if predecessor else None,
+              'predecessor_manifest_sha256': sha(predecessor.with_suffix('.json')) if predecessor else None,
               'outcome': 'evaluator_error', 'functional': 'unassessable', 'security': 'unassessable',
               'evaluation': {}, 'authorization': authorization, 'cleanup_pending': True, 'evidence': str(output / 'restricted/assessment.json')}
     parent.mkdir(parents=True, exist_ok=True)
@@ -289,13 +322,17 @@ def evaluate(root, configuration, step, *, rerun=False, authorization=None):
         result['candidate_dependencies'] = candidate_dependency_inventory(candidate, result['snapshot_manifest_sha256'])
         declaration = Path(binding['manifest']).parent
         runtime = json.loads((root / 'runtime.json').read_text())
-        settings = manifest['steps'][step]
         command = [sys.executable, '-m', 'principiis.evaluation', '--snapshot', str(candidate),
                    '--output', str(output / 'restricted'), '--app-image', manifest['runtime_image'],
                    '--evaluator-image', manifest['evaluator_images'][step], '--version', binding['version'],
                    '--check-contract', str(declaration / settings['contract']),
                    '--seccomp', str(declaration / manifest['seccomp']),
                    '--app-command', json.dumps(settings['app_command']), '--docker', runtime.get('docker', 'docker')]
+        if continuation:
+            command.extend(['--predecessor-snapshot', str(predecessor),
+                            '--continuation-version', continuation['version']])
+            for name in continuation['paths']:
+                command.extend(['--continuation-path', name])
         result['python_executable'] = {'path': sys.executable, 'sha256': sha(sys.executable), 'version': sys.version}
         result['controller_sources'] = {path.name: sha(path)
                                        for path in sorted(Path(__file__).parent.glob('*.py'))}
@@ -308,7 +345,7 @@ def evaluate(root, configuration, step, *, rerun=False, authorization=None):
         observed = json.loads(Path(result['evidence']).read_text())
         if observed.get('outcome') not in ('joint_pass', 'candidate_failure', 'unassessable', 'evaluator_error'):
             raise ValueError('invalid restricted evaluator outcome')
-        for key in ('outcome', 'functional', 'security', 'checks', 'error', 'evidence_sha256'):
+        for key in ('outcome', 'functional', 'security', 'checks', 'error', 'evidence_sha256', 'continuation', 'predecessor_unchanged'):
             if key in observed:
                 result[key] = observed[key]
         result['coverage'] = _contract(declaration / settings['contract'])

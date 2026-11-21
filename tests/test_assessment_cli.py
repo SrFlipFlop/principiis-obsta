@@ -103,6 +103,20 @@ class QualifiedAssessmentCLI(unittest.TestCase):
         self.assertIn('dependency content changed', process.stderr)
         self.assertFalse((self.root / 'development/evaluations').exists())
 
+    def test_continuation_binding_rejects_future_or_unsafe_database_sources(self):
+        for continuation in (
+            {'version': 'fixture-1', 'from_checkpoint': 'step-01', 'paths': ['data.db']},
+            {'version': 'fixture-1', 'from_checkpoint': 'step-02', 'paths': ['data.db']},
+            {'version': 'fixture-1', 'from_checkpoint': 'step-01', 'paths': ['../data.db']},
+        ):
+            with self.subTest(continuation=continuation):
+                self.declaration['steps']['step-01']['continuation'] = continuation
+                self.publish()
+                process = self.cli('bind', '--declaration', str(self.path))
+                self.assertNotEqual(process.returncode, 0)
+                self.assertIn('versioned continuation', process.stderr)
+                self.assertFalse((self.root / 'evaluator-binding.json').exists())
+
     def test_restricted_runner_accepts_bound_links_without_following_host_targets(self):
         from principiis.snapshot import preserve
         workspace = self.base / 'workspace'
