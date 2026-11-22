@@ -17,7 +17,7 @@ The specification governs approved scope. The glossary defines terms, ADRs expla
 | --- | --- |
 | Alignment, planning, implementation or review | [Development workflow](agents/workflow.md) |
 | Portal development rehearsal commands (#40–#42) | [MVP development CLI](engineering/MVP_DEVELOPMENT_CLI.md) and [runtime preparation](engineering/DEVELOPMENT_RUNTIME.md) |
-| Portal evaluation integration (#43–#45) | [MVP evaluation CLI](engineering/MVP_EVALUATION_CLI.md) and [implementation/prerequisite record](reviews/MVP_2_IMPLEMENTATION.md); qualified #8/#9 packages and live acceptance remain required |
+| Portal evaluation integration (#43–#45) | [MVP evaluation CLI](engineering/MVP_EVALUATION_CLI.md), [#8 first-three qualification](reviews/ISSUE_8_V3_TECHNICAL_QUALIFICATION_20261121.md) and [implementation/prerequisite record](reviews/MVP_2_IMPLEMENTATION.md); #9's full package and live acceptance remain required |
 | Live milestone-1 evidence and owner acceptance | [Requests 2–3, interruption/retry and reconciled exports](reviews/ISSUES_41_42_LIVE_QUALIFICATION_20261117.md) |
 | Manual checkpoint operation | [Manual workflow](MANUAL_CHECKPOINT_WORKFLOW.md) and [HITL issue #38](https://github.com/SrFlipFlop/principiis-obsta/issues/38) |
 | Architecture and proposed improvements | [Architecture review](reviews/ARCHITECTURE_REVIEW.md) |

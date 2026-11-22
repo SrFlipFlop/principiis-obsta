@@ -112,24 +112,45 @@ def summarize(attempts):
 def markdown(report):
     def display(value):
         return 'unknown' if value is None else str(value)
-    lines = ['Resource evidence', '', '| Checkpoint | Attempt | Outcome | Stage | Duration (s) | Tokens | Sampled peak RSS (bytes) |',
+    def seconds(value):
+        return 'unknown' if value is None else f'{value:.1f}'
+    lines = ['## Attempt measurements', '', '| Checkpoint | Attempt | Outcome | Stage | Seconds | Reported tokens | Host peak RSS (bytes) |',
              '| --- | --- | --- | --- | --- | --- | --- |']
     for attempt in report['attempts']:
         for stage, evidence in attempt['stages'].items():
             if not evidence:
                 continue
             tokens = evidence.get('tokens')
-            lines.append(f"| {attempt['checkpoint']} | {attempt['attempt']} ({attempt['session_id']}) | {attempt['outcome']} | {stage} | {display(evidence.get('elapsed_seconds'))} | {display(tokens.get('total_tokens') if tokens else None)} | {display(evidence.get('memory', {}).get('peak_sampled_rss_bytes'))} |")
-    lines.extend(['', 'Wall elapsed seconds: ' + display(report['totals']['wall_elapsed_seconds']),
-                  'Summed stage seconds: ' + display(report['totals']['stage_duration_seconds']),
-                  'Actual spending: unknown', 'API-equivalent estimate: unknown', ''])
+            count = tokens.get('total_tokens') if tokens else None
+            lines.append(f"| {attempt['checkpoint']} | {attempt['attempt']} | {attempt['outcome']} | {stage} | {seconds(evidence.get('elapsed_seconds'))} | {f'{count:,}' if count is not None else 'unknown'} | {display(evidence.get('memory', {}).get('peak_sampled_rss_bytes'))} |")
+    lines.extend(['', '## Time and token totals', '',
+                  'Wall time, including idle gaps: ' + seconds(report['totals']['wall_elapsed_seconds']) + ' seconds',
+                  'Active stage time, all attempts: ' + seconds(report['totals']['stage_duration_seconds']) + ' seconds'])
     for stage in ('development', 'evaluation'):
-        lines.append(stage + ' tokens: ' + json.dumps(report['totals'][stage]['tokens']))
-    lines.extend(['', *report['limitations']])
+        evidence = [attempt['stages'][stage] for attempt in report['attempts'] if attempt['stages'][stage]]
+        measured = [entry['tokens']['total_tokens'] for entry in evidence
+                    if entry.get('tokens') and entry['tokens'].get('total_tokens') is not None]
+        label = stage.capitalize() + ' tokens: '
+        if not evidence:
+            lines.append(label + 'no attempts yet')
+        elif len(measured) == len(evidence):
+            lines.append(label + f'{sum(measured):,} reported across {len(evidence)} attempts')
+        elif measured:
+            lines.append(label + f'{sum(measured):,} measured across {len(measured)} of {len(evidence)} attempts; full total unknown')
+        else:
+            lines.append(label + f'unknown; no usable token record from {len(evidence)} attempt(s)')
+    lines.extend(['Actual spending: unknown', 'API-equivalent estimate: unknown', '',
+                  '## Measurement notes', '',
+                  'Tokens come from Codex turn.completed records. Input plus output gives the reported total;',
+                  'Cached input is a subset of input; reasoning output is a subset of output.',
+                  'Missing usage stays unknown. Wall time includes idle gaps and is different from active stage time.',
+                  'Host memory samples cover the Docker client process group, not the whole container or hosted model.'])
     for attempt in report['attempts']:
         for stage, evidence in attempt['stages'].items():
-            if evidence.get('memory'):
-                lines.extend(['', f"{attempt['session_id']} {stage} memory: " + json.dumps(evidence['memory'])])
+            container_memory = evidence.get('container_memory') or {}
+            peak = container_memory.get('peak_sampled_bytes')
+            if peak is not None:
+                lines.append(f"{attempt['checkpoint']} attempt {attempt['attempt']} container peak: {peak:,} bytes (sampled working set)")
     return '\n'.join(lines) + '\n'
 
 

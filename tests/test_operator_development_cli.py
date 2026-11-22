@@ -1,6 +1,5 @@
 """Operator/manual/runtime integration using executable Docker regression controls."""
 import csv
-import hashlib
 import io
 import json
 from pathlib import Path
@@ -22,8 +21,6 @@ class OperatorDevelopmentCLI(unittest.TestCase):
         self.base = Path(self.temporary.name)
         self.runs = self.base / 'runs'
         self.run = self.runs / 'portal-integration'
-        self.authorization = self.base / 'launch.md'
-        self.authorization.write_text('Regression-control scope only; never launch a live model from this fixture.')
         self.auth = self.base / 'auth.json'
         self.auth.write_text('opaque authentication fixture; controller must not parse')
         requests = [(ROOT / f'benchmarks/document-portal/requests/{number:02}.txt').read_text()
@@ -61,7 +58,7 @@ class OperatorDevelopmentCLI(unittest.TestCase):
             count_path.write_text(str(count))
             step=min(count,3)
             assert delivered == '\\n\\n'.join(expected[:step]), 'incorrect incremental disclosure'
-            assert 'Regression-control scope only' not in delivered, 'authorization leaked to developer prompt'
+            assert 'manual_cli_invocation' not in delivered, 'operator record leaked to developer prompt'
             assert '--ephemeral' in args and '--ignore-rules' in args and '--ignore-user-config' in args
             if count == 1:
                 assert list(workspace.iterdir()) == [], 'first project is not empty'
@@ -72,13 +69,14 @@ class OperatorDevelopmentCLI(unittest.TestCase):
             # controller evidence. Neither path is included among container mounts.
             initial=json.loads((workspace.parent/'result.json').read_text())
             journal=json.loads((base/'runs/portal-integration/development/manual.json').read_text())
-            approval=initial['launch_authorization']
-            assert approval == journal['attempts'][-1]['launch_authorization'], 'launch audit not durable before process'
+            invocation=initial['launch_authorization']
+            assert invocation == journal['attempts'][-1]['launch_authorization'], 'launch record not durable before process'
             assert initial['execution'] == {} and initial['completed'] is False
-            assert approval['step'] == 'step-%02d'%step
+            assert invocation['step'] == 'step-%02d'%step
+            assert invocation['kind'] == 'manual_cli_invocation'
             with (base/'deliveries.jsonl').open('a') as stream:
                 stream.write(json.dumps({'count':count,'request':delivered,'initial_session':initial['session_id'],
-                                         'authorization_sha256':approval['sha256']})+'\\n')
+                                         'invocation_kind':invocation['kind']})+'\\n')
             event={'type':'turn.completed','id':'fixture-turn-%s'%count,
                    'usage':{'input_tokens':count*10,'cached_input_tokens':2,
                             'output_tokens':5,'reasoning_output_tokens':1}}
@@ -101,13 +99,11 @@ class OperatorDevelopmentCLI(unittest.TestCase):
                                            'auth_file': str(self.auth),
                                            'clean_runtime_review': 'executable regression fixture only'}))
 
-    def cli(self, command, *arguments, success=True, authorization=True):
+    def cli(self, command, *arguments, success=True):
         args = [sys.executable, '-m', 'principiis', command, '--run', 'portal-integration',
                 '--runs-root', str(self.runs)]
         if '--format' not in arguments:
             args.extend(['--format', 'json'])
-        if command == 'develop' and authorization:
-            args.extend(['--authorization', str(self.authorization)])
         result = subprocess.run(args + list(arguments), cwd=ROOT, capture_output=True, text=True)
         if success:
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -177,9 +173,8 @@ class OperatorDevelopmentCLI(unittest.TestCase):
 
         deliveries = [json.loads(line) for line in (self.base / 'deliveries.jsonl').read_text().splitlines()]
         self.assertEqual(len({item['initial_session'] for item in deliveries}), 4)
-        expected_authorization = hashlib.sha256(self.authorization.read_bytes()).hexdigest()
-        self.assertTrue(all(item['authorization_sha256'] == expected_authorization for item in deliveries))
-        self.assertTrue(all('Regression-control scope only' not in item['request'] for item in deliveries))
+        self.assertTrue(all(item['invocation_kind'] == 'manual_cli_invocation' for item in deliveries))
+        self.assertTrue(all('manual_cli_invocation' not in item['request'] for item in deliveries))
 
         report_json = json.loads(self.cli('report', '--format', 'json').stdout)
         report_csv = self.cli('report', '--format', 'csv').stdout
@@ -208,15 +203,13 @@ class OperatorDevelopmentCLI(unittest.TestCase):
         self.assertEqual((self.run / 'reports/development.md').read_text(), report_markdown)
         self.assertEqual(self.development_count(), 4)
 
-    def test_invalid_selection_and_authorization_allocate_no_attempt(self):
+    def test_invalid_selection_and_removed_authorization_flag_allocate_no_attempt(self):
         self.initialize()
         for selection, extra in (('2', ()), ('4', ()), ('1', ('--retry',))):
             with self.subTest(selection=selection, extra=extra):
                 self.cli('develop', '--step', selection, *extra, success=False)
                 self.assertFalse((self.run / 'development').exists())
                 self.assertEqual(self.development_count(), 0)
-        self.cli('develop', '--step', '1', success=False, authorization=False)
-        self.authorization.write_text('   \n')
-        self.cli('develop', '--step', '1', success=False)
+        self.cli('develop', '--step', '1', '--authorization', 'unused', success=False)
         self.assertFalse((self.run / 'development').exists())
         self.assertEqual(self.development_count(), 0)

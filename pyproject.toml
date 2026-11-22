@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "principiis-obsta"
+version = "0.1.0"
+description = "Local controller for coding-agent security experiments"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+principiis = "principiis.__main__:main"
+
+[tool.setuptools]
+packages = ["principiis"]
+
+[tool.setuptools.package-data]
+principiis = ["experiment_definitions/*.json"]

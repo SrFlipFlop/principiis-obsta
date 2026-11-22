@@ -23,7 +23,7 @@ class AlignedPortalRelease(unittest.TestCase):
                                      '--bundle', str(bundle), '--output', str(output)],
                                     cwd=ROOT, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn('require a new private evaluator bundle', result.stderr)
+            self.assertIn('private bundle metadata digest mismatch', result.stderr)
             self.assertFalse(output.exists())
 
     def test_one_package_default_releases_tenth_step(self):
@@ -57,7 +57,10 @@ class AlignedPortalRelease(unittest.TestCase):
             self.assertIn('requirements.txt', text)
             metadata = json.loads((ROOT / 'benchmarks/document-portal/package.json').read_text())
             self.assertEqual(metadata['version'], 'v3-draft1')
-            self.assertEqual(metadata['qualification_status'], 'pending')
+            self.assertEqual(metadata['qualification_status'], 'qualified_first_three')
+            self.assertEqual(metadata['owner_review'], 'approved_first_three')
+            self.assertEqual(metadata['qualified_through'], 3)
+            self.assertRegex(metadata['private_bundle_sha256'], r'^[0-9a-f]{64}$')
 
     def test_unapproved_or_unknown_bundle_status_never_stages_candidate(self):
         for status in [{}, {'qualification_status': 'qualified', 'owner_review': 'pending'},

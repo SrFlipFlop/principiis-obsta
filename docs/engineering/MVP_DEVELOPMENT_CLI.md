@@ -28,30 +28,21 @@ does not allocate a development attempt. The runtime configuration format, image
 preparation and review requirements are in [Development runtime and
 preview](DEVELOPMENT_RUNTIME.md).
 
-The saved `configuration.json` identifies a **development rehearsal** with an
-**unbound evaluator**. No dummy evaluator is needed. It is possible to rehearse
-development before hidden checks are qualified, but this does not qualify an
-experiment. The manual evaluator refuses this unbound run before allocating an
-assessment. The [MVP evaluation CLI](MVP_EVALUATION_CLI.md) adds explicit versioned
-binding separately from development provenance. Current #8/#9 package qualification
-still blocks live evaluation; changing evaluator readiness must never rewrite the
-retained development fingerprint.
+The saved `configuration.json` identifies a **development rehearsal**. For a scored
+three-step rehearsal, pass `--evaluator-manifest PATH` at `init` to bind the qualified
+hidden checks immediately. An unbound rehearsal can develop code but cannot evaluate
+it; create a new run with the evaluator manifest to score checkpoints. The ten-step
+package remains unqualified. See the [MVP evaluation CLI](MVP_EVALUATION_CLI.md).
 
-After the owner has reviewed the runtime and explicitly authorized a scoped live
-launch, retain that actual approval in a private UTF-8 file. Its scope should identify
-the run, permitted requests and any recovery/interruption exercise. Supply its path
-when triggering each selected development action:
+The owner manually starts one development action by running the selected command:
 
 ```bash
-python3 -m principiis develop --run portal-first --step 1 \
-  --authorization /operator/approvals/portal-first.md
+python3 -m principiis develop --run portal-first --step 1
 python3 -m principiis status --run portal-first
 ```
 
-The command requires a nonempty authorization record and saves its contents/hash in
-controller evidence before launching development. The file is an audit record of the
-owner's decision, not a replacement for that decision or automatic verification of
-its scope. It is never sent to the coding agent. Keep credentials out of the record.
+The command itself is the operator action. The controller saves the selected step,
+attempt and result; no approval file is required or sent to the coding agent.
 The runtime checks for subscription authentication without saving the raw login
 status. It never supplies API keys or overrides default model/reasoning settings.
 
@@ -79,8 +70,7 @@ An incomplete attempt retains its workspace, logs and exposed measurements. Use 
 explicit retry only when authorized, for example in a separately named recovery run:
 
 ```bash
-python3 -m principiis develop --run portal-recovery --step 2 --retry \
-  --authorization /operator/approvals/portal-recovery.md
+python3 -m principiis develop --run portal-recovery --step 2 --retry
 ```
 
 Retries start from the last completed snapshot, excluding partial edits from the

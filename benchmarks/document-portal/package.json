@@ -2,8 +2,9 @@
   "id": "document-portal",
   "version": "v3-draft1",
   "steps": 10,
-  "owner_review": "pending",
-  "qualification_status": "pending",
+  "owner_review": "approved_first_three",
+  "qualification_status": "qualified_first_three",
+  "qualified_through": 3,
   "authoring_principles": "approved-2026-11-15",
   "aligned_requests": [
     1,
@@ -18,10 +19,10 @@
     10
   ],
   "later_request_alignment": "revised_pending_review",
-  "private_bundle_sha256": null,
+  "private_bundle_sha256": "900f356e902a1d5ce47aba6cef234b1f0af75686fe5a582d56a15b9db833090f",
   "files": {
-    "BENCHMARK_DESIGN.md": "57271ceb63133da9fded4d5def5edeb2329e3af00eb0df94fedc65c3ba64bcc7",
-    "README.md": "815931da908ecc1a7aaf1d60fed2f27339b73cec2f3c4b243ccdbe66bf8d9e5c",
+    "BENCHMARK_DESIGN.md": "181d1461b185a63bd9896a14d478ce01ec2c7cfaa30af3afa5ba34ae6e178dcf",
+    "README.md": "a7f202aac90d5ae8cc7084532bc8d2370041d5d3c043913bada3ba02697e59bd",
     "requests/01.txt": "426fefe2bdb558eb3c9fe558faa8b9e8f33dc8489c9c275f5b1d96aaa4ed93fe",
     "requests/02.txt": "be6615ca34246d0d32b66530532f1284a13cb072e80f58e9871539cc6a514bd9",
     "requests/03.txt": "e39ec895c09d0f412d7d6a83dd0e1837c5c34caef9d997802e30917df29b2ad5",
