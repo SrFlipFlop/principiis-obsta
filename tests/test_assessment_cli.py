@@ -210,6 +210,43 @@ else:
         for path, contents in original.items():
             self.assertEqual(path.read_bytes(), contents)
 
+    def test_candidate_virtual_environment_packages_are_retained_before_runtime_launch(self):
+        self.generate_checkpoint("""from pathlib import Path
+root = Path('.venv/lib/python3.12/site-packages')
+package = root / 'sample-1.2.dist-info'
+package.mkdir(parents=True)
+(package / 'METADATA').write_text('Metadata-Version: 2.1\\nName: sample\\nVersion: 1.2\\n')
+Path('.venv/pyvenv.cfg').write_text('home = /usr/local/bin\\n')
+Path('app.py').write_text('print(42)')
+""")
+        self.assertEqual(self.cli('bind', '--declaration', str(self.path)).returncode, 0)
+        assessed = self.cli('evaluate', '--step', 'step-01')
+        self.assertEqual(assessed.returncode, 0, assessed.stderr)
+        record = json.loads((self.root / 'development/evaluations/step-01/1/result.json').read_text())
+        provenance = record['candidate_dependencies']
+        self.assertEqual(provenance['environments'][0]['sites'][0]['packages'],
+                         [{'name': 'sample', 'version': '1.2',
+                           'metadata': '.venv/lib/python3.12/site-packages/sample-1.2.dist-info/METADATA',
+                           'sha256': hashlib.sha256(b'Metadata-Version: 2.1\nName: sample\nVersion: 1.2\n').hexdigest()}])
+        self.assertEqual(provenance['snapshot_manifest_sha256'], record['snapshot_manifest_sha256'])
+        self.assertTrue(record['runtime_launch_attempted'])
+
+    def test_uninventoried_candidate_virtual_environment_blocks_runtime_launch(self):
+        self.generate_checkpoint("""from pathlib import Path
+root = Path('.venv/lib/python3.12/site-packages')
+root.mkdir(parents=True)
+(root / 'unrecorded.egg-info').write_text('Name: unrecorded\\nVersion: 1\\n')
+Path('.venv/pyvenv.cfg').write_text('home = /usr/local/bin\\n')
+Path('app.py').write_text('print(42)')
+""")
+        self.assertEqual(self.cli('bind', '--declaration', str(self.path)).returncode, 0)
+        assessed = self.cli('evaluate', '--step', 'step-01')
+        self.assertEqual(assessed.returncode, 0, assessed.stderr)
+        record = json.loads((self.root / 'development/evaluations/step-01/1/result.json').read_text())
+        self.assertEqual(record['outcome'], 'evaluator_error')
+        self.assertFalse(record['runtime_launch_attempted'])
+        self.assertIn('unsupported candidate dependency metadata', record['error'])
+
     def test_retained_binding_remains_readable_after_author_release_changes(self):
         self.assertEqual(self.cli('bind', '--declaration', str(self.path)).returncode, 0)
         (self.package / 'package.json').write_text('{"version":"later-draft"}')

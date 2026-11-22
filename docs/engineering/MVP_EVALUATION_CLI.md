@@ -49,11 +49,18 @@ Binding retains frozen public/private metadata copies so historical reports rema
 readable after a subsequent author release; evaluation verifies the original private
 dependencies again before allocation.
 
-Candidate-specific dependency installation and a complete inventory of packages
-inside retained virtual environments are not implemented here. Author image
-inventories alone do not establish that completeness. The runtime must match the
-development image for image-bound interpreter links; missing dependencies stay
-evaluator errors. This remains an incomplete part of #43, alongside live acceptance.
+For each assessment, the controller inventories installed distribution metadata in
+retained Python virtual environments before launching the restricted runtime. The
+assessment retains each environment's configuration hash and each distribution's
+name, version, metadata path and hash, tied to the immutable snapshot manifest. The
+snapshot manifest pins the complete file tree, including package payloads. Unsupported
+legacy `.egg-info` / `.egg-link` metadata or malformed `.dist-info/METADATA` stops the
+launch as an evaluator error. The bound author inventory continues to cover prepared
+runtime/checker images. The controller does not install candidate dependencies or
+infer them from a requirements file; an incompatible or missing runtime dependency
+remains an evaluator error. A candidate using dependencies outside the image and
+retained virtual environments needs separate preparation and qualification before
+assessment. Live generated-candidate acceptance remains required for #43.
 The current retained Document Portal snapshots have no virtual environment; the
 first-three release inventories their pinned runtime and checker images and records
 their requirements-file hashes. A different candidate environment needs its own

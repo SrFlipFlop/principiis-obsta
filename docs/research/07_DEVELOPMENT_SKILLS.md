@@ -1,6 +1,6 @@
 # Development skills as a later experimental condition
 
-**Checked:** 2026-11-19. **Status:** independent primary-source research for [issue #52](https://github.com/SrFlipFlop/principiis-obsta/issues/52), not an intervention approval or efficacy finding. No skill was installed in an evaluated environment; no model run was made.
+**Checked:** 2026-11-19. **Status:** independent primary-source research for [issue #52](https://github.com/SrFlipFlop/principiis-obsta/issues/52), not an intervention approval or efficacy finding. No skill was installed in an evaluated environment; no model run was made. **Update 2026-11-20:** The owner selected a custom plan–implement–verify workflow as the first design direction. The four-skill bundle below is retained as the earlier research proposal; the current design is [the development-skill condition](../DEVELOPMENT_SKILL_CONDITION.md).
 
 ## Scope and sources
 
@@ -26,7 +26,7 @@ Each URL below is pinned to the checked revision. “Overhead” is a directiona
 
 The candidate table is not evidence that any skill improves functionality or security. Source instructions sometimes prescribe behavior that conflicts with the pilot's unattended, fresh-session workflow; that conflict is an observed compatibility limit, not a reason to silently edit upstream text. The Poteto `disable-model-invocation` flag and Matt's `Skill` calls need direct verification in the actual Codex harness. [OpenAI's skill documentation](https://developers.openai.com/plugins/concepts/skills) says names/descriptions drive discovery and full bodies are loaded on activation; its [Codex skill evaluation guide](https://developers.openai.com/blog/eval-skills) explicitly recommends checking both missed and unwanted triggers. An [official installation reference](https://developers.openai.com/api/reference/cli) identifies `.agents/skills/` as a Codex project location. These docs support feasibility of Markdown delivery, **not** compatibility of every upstream instruction or guaranteed use.
 
-## Proposed first condition and delivery (proposal, not decision)
+## Earlier four-skill bundle proposal (superseded 2026-11-20)
 
 Propose a **four-file general-development bundle**: Matt `codebase-design` and `diagnosing-bugs`; Poteto `principle-sequence-verifiable-units` and `principle-prove-it-works`. This samples design, diagnosis, small-task sequencing and verification while avoiding whole-collection routing, explicit security advice and mandatory human seam approval. It is deliberately not called a TDD condition. Evaluate Poteto's narrow `tdd` separately after activation feasibility; Matt's `tdd` requires a design for human confirmation before use. A later **security-specific** skill condition may be justified only with a separate rationale, pinned text, leakage review and budget-matched general-review comparator; it should not be added to this first bundle.
 
@@ -53,4 +53,4 @@ Compare the same versioned application sequences, fixed task bytes and evaluator
 - This is a focused source inspection, not a systematic skill review or empirical result. Upstream `main` may move; the commits and copied byte hashes, not branch names or plugin version alone, must govern any later run.
 - The first bundle mixes two authors and several mechanisms; a bundle-level difference cannot identify which skill caused it. If the pilot is promising and resources allow, isolate components in later conditions. Avoid simultaneous security skill/review additions.
 - The `codebase-design` file references unbundled support documents; `diagnosing-bugs` can ask for user access; Poteto flags are Cursor-oriented. The exact Codex behavior is unresolved until the dry run. No external scripts, packages or model services are required by the four selected `SKILL.md` bodies, but their suggested actions can use normal tools and consume resources.
-- Owner decisions still needed after qualification: exact bundle/wrapper bytes, treatment of optional references and human gates, whether to test a narrow TDD variant, any security-specific follow-up, run order and comparative launch. Draft benchmark requests and evaluator status can change before freezing.
+- The owner has since chosen the custom workflow direction described in [the current design](../DEVELOPMENT_SKILL_CONDITION.md). Exact skill and invocation bytes, delivery qualification, run order and comparative launch remain open. Draft benchmark requests and evaluator status can change before freezing.

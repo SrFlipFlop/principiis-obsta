@@ -12,6 +12,7 @@ import uuid
 from .execution import execute
 from .manual import _journal_attempts
 from .snapshot import validate
+from .candidate_dependencies import inventory as candidate_dependency_inventory
 
 from . import resource
 from .resume import write_json
@@ -303,6 +304,7 @@ def evaluate(root, configuration, step, *, rerun=False, authorization=None):
         shutil.copytree(snapshot, candidate, symlinks=True)
         shutil.copyfile(snapshot.with_suffix('.json'), candidate.with_suffix('.json'))
         validate(candidate, runtime_image=manifest['runtime_image'])
+        result['candidate_dependencies'] = candidate_dependency_inventory(candidate, result['snapshot_manifest_sha256'])
         declaration = Path(binding['manifest']).parent
         runtime = json.loads((root / 'runtime.json').read_text())
         settings = manifest['steps'][step]
