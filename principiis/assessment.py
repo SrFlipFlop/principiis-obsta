@@ -17,7 +17,14 @@ from .candidate_dependencies import inventory as candidate_dependency_inventory
 from . import resource
 from .resume import write_json
 
-PACKAGE = Path(__file__).resolve().parents[1] / 'benchmarks/document-portal'
+BENCHMARKS = Path(__file__).resolve().parents[1] / 'benchmarks'
+
+
+def package_for(configuration):
+    application = configuration.get('application')
+    if not isinstance(application, str) or not re.fullmatch(r'[a-z][a-z0-9-]*', application):
+        raise ValueError('invalid application identity')
+    return BENCHMARKS / application
 
 
 def sha(path):
@@ -47,21 +54,32 @@ def load_declaration(root, configuration, declaration_path, *, frozen_release=No
     """Verify an author-published qualified bundle against this frozen run."""
     root = Path(root).resolve()
     path = Path(declaration_path).resolve()
-    metadata_path = Path(frozen_release) if frozen_release else PACKAGE / 'package.json'
+    package = package_for(configuration)
+    metadata_path = Path(frozen_release) if frozen_release else package / 'package.json'
     metadata = json.loads(metadata_path.read_text())
-    if (metadata.get('qualification_status') != 'qualified'
-            or metadata.get('owner_review') != 'approved'
-            or not metadata.get('private_bundle_sha256')):
-        raise ValueError('a qualified, owner-approved portal release with a bound evaluator is required')
+    scoped = False
+    if (metadata.get('qualification_status') == 'qualified_first_three'
+            and metadata.get('owner_review') == 'approved_first_three'
+            and metadata.get('qualified_through') == 3
+            and (root / 'sequence.json').is_file()):
+        sequence = json.loads((root / 'sequence.json').read_text())
+        scoped = ([step.get('id') for step in sequence['steps']] == ['step-01','step-02','step-03']
+                  and [step.get('request') for step in sequence['steps']]
+                  == ['requests/01.txt','requests/02.txt','requests/03.txt'])
+    full = (metadata.get('qualification_status') == 'qualified'
+            and metadata.get('owner_review') == 'approved')
+    if (not (scoped or full) or not metadata.get('private_bundle_sha256')):
+        raise ValueError('a qualified, owner-approved application release with a bound evaluator is required')
     if sha(path) != metadata['private_bundle_sha256']:
         raise ValueError('evaluator declaration differs from the qualified public release')
     manifest = json.loads(path.read_text())
     if (not isinstance(manifest, dict) or not isinstance(manifest.get('version'), str)
             or not manifest['version'].strip() or manifest.get('complete') is not True
-            or manifest.get('qualification_status') != 'qualified' or manifest.get('owner_review') != 'approved'):
+            or manifest.get('qualification_status') != metadata.get('qualification_status')
+            or manifest.get('owner_review') != metadata.get('owner_review')):
         raise ValueError('complete qualified and approved evaluator declaration required')
-    if configuration.get('application') != 'document-portal' or metadata.get('id') != 'document-portal':
-        raise ValueError('portal evaluator requires a portal run')
+    if metadata.get('id') != configuration.get('application'):
+        raise ValueError('evaluator application differs from the frozen run')
     if metadata.get('version') != configuration.get('package_version'):
         raise ValueError('evaluator request package version differs; use a new run')
     for name, expected in configuration['frozen_files'].items():
@@ -72,7 +90,7 @@ def load_declaration(root, configuration, declaration_path, *, frozen_release=No
     if manifest.get('requests') != expected_requests:
         raise ValueError('evaluator requests differ from the frozen development requests')
     for name, expected in expected_requests.items():
-        if metadata.get('files', {}).get(name) != expected or sha(_relative(root if frozen_release else PACKAGE, name)) != expected:
+        if metadata.get('files', {}).get(name) != expected or sha(_relative(root if frozen_release else package, name)) != expected:
             raise ValueError('qualified public request differs from the frozen development request')
     files = manifest.get('files')
     if not isinstance(files, dict) or not files:
@@ -140,7 +158,7 @@ def bind(root, configuration, declaration_path):
             raise ValueError('evaluator binding changed; preserve this run and use a new run')
     else:
         (root / 'evaluator-manifest.json').write_bytes(Path(declaration_path).read_bytes())
-        (root / 'evaluator-release.json').write_bytes((PACKAGE / 'package.json').read_bytes())
+        (root / 'evaluator-release.json').write_bytes((package_for(configuration) / 'package.json').read_bytes())
         write_json(target, binding)
     return binding
 

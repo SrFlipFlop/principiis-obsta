@@ -135,7 +135,7 @@ def run_sequence(sequence_path, executor, output, *, resume=False, retry_incompl
 
 
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] in ('init', 'develop', 'bind-evaluator', 'evaluate', 'status', 'preview', 'cleanup', 'cleanup-evaluation', 'report'):
+    if len(sys.argv) == 1 or sys.argv[1] not in ('run', 'sequence'):
         from .operator import main as operate
         return operate()
     def interrupted(signum, frame):
@@ -146,8 +146,7 @@ def main():
     for name, help_text in (
         ('init', 'Freeze reusable portal development rehearsal configuration'),
         ('develop', 'Develop one selected checkpoint with the isolated runtime'),
-        ('bind-evaluator', 'Bind a qualified versioned evaluator without changing development evidence'),
-        ('evaluate', 'Assess one retained checkpoint or explicitly append an evaluation rerun'),
+        ('evaluate', 'Check a retained checkpoint or run a separate AI security review'),
         ('cleanup-evaluation', 'Remove retained evaluator containers without rewriting assessment evidence'),
         ('status', 'Locate retained source, logs and next permissible action'),
         ('preview', 'Start or stop a restricted disposable checkpoint preview'),

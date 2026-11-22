@@ -17,11 +17,11 @@ def load_qualified_package(package, *, expected_steps=10):
         raise ValueError('qualified package metadata cannot be a symlink')
     metadata = json.loads(path.read_text())
     if metadata.get('qualification_status') != 'qualified':
-        raise ValueError('ten-step run requires a qualified portal package from #9; qualification remains pending')
+        raise ValueError('ten-step run requires a qualified application package; qualification remains pending')
     if metadata.get('owner_review') != 'approved':
-        raise ValueError('ten-step package owner review from #9 must be approved before qualification')
-    if metadata.get('id') != 'document-portal' or not isinstance(metadata.get('version'), str) or not metadata['version'].strip():
-        raise ValueError('qualified package requires a document-portal identity and version')
+        raise ValueError('ten-step package owner review must be approved before qualification')
+    if metadata.get('id') != package.name or not isinstance(metadata.get('version'), str) or not metadata['version'].strip():
+        raise ValueError('qualified package requires a matching application identity and version')
     if type(metadata.get('steps')) is not int or metadata['steps'] != expected_steps:
         raise ValueError('qualified package must contain exactly ten steps')
     if not isinstance(metadata.get('private_bundle_sha256'), str) or not re.fullmatch(r'[0-9a-f]{64}', metadata['private_bundle_sha256']):

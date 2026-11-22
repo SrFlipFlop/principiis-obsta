@@ -19,7 +19,7 @@ class OperatorLocking(unittest.TestCase):
             "import time\n(base/'blocked').touch()\nwhile (base/'hold').exists(): time.sleep(.02)\ndelivered=sys.stdin.read()"))
         (fixture.base / 'hold').touch()
         argv = [sys.executable, '-m', 'principiis', 'develop', '--run', 'portal-integration',
-                '--runs-root', str(fixture.runs), '--authorization', str(fixture.authorization),
+                '--runs-root', str(fixture.runs),
                 '--step', '1', '--format', 'json']
         process = subprocess.Popen(argv, cwd=integration.ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:

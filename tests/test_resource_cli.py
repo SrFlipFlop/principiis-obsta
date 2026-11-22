@@ -110,3 +110,19 @@ class ResourcesCLI(unittest.TestCase):
             self.assertIn('step', completed.stdout)
             self.assertIn('Actual spending: unknown', completed.stdout)
             self.assertIn('Cached input is a subset', completed.stdout)
+
+    def test_readable_report_explains_partial_token_total_after_retry(self):
+        from principiis import resource
+        report = resource.summarize([
+            {'run_id': 'run', 'session_id': 'failed', 'checkpoint': 'step-01', 'attempt': 1,
+             'outcome': 'incomplete', 'stages': {'development': {'elapsed_seconds': 7, 'tokens': None}, 'evaluation': {}}},
+            {'run_id': 'run', 'session_id': 'retry', 'checkpoint': 'step-01', 'attempt': 2,
+             'outcome': 'pending_evaluation', 'stages': {'development': {
+                 'elapsed_seconds': 206, 'tokens': {'input_tokens': 129127, 'cached_input_tokens': 113408,
+                                                   'output_tokens': 9250, 'reasoning_output_tokens': 156,
+                                                   'total_tokens': 138377}}, 'evaluation': {}}},
+        ])
+        rendered = resource.markdown(report)
+        self.assertIn('138,377 measured across 1 of 2 attempts; full total unknown', rendered)
+        self.assertNotIn('development tokens: null', rendered)
+        self.assertIn('## Attempt measurements', rendered)

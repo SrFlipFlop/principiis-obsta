@@ -4,6 +4,7 @@ Untrusted application probes must use the restricted evaluation runner, never ho
 execution. This orchestration subprocess boundary is not an OS sandbox.
 """
 import argparse
+from contextlib import nullcontext
 import hashlib
 import json
 from pathlib import Path
@@ -38,14 +39,19 @@ def investigate(args):
         raise ValueError('retained snapshot and primary results are required')
     if output == snapshot or snapshot in output.parents or output in snapshot.parents:
         raise ValueError('investigation output must be outside retained snapshot')
+    config_path, prompt_path = Path(args.config).resolve(), Path(args.prompt).resolve()
+    config = json.loads(config_path.read_text())
     if snapshot.with_suffix('.json').exists():
-        validate(snapshot, runtime_image=None)
+        if 'runtime_config' in config:
+            from .development_runtime import load_config
+            reviewer = load_config(config['runtime_config'])
+            validate(snapshot, runtime_image=reviewer['image'])
+        else:
+            validate(snapshot, runtime_image=None)
     else:
         # Historical investigation fixtures may lack a retained manifest. They
         # still require self-contained links before any host-side consumer runs.
         inventory(snapshot)
-    config_path, prompt_path = Path(args.config).resolve(), Path(args.prompt).resolve()
-    config = json.loads(config_path.read_text())
     for field in ('version', 'model', 'settings', 'timeout_seconds', 'evidence'):
         if field not in config:
             raise ValueError('missing evaluator configuration: ' + field)
@@ -54,8 +60,10 @@ def investigate(args):
             or not isinstance(v.get('scope'), str) or not v['scope'] or 'argv' not in v
             for v in config['evidence'].values()):
         raise ValueError('evidence requires operator-declared root cause, scope and argv')
-    if ('agent' in config) == ('codex_config' in config):
-        raise ValueError('select exactly one agent argv or codex_config')
+    if sum(key in config for key in ('agent', 'codex_config', 'runtime_config')) != 1:
+        raise ValueError('select exactly one agent argv, codex_config or runtime_config')
+    if 'runtime_config' in config and config['evidence']:
+        raise ValueError('containerized investigation requires reviewed restricted proof support; leave claims unresolved')
     commands = ([config['agent']] if 'agent' in config else []) + [v['argv'] for v in config['evidence'].values()]
     if any(not isinstance(c, list) or not c or any(not isinstance(v, str) or not v for v in c) for c in commands):
         raise ValueError('commands must be nonempty argv arrays')
@@ -64,7 +72,10 @@ def investigate(args):
     prompt = prompt_path.read_text()
     original = digest(primary)
     output.mkdir(parents=True, exist_ok=False)
+    output.chmod(0o700)
     shutil.copyfile(config_path, output / 'config.json')
+    if 'runtime_config' in config:
+        shutil.copyfile(config['runtime_config'], output / 'reviewer-runtime.json')
     (output / 'prompt.txt').write_text(prompt)
     report = {'schema_version': 1, 'stage': 'independent_evaluation', 'status': 'running',
               'primary': {'path': str(primary), 'sha256': original},
@@ -76,12 +87,17 @@ def investigate(args):
                             'measurement_refs': ['agent'], 'elapsed_seconds': None}}
     started = time.monotonic()
     try:
-        with tempfile.TemporaryDirectory(prefix='principiis-investigation-') as temporary:
-            workspace = Path(temporary) / 'checkpoint'
+        context = nullcontext(None) if 'runtime_config' in config else tempfile.TemporaryDirectory(prefix='principiis-investigation-')
+        with context as temporary:
+            workspace = output / 'workspace' if 'runtime_config' in config else Path(temporary) / 'checkpoint'
             shutil.copytree(snapshot, workspace, symlinks=True)
-            if 'codex_config' in config:
-                from .codex import Codex
-                adapter = Codex(config['codex_config'], output, snapshot)
+            if 'codex_config' in config or 'runtime_config' in config:
+                if 'runtime_config' in config:
+                    from .development_runtime import DevelopmentRuntime
+                    adapter = DevelopmentRuntime(output / 'reviewer-runtime.json', output, snapshot)
+                else:
+                    from .codex import Codex
+                    adapter = Codex(config['codex_config'], output, snapshot)
                 if config['timeout_seconds'] is not None:
                     raise ValueError('ordinary Codex evaluator uses unlimited timeout; set timeout_seconds null')
                 with (output / 'agent.stdout').open('w') as stdout, (output / 'agent.stderr').open('w') as stderr:
@@ -106,6 +122,8 @@ def investigate(args):
                                 'checkpoint': str(workspace)}), config['timeout_seconds'], output, 'agent')
             report['agent'] = agent
             report['resources']['reported_tokens'] = agent.get('tokens')
+            if agent.get('cleanup_error'):
+                raise ValueError('evaluator runtime cleanup failed; inspect retained allocation')
             if agent['exit_status'] != 0:
                 raise ValueError('evaluator agent failed')
             claims = json.loads(response)['claims']

@@ -26,8 +26,6 @@ class OperatorEvaluationCLI(unittest.TestCase):
             'version': '1', 'docker': '/usr/bin/true', 'image': 'sha256:' + 'a' * 64,
             'auth_file': str(auth), 'clean_runtime_review': 'engineering fixture only',
         }))
-        self.approval = self.base / 'approval.md'
-        self.approval.write_text('Engineering control authorization, not a live launch.')
         self.cli('init', '--application', 'document-portal', '--runtime-config', str(runtime))
 
     def cli(self, command, *arguments, success=True):
@@ -42,7 +40,7 @@ class OperatorEvaluationCLI(unittest.TestCase):
         return result
 
     def test_unbound_evaluation_refuses_before_assessment_allocation(self):
-        rejected = self.cli('evaluate', '--step', '1', '--authorization', str(self.approval), success=False)
+        rejected = self.cli('evaluate', '--step', '1', success=False)
         self.assertIn('unbound', rejected.stderr)
         self.assertFalse((self.run / 'assessments').exists())
         self.assertFalse((self.run / 'development').exists())
@@ -118,15 +116,21 @@ class OperatorEvaluationCLI(unittest.TestCase):
             self.assertNotEqual(process.returncode, 0)
             return process
 
-        operator('bind-evaluator', '--evaluator-manifest', str(fixture.path))
-        first = operator('evaluate', '--step', '1', '--authorization', str(self.approval))
+        binding = subprocess.run([sys.executable, '-c',
+            'import json, pathlib, sys; from principiis.assessment import bind; '
+            'root=pathlib.Path(sys.argv[1]); '
+            'bind(root, json.loads((root/"configuration.json").read_text()), sys.argv[2])',
+            str(fixture.root), str(fixture.path)],
+            cwd=fixture.source, capture_output=True, text=True)
+        self.assertEqual(binding.returncode, 0, binding.stderr)
+        first = operator('evaluate', '--step', '1')
         primary = first['checkpoints'][0]['primary_assessment']
         self.assertEqual(primary['outcome'], 'evaluator_error')
         primary_path = Path(primary['artifact'])
         original_primary = primary_path.read_bytes()
-        rejected = operator('evaluate', '--step', '1', '--authorization', str(self.approval), success=False)
+        rejected = operator('evaluate', '--step', '1', success=False)
         self.assertIn('--rerun', rejected.stderr)
-        rerun = operator('evaluate', '--step', '1', '--rerun', '--authorization', str(self.approval))
+        rerun = operator('evaluate', '--step', '1', '--rerun')
         self.assertEqual(len(rerun['checkpoints'][0]['assessments']), 2)
         self.assertEqual(rerun['checkpoints'][0]['primary_assessment'], primary)
         self.assertEqual(primary_path.read_bytes(), original_primary)
@@ -182,14 +186,20 @@ class OperatorEvaluationCLI(unittest.TestCase):
                 '--run', 'run', '--runs-root', str(fixture.base), '--format', 'json', *arguments],
                 cwd=fixture.source, capture_output=True, text=True)
 
-        self.assertEqual(operator('bind-evaluator', '--evaluator-manifest', str(fixture.path)).returncode, 0)
-        first = operator('evaluate', '--step', '1', '--authorization', str(self.approval))
+        binding = subprocess.run([sys.executable, '-c',
+            'import json, pathlib, sys; from principiis.assessment import bind; '
+            'root=pathlib.Path(sys.argv[1]); '
+            'bind(root, json.loads((root/"configuration.json").read_text()), sys.argv[2])',
+            str(fixture.root), str(fixture.path)],
+            cwd=fixture.source, capture_output=True, text=True)
+        self.assertEqual(binding.returncode, 0, binding.stderr)
+        first = operator('evaluate', '--step', '1')
         self.assertEqual(first.returncode, 0, first.stderr)
         report = json.loads(first.stdout)
         self.assertEqual(report['next_action']['action'], 'cleanup-evaluation')
         primary = Path(report['assessments'][0]['artifact'])
         original = primary.read_bytes()
-        blocked = operator('evaluate', '--step', '1', '--rerun', '--authorization', str(self.approval))
+        blocked = operator('evaluate', '--step', '1', '--rerun')
         self.assertNotEqual(blocked.returncode, 0)
         self.assertIn('cleanup', blocked.stderr)
         self.assertEqual(len(json.loads((primary.parent.parent / 'allocations.json').read_text())), 1)
@@ -198,7 +208,7 @@ class OperatorEvaluationCLI(unittest.TestCase):
         self.assertEqual(cleaned.returncode, 0, cleaned.stderr)
         self.assertEqual(json.loads(cleaned.stdout)['evaluation_cleanup_required'], [])
         self.assertEqual(primary.read_bytes(), original)
-        rerun = operator('evaluate', '--step', '1', '--rerun', '--authorization', str(self.approval))
+        rerun = operator('evaluate', '--step', '1', '--rerun')
         self.assertEqual(rerun.returncode, 0, rerun.stderr)
         self.assertEqual(len(json.loads(rerun.stdout)['assessments']), 2)
         self.assertEqual(primary.read_bytes(), original)

@@ -51,7 +51,10 @@ container calls `codex login status` and requires the installed CLI's
 `Logged in using ChatGPT` status. Its raw status stays inside the container. Other
 authentication modes, unknown output and failed status checks abort the attempt with
 a generic error before the model command. This guard does not verify account capacity
-or authorize a run. Refreshing credentials is operator work.
+or whether a stored refresh token still works. The disposable container does not save
+renewed credentials back to the private auth file. An old file can therefore produce
+an incomplete attempt even when `codex login status` reports ChatGPT authentication.
+Refresh the private auth file before an explicit `--retry`; preserve the failed attempt.
 
 Each attempt uses a fresh container/home, `codex exec --ephemeral`, an empty user
 configuration and no external conversations, skills, rules or memory. The adapter

@@ -25,7 +25,7 @@ These are work items within approved scope, not blockers requiring a new alignme
 
 Developer and evaluator both use ordinary Codex subscription access with harness default model/reasoning. Record effective values when exposed, otherwise unknown. No step or sequence time limits apply; measure elapsed time and reported tokens. At most three explicit retries per step are permitted, preserving all attempts. The owner manually triggers development and evaluation separately at each checkpoint. Controller support must implement these decisions before use.
 
-Issue #8's revised request/rubric intent is owner-approved. Technical qualification remains pending, including a clock regression found during a subsequent safe-control trial; #8 remains open.
+Issue #8's current `v3-draft1` first three requests completed model-free restricted oracle qualification, owner review and a scoped binding check on 2026-11-21; see [qualification record](reviews/ISSUE_8_V3_TECHNICAL_QUALIFICATION_20261121.md). This supersedes the old clock-regression status as the current technical observation. Requests 4–10 and the full ten-step package remain unqualified for #9; live generated-checkpoint acceptance remains #43–#44 work.
 
 ## Deliberately deferred until execution
 

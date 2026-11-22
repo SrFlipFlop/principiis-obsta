@@ -20,16 +20,12 @@ class OperatorCLI(unittest.TestCase):
         self.auth = self.base / 'auth.json'
         self.auth.write_text('operator-owned fixture; must never be read')
         self.runtime = self.base / 'runtime.json'
-        self.authorization = self.base / 'launch.md'
-        self.authorization.write_text('Fixture authorization record; no live launch is approved by this test.')
         self.runtime.write_text(json.dumps({
             'version': '1', 'docker': '/usr/bin/true', 'image': 'sha256:' + 'a' * 64,
             'auth_file': str(self.auth), 'clean_runtime_review': 'fixture review, not qualified',
         }))
 
     def cli(self, command, *args, success=True):
-        if command == 'develop':
-            args = (*args, '--authorization', str(self.authorization))
         completed = subprocess.run([
             sys.executable, '-m', 'principiis', command, '--run', 'portal-test',
             '--runs-root', str(self.runs), *args,
@@ -146,6 +142,50 @@ class OperatorCLI(unittest.TestCase):
         self.assertIn(str(retry / 'snapshot'), (report_dir / 'development.md').read_text())
         for path, content in original.items():
             self.assertEqual(path.read_bytes(), content)
+
+    def test_status_groups_run_checkpoint_evidence_and_next_command(self):
+        self.initialize()
+        self.retain_attempt('step-01', 1, 'first', True, 100, 4, 10)
+        rendered = self.cli('status').stdout
+        for heading in ('## Run', '## Checkpoints', '## Logs', '## Attempt measurements', '## Next action'):
+            self.assertIn(heading, rendered)
+        self.assertIn('principiis develop --run portal-test --step 2', rendered)
+
+    def test_status_separates_development_and_evaluation_outcomes(self):
+        from principiis.operator import markdown
+        report = {
+            'run_name': 'demo', 'run_mode': 'development-rehearsal', 'application': 'document-portal',
+            'package_version': 'v1', 'condition': {'id': 'baseline'}, 'investigation': 'none',
+            'evaluator_binding': 'bound', 'assessment_binding': {'version': 'release'}, 'root': '/tmp/demo',
+            'checkpoints': [
+                {'id': 'step-01', 'status': 'pending_evaluation', 'attempts': 1, 'source': '/tmp/source',
+                 'stdout': None, 'stderr': None, 'primary_assessment': {'outcome': 'candidate_failure'}},
+                {'id': 'step-02', 'status': 'pending_evaluation', 'attempts': 1, 'source': '/tmp/source2',
+                 'stdout': None, 'stderr': None, 'primary_assessment': None},
+            ],
+            'assessments': [], 'investigations': [], 'resources': {'attempts': [], 'totals': {
+                'development': {'tokens': None}, 'evaluation': {'tokens': None},
+                'wall_elapsed_seconds': None, 'stage_duration_seconds': None}},
+            'runtime_cleanup_required': [], 'evaluation_cleanup_required': [],
+            'investigation_cleanup_required': [], 'previews': [],
+            'next_action': {'action': 'evaluate', 'step': 'step-02', 'explanation': 'Run checks.'},
+        }
+        rendered = markdown(report)
+        self.assertIn('| Development | Evaluation |', rendered)
+        self.assertIn('| step-01 | finished | candidate_failure |', rendered)
+        self.assertIn('| step-02 | finished | not run |', rendered)
+
+    def test_expired_codex_login_is_reported_as_retryable_authentication_failure(self):
+        self.initialize()
+        attempt = self.retain_attempt('step-01', 1, 'expired-login', False, 100, 2, 0)
+        (attempt / 'executor.stdout').write_text(json.dumps({
+            'type': 'turn.failed',
+            'error': {'message': 'Your access token could not be refreshed because your refresh token was already used.'},
+        }) + '\n')
+        status = json.loads(self.cli('status', '--format', 'json').stdout)
+        self.assertEqual(status['checkpoints'][0]['failure_reason'], 'codex_authentication')
+        self.assertEqual(status['next_action']['action'], 'retry')
+        self.assertIn('Refresh the private auth file', status['next_action']['explanation'])
 
     def test_status_surfaces_retry_and_retains_hard_interrupted_allocation(self):
         self.initialize()

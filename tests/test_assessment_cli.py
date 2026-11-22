@@ -95,6 +95,41 @@ class QualifiedAssessmentCLI(unittest.TestCase):
             self.assertEqual(path.read_bytes(), contents)
         self.assertFalse((self.root / 'development').exists())
 
+    def test_first_three_release_can_bind_without_qualifying_all_ten(self):
+        sequence = json.loads((self.root / 'sequence.json').read_text())
+        for number in (2, 3):
+            name = f'requests/{number:02}.txt'
+            (self.root / name).write_text(f'Engineering request {number}')
+            (self.package / name).write_bytes((self.root / name).read_bytes())
+            sequence['steps'].append({'id':f'step-{number:02}', 'version':'fixture',
+                                      'sequence_version':'fixture', 'request':name})
+            self.declaration['requests'][name] = self.digest(self.root / name)
+            self.declaration['evaluator_images'][f'step-{number:02}'] = self.checker_image
+            self.declaration['steps'][f'step-{number:02}'] = self.declaration['steps']['step-01']
+        (self.root / 'sequence.json').write_text(json.dumps(sequence))
+        self.configuration['frozen_files'] = {name:self.digest(self.root / name)
+            for name in ('runtime.json','sequence.json','requests/01.txt','requests/02.txt','requests/03.txt')}
+        (self.root / 'configuration.json').write_text(json.dumps(self.configuration))
+        self.declaration.update(qualification_status='qualified_first_three',owner_review='approved_first_three')
+        self.path.write_text(json.dumps(self.declaration))
+        package = json.loads((self.package / 'package.json').read_text())
+        package.update(qualification_status='qualified_first_three',owner_review='approved_first_three',
+                       qualified_through=3,private_bundle_sha256=self.digest(self.path))
+        package['files'].update({name:self.digest(self.package / name)
+                                 for name in ('requests/02.txt','requests/03.txt')})
+        (self.package / 'package.json').write_text(json.dumps(package))
+        accepted = self.cli('bind','--declaration',str(self.path))
+        self.assertEqual(accepted.returncode,0,accepted.stderr)
+        self.assertTrue((self.root/'evaluator-binding.json').exists())
+        from principiis.qualification import load_qualified_package
+        with self.assertRaisesRegex(ValueError,'ten-step'):
+            load_qualified_package(self.package,expected_steps=10)
+        (self.root/'evaluator-binding.json').unlink()
+        package['qualified_through'] = 2
+        (self.package/'package.json').write_text(json.dumps(package))
+        rejected = self.cli('bind','--declaration',str(self.path))
+        self.assertNotEqual(rejected.returncode,0)
+
     def test_bound_assessment_rejects_changed_dependency_before_allocating(self):
         self.assertEqual(self.cli('bind', '--declaration', str(self.path)).returncode, 0)
         (self.bundle / 'preparation.json').write_text('changed after binding')

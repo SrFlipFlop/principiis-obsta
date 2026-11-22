@@ -53,7 +53,7 @@ class QualifiedSequenceCLI(unittest.TestCase):
     def test_draft_package_cannot_allocate_a_ten_step_run(self):
         rejected = self.init()
         self.assertIn('qualified', rejected.stderr)
-        self.assertIn('#9', rejected.stderr)
+        self.assertIn('qualified application package', rejected.stderr)
 
     def test_qualified_declaration_still_rejects_an_empty_released_request(self):
         metadata = self.qualified_fixture()
@@ -73,24 +73,10 @@ class QualifiedSequenceCLI(unittest.TestCase):
         rejected = self.init()
         self.assertIn('regular files', rejected.stderr)
 
-    def test_qualified_declaration_freezes_ten_requests_but_waits_for_private_binding(self):
+    def test_qualified_declaration_requires_private_evaluator_at_init(self):
         self.qualified_fixture()
-        self.init(success=True)
-        run = self.runs / 'ten-steps'
-        configuration = json.loads((run / 'configuration.json').read_text())
-        sequence = json.loads((run / 'sequence.json').read_text())
-        self.assertEqual(configuration['run_mode'], 'qualification')
-        self.assertEqual(len(sequence['steps']), 10)
-        self.assertEqual(configuration['evaluator_binding'], 'unbound')
-        for number in range(1, 11):
-            name = f'requests/{number:02}.txt'
-            self.assertEqual((run / name).read_bytes(), (self.package / name).read_bytes())
-        self.assertFalse((run / 'development').exists())
-        status = subprocess.run([sys.executable, '-m', 'principiis', 'status',
-                                 '--run', 'ten-steps', '--runs-root', str(self.runs),
-                                 '--format', 'json'], cwd=self.source, capture_output=True, text=True)
-        self.assertEqual(status.returncode, 0, status.stderr)
-        self.assertEqual(json.loads(status.stdout)['next_action']['action'], 'bind-evaluator')
+        rejected = self.init()
+        self.assertIn('--evaluator-manifest', rejected.stderr)
 
 
 if __name__ == '__main__':
