@@ -82,7 +82,7 @@ class ConditionCLI(unittest.TestCase):
             self.assertEqual(status['next_action']['action'], 'develop')
             self.assertFalse((base / 'runs/good/development').exists())
 
-    def test_final_review_requires_ten_completed_steps(self):
+    def test_final_review_selects_last_checkpoint_and_requires_primary(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
             auth = base / 'auth.json'
@@ -103,13 +103,24 @@ class ConditionCLI(unittest.TestCase):
                                               '--prompt', 'unused', '--prompt-version', '1'], cwd=ROOT,
                                     capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn('ten-step run', result.stderr)
+            self.assertIn('completed checkpoint and primary assessment required', result.stderr)
             self.assertFalse((base / 'runs/first/investigations').exists())
             logs = subprocess.run(prefix + ['logs', *common, '--format', 'json'], cwd=ROOT,
                                   capture_output=True, text=True)
             self.assertEqual(logs.returncode, 0, logs.stderr)
             events = [json.loads(line) for line in logs.stdout.splitlines()]
             self.assertEqual([event['event'] for event in events], ['started', 'failed'])
+            self.assertEqual([event['step'] for event in events], ['step-03', 'step-03'])
+
+    def test_final_step_selects_three_and_ten_step_sequences(self):
+        from principiis.operator import final_step
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for count in (3, 10):
+                (root / 'sequence.json').write_text(json.dumps({
+                    'steps': [{'id': f'step-{number:02}'} for number in range(1, count + 1)]
+                }))
+                self.assertEqual(final_step(root), f'step-{count:02}')
 
     def test_evaluate_review_flags_select_review_without_starting_it(self):
         command = [sys.executable, '-m', 'principiis', 'evaluate', '--run', 'unused',

@@ -26,6 +26,11 @@ if args[0] == 'run' and '--version' in args:
     print('codex-cli fixture-container');sys.exit()
 if args[0] == 'run' and 'po-runtime-preflight-v1' in args:
     print(json.dumps({'sandbox':'workspace-write','symlink_targets':['/usr/local/bin/python','/usr/local/bin/python3','/usr/local/bin/python3.12']}));sys.exit()
+if args[0] == 'run' and 'test -d /workspace' in args:
+    mounts=[args[i+1] for i,v in enumerate(args) if v=='--mount']
+    workspace=next(v.split('src=',1)[1].split(',')[0] for v in mounts if 'dst=/workspace' in v)
+    assert pathlib.Path(workspace).is_dir()
+    sys.exit()
 if args[0] == 'run' and '--detach' in args:
     print('preview-container');sys.exit()
 if args[0] == 'run':
@@ -120,6 +125,26 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             self.assertNotIn('--mount',probe)
             self.assertNotIn(config['auth_file'],repr(probe))
             self.assertFalse((base/'run').exists())
+
+    def test_invisible_workspace_bind_fails_before_auth_or_model(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            path, config = self.configuration(base)
+            docker = Path(config['docker'])
+            docker.write_text(docker.read_text().replace(
+                "    assert pathlib.Path(workspace).is_dir()\n    sys.exit()\n",
+                "    print('bind source path does not exist',file=sys.stderr);sys.exit(125)\n"))
+            output = base/'run'
+            runtime = DevelopmentRuntime(path, output, base/'tasks')
+            workspace = output/'workspace'; workspace.mkdir(parents=True)
+            with self.assertRaisesRegex(ValueError, 'Docker daemon cannot mount workspace'):
+                runtime.execute(workspace, 'request', io.StringIO(), io.StringIO())
+            commands = [json.loads(line) for line in (base/'commands.jsonl').read_text().splitlines()]
+            probe = next(c for c in commands if 'test -d /workspace' in c)
+            self.assertIn('src='+str(workspace), repr(probe))
+            self.assertNotIn(config['auth_file'], repr(probe))
+            self.assertFalse(any(c[0] == 'run' and '-i' in c for c in commands))
+            self.assertFalse((output/'runtime.json').exists())
 
     def test_sandbox_policy_and_runtime_interpreters_enter_provenance(self):
         with tempfile.TemporaryDirectory() as directory:

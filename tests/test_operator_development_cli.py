@@ -43,6 +43,12 @@ class OperatorDevelopmentCLI(unittest.TestCase):
             if args[0] == 'run' and 'po-runtime-preflight-v1' in args:
                 print(json.dumps({'sandbox':'workspace-write','symlink_targets':[
                     '/usr/local/bin/python','/usr/local/bin/python3','/usr/local/bin/python3.12']}));sys.exit()
+            if args[0] == 'run' and 'test -d /workspace' in args:
+                mounts=[args[index+1] for index,value in enumerate(args) if value=='--mount']
+                assert len(mounts) == 1 and 'dst=/workspace,readonly' in mounts[0], mounts
+                workspace=pathlib.Path(mounts[0].split('src=',1)[1].split(',')[0])
+                assert workspace.is_dir()
+                sys.exit()
             if args[0] == 'stats':
                 print('12MiB / 4GiB');sys.exit()
             if args[:2] == ['rm','-f']:
@@ -118,6 +124,15 @@ class OperatorDevelopmentCLI(unittest.TestCase):
     def development_count(self):
         path = self.base / 'development-count'
         return int(path.read_text()) if path.exists() else 0
+
+    def test_develop_markdown_reports_this_action_without_full_status(self):
+        self.initialize()
+        output = self.cli('develop', '--step', '1', '--format', 'markdown').stdout
+        self.assertIn('Development step-01: completed', output)
+        self.assertIn('Evaluation: not run by this command', output)
+        self.assertIn('Saved snapshot:', output)
+        self.assertIn('principiis status --runs-root', output)
+        self.assertNotIn('## Attempt measurements', output)
 
     def test_develop_continue_explicit_retry_and_exports_reconcile_actual_process_evidence(self):
         self.initialize()
