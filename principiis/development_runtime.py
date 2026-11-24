@@ -287,6 +287,18 @@ class DevelopmentRuntime:
         workspace = Path(workspace).resolve()
         if any(v in str(workspace) for v in (',', '\n', '\r')):
             raise ValueError('workspace path cannot contain commas/newlines')
+        if not workspace.is_dir():
+            raise ValueError(f'development workspace does not exist: {workspace}')
+        # The controller and Docker daemon can have different mount namespaces
+        # (notably Snap Docker's private /tmp). Probe this exact bind without
+        # credentials or a model request before allocating an attempt.
+        try:
+            preflight_run(c['docker'], ['--network', 'none', *restrictions(nested_sandbox=True),
+                '--mount', f'type=bind,src={workspace},dst=/workspace,readonly',
+                '--entrypoint', '/bin/sh', c['image'], '-eu', '-c', 'test -d /workspace'])
+        except (ValueError, OSError, subprocess.TimeoutExpired) as error:
+            raise ValueError(f'Docker daemon cannot mount workspace {workspace}: {error}. '
+                             'Choose a run root visible to the Docker daemon.') from error
         name = 'po-development-' + uuid.uuid4().hex
         boot = ('mkdir -p "$CODEX_HOME"; cp /run/subscription-auth.json "$CODEX_HOME/auth.json"; '
                 'chmod 600 "$CODEX_HOME/auth.json"; '

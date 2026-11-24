@@ -254,3 +254,7 @@ On this Snap Docker host, `/tmp` was invisible to the daemon for bind mounting;
 `/var/tmp/principiis-live-runs` was actually tested and used. Choose a run root visible
 to both controller and local daemon. The original failed Docker launch remains in
 the run's evidence.
+Before mounting credentials or invoking Codex, each execution now probes the exact
+workspace bind from the daemon with no network or authentication. A failure reports
+the workspace path and asks for a daemon-visible run root without allocating an
+attempt. The probe checks mount visibility; it does not qualify subscription access.

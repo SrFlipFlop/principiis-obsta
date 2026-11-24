@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import signal
 import shutil
 import time
@@ -133,6 +134,91 @@ def initialize(args):
         raise
 
 
+def imported_development_files(root):
+    """Inventory only copied development evidence, excluding new evaluations."""
+    development = root / 'development'
+    paths = [development / 'manual.json']
+    for name in ('tasks', 'steps', 'attempts'):
+        directory = development / name
+        if directory.is_dir() and not directory.is_symlink():
+            paths.extend(path for path in directory.rglob('*') if not path.is_dir() or path.is_symlink())
+        elif directory.exists() or directory.is_symlink():
+            raise ValueError('imported development evidence has an invalid directory')
+    inventory = {}
+    for path in paths:
+        name = str(path.relative_to(root))
+        if path.is_symlink():
+            inventory[name] = {'symlink': os.readlink(path)}
+        elif path.is_file():
+            inventory[name] = {'sha256': digest(path)}
+        else:
+            raise ValueError('imported development evidence is missing: ' + name)
+    return inventory
+
+
+def derive_evaluation(args):
+    """Start a new evaluator ledger from attested completed development evidence."""
+    from .assessment import bind
+    source_args = SimpleNamespace(run=args.source_run, runs_root=args.runs_root)
+    source, original = load_run(source_args)
+    target = run_directory(args)
+    if target.exists():
+        raise ValueError('derived run already exists; use a new run name')
+    if original.get('run_mode') == 'evaluation-derived':
+        raise ValueError('derive from an original development run, not another evaluation import')
+    if active_operation(source)['active']:
+        raise ValueError('source run has an active operation; wait before importing')
+    source_status = build_status(source, original)
+    for stage, key in (('development', 'runtime_cleanup_required'),
+                       ('evaluation', 'evaluation_cleanup_required'),
+                       ('reviewer', 'investigation_cleanup_required')):
+        if source_status[key]:
+            raise ValueError(f'source {stage} runtime cleanup is unresolved')
+    sequence = json.loads((source / 'sequence.json').read_text())
+    records, source_run_id = allocations(source, sequence)
+    ids = [entry['id'] for entry in sequence['steps']]
+    if not source_run_id or [entry['allocation']['id'] for entry in records if entry['result'] and entry['result'].get('completed')] != ids:
+        raise ValueError('every source checkpoint must have one completed development result')
+    source_files = imported_development_files(source)
+    metadata = json.loads((REPOSITORY / 'benchmarks' / original['application'] / 'package.json').read_text())
+    if metadata.get('version') != original.get('package_version'):
+        raise ValueError('current package version differs from source development; use a compatible release')
+    target.mkdir(parents=True, exist_ok=False)
+    os.chmod(target, 0o700)
+    try:
+        for name in original['frozen_files']:
+            destination = target / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source / name, destination)
+        development = target / 'development'
+        development.mkdir()
+        shutil.copy2(source / 'development/manual.json', development / 'manual.json')
+        for name in ('tasks', 'steps', 'attempts'):
+            if (source / 'development' / name).is_dir():
+                shutil.copytree(source / 'development' / name, development / name, symlinks=True)
+        if imported_development_files(source) != source_files or imported_development_files(target) != source_files:
+            raise ValueError('source development changed during import; discard this derived run')
+        lineage = {'schema_version': 1, 'source_run': original['run_name'], 'source_root': str(source),
+                   'source_run_id': source_run_id, 'source_configuration_sha256': digest(source / 'configuration.json'),
+                   'source_binding_sha256': digest(source / 'evaluator-binding.json')
+                       if (source / 'evaluator-binding.json').is_file() else None,
+                   'development_files': source_files}
+        write_json(target / 'lineage.json', lineage)
+        configuration = dict(original, run_name=args.run, run_mode='evaluation-derived',
+                             evaluator_binding='unbound', investigation='none',
+                             package_version=metadata['version'],
+                             package_sha256=digest(REPOSITORY / 'benchmarks' / original['application'] / 'package.json'),
+                             qualification='evaluation-only import of completed retained development; no model launch',
+                             source_run={'run_name': original['run_name'], 'root': str(source), 'run_id': source_run_id},
+                             lineage_sha256=digest(target / 'lineage.json'))
+        write_json(target / 'configuration.json', configuration)
+        bind(target, configuration, args.evaluator_manifest)
+        return build_status(target, configuration)
+    except Exception:
+        shutil.rmtree(target)
+        raise
+
+
 def load_run(args):
     root = run_directory(args)
     configuration = json.loads((root / 'configuration.json').read_text())
@@ -142,6 +228,26 @@ def load_run(args):
         path = root / name
         if path.is_symlink() or not path.is_file() or digest(path) != expected:
             raise ValueError('saved development configuration changed; use a new run')
+    if configuration.get('run_mode') == 'evaluation-derived':
+        lineage = root / 'lineage.json'
+        if (lineage.is_symlink() or not lineage.is_file()
+                or digest(lineage) != configuration.get('lineage_sha256')):
+            raise ValueError('evaluation import lineage changed')
+        provenance = json.loads(lineage.read_text())
+        source = root.parent / provenance['source_run']
+        source_binding = source / 'evaluator-binding.json'
+        if source_binding.is_symlink() or (source_binding.exists() and not source_binding.is_file()):
+            raise ValueError('source development lineage changed')
+        binding_digest = digest(source_binding) if source_binding.is_file() else None
+        if (source.is_symlink() or str(source.resolve()) != provenance['source_root']
+                or provenance['source_run'] != configuration['source_run']['run_name']
+                or provenance['source_root'] != configuration['source_run']['root']
+                or digest(source / 'configuration.json') != provenance['source_configuration_sha256']
+                or binding_digest != provenance['source_binding_sha256']
+                or imported_development_files(source) != provenance['development_files']):
+            raise ValueError('source development lineage changed')
+        if imported_development_files(root) != provenance['development_files']:
+            raise ValueError('imported development evidence changed')
     return root, configuration
 
 
@@ -159,6 +265,10 @@ def selected_step(root, selection):
     if step not in [entry['id'] for entry in sequence['steps']]:
         raise ValueError('selected checkpoint is outside the frozen run; use a new run for a longer sequence')
     return step
+
+
+def final_step(root):
+    return json.loads((root / 'sequence.json').read_text())['steps'][-1]['id']
 
 
 def authentication_failure(stdout_path):
@@ -352,7 +462,7 @@ def build_status(root, configuration):
                 next_action = {'action': 'evaluate --ai-review', 'step': pending['id'], 'retry': retry,
                                'explanation': 'Run the separate security investigation for this assessed checkpoint.'
                                + (' Use --rerun to retain the failed attempt.' if retry else '')}
-        elif (mode == 'final' and len(checkpoints) == 10
+        elif (mode == 'final' and checkpoints
               and all(entry['primary_assessment'] for entry in checkpoints)
               and (not checkpoints[-1]['investigations']
                    or checkpoints[-1]['investigations'][0]['status'] != 'completed')):
@@ -378,6 +488,8 @@ def build_status(root, configuration):
 def develop(args):
     from .manual import develop as manual_develop
     root, configuration = load_run(args)
+    if configuration.get('run_mode') == 'evaluation-derived':
+        raise ValueError('evaluation-only derived run cannot launch development')
     with operation(root, 'development'):
         status = build_status(root, configuration)
         if status['runtime_cleanup_required']:
@@ -427,9 +539,7 @@ def investigate_run(args):
         mode = configuration.get('investigation', 'none')
         if mode == 'none' or (mode == 'final' and not args.final) or (mode == 'each-step' and args.final):
             raise ValueError('investigation is not enabled for this command in the frozen run')
-        step = 'step-10' if args.final else selected_step(root, args.step)
-        if args.final and step != json.loads((root / 'sequence.json').read_text())['steps'][-1]['id']:
-            raise ValueError('final investigation requires a ten-step run')
+        step = final_step(root) if args.final else selected_step(root, args.step)
         status = build_status(root, configuration)
         if status['runtime_cleanup_required'] or status['evaluation_cleanup_required'] or status['investigation_cleanup_required']:
             raise ValueError('clean retained runtimes before security investigation')
@@ -578,6 +688,11 @@ def markdown(report):
              f"Artifacts: {report['root']}", '', '## Checkpoints', '',
              '| Checkpoint | Development | Evaluation | Attempts | Retained source |',
              '| --- | --- | --- | --- | --- |']
+    if report.get('source_run'):
+        source = report['source_run']
+        lines[lines.index('## Checkpoints'):lines.index('## Checkpoints')] = [
+            f"Evaluation-only import of development run {source['run_name']} ({source['root']}); "
+            'development measurements are copied evidence, not new model usage.', '']
     for checkpoint in report['checkpoints']:
         development = 'finished' if checkpoint['status'] == 'pending_evaluation' else checkpoint['status']
         primary = checkpoint.get('primary_assessment')
@@ -597,6 +712,18 @@ def markdown(report):
         for assessment in assessments:
             lines.append(f"| {assessment['checkpoint']} | {assessment['attempt']} | {assessment['role']} | "
                          f"{assessment['functional']} | {assessment['security']} | {assessment['outcome']} | {assessment['artifact']} |")
+        details = []
+        for assessment in assessments:
+            if assessment.get('error'):
+                details.append(f"- {assessment['checkpoint']} assessment {assessment['attempt']}: "
+                               + ' '.join(str(assessment['error']).split()))
+            for check in assessment.get('checks', []):
+                if check['status'] != 'pass':
+                    reason = ' '.join(str(check.get('detail', '')).split())
+                    details.append(f"- {assessment['checkpoint']} assessment {assessment['attempt']} "
+                                   f"{check['id']}: {check['status']}" + (f' — {reason}' if reason else ''))
+        if details:
+            lines.extend(['', '### Evaluation details', '', *details])
     if report.get('investigations'):
         lines.extend(['', '## AI reviews', '', '| Checkpoint | Investigation | Claims | Verified root causes | Seconds | Tokens | Evidence |',
                       '| --- | --- | ---: | ---: | ---: | ---: | --- |'])
@@ -632,11 +759,37 @@ def markdown(report):
         number = int(action['step'].split('-')[-1])
         command = 'develop' if action['action'] in ('develop', 'retry') else 'evaluate'
         retry = ' --retry' if action['action'] == 'retry' else ''
-        lines.append(f"Command: principiis {command} --run {report['run_name']} --step {number}{retry}")
+        runs_root = shlex.quote(str(Path(report['root']).parent))
+        lines.append(f"Command: principiis {command} --runs-root {runs_root} "
+                     f"--run {report['run_name']} --step {number}{retry}")
     return '\n'.join(lines) + '\n'
 
 
-CSV_FIELDS = ('run_name', 'run_id', 'checkpoint', 'attempt', 'session_id', 'outcome', 'artifact',
+def development_summary(report, step):
+    """Show the result of this development action without repeating the full run report."""
+    checkpoint = next(entry for entry in report['checkpoints'] if entry['id'] == step)
+    completed = checkpoint['completed']
+    lines = [f"Development {step}: {'completed' if completed else checkpoint['status']}"]
+    if checkpoint['source']:
+        lines.append(f"{'Saved snapshot' if completed else 'Retained workspace'}: {checkpoint['source']}")
+    lines.append('Evaluation: not run by this command')
+    action = report['next_action']
+    if action['action'] in ('develop', 'retry', 'evaluate') and action['step']:
+        command = 'develop' if action['action'] in ('develop', 'retry') else 'evaluate'
+        number = int(action['step'].split('-')[-1])
+        retry = ' --retry' if action['action'] == 'retry' else ''
+        label = 'Next in the bound evaluator sequence' if command == 'evaluate' else 'Next'
+        lines.append(f"{label}: principiis {command} --runs-root "
+                     f"{shlex.quote(str(Path(report['root']).parent))} --run {report['run_name']} "
+                     f"--step {number}{retry}")
+    else:
+        lines.append(f"Operator next action: {action['action']} — {action['explanation']}")
+    lines.append(f"Full status: principiis status --runs-root "
+                 f"{shlex.quote(str(Path(report['root']).parent))} --run {report['run_name']}")
+    return '\n'.join(lines) + '\n'
+
+
+CSV_FIELDS = ('run_name', 'source_run', 'run_id', 'checkpoint', 'attempt', 'session_id', 'outcome', 'artifact',
               'stage', 'role', 'functional', 'security', 'evaluator_version', 'evaluator_manifest_sha256',
               'snapshot_manifest_sha256', 'source', 'stdout', 'stderr', 'development_seconds', 'evaluation_seconds', 'investigation_seconds', 'started_at', 'finished_at',
               *resource.CATEGORIES, 'total_tokens', 'local_peak_sampled_rss_bytes', 'local_memory_scope',
@@ -659,7 +812,8 @@ def csv_report(report):
             result = json.loads(Path(attempt['artifact']).read_text()) if Path(attempt['artifact']).is_file() else {}
         row = {key: attempt.get(key) for key in ('run_id', 'checkpoint', 'attempt', 'session_id', 'outcome', 'artifact')}
         provenance = result.get('provenance') or {}
-        row.update(run_name=report['run_name'], stage=stage, role=result.get('role'),
+        row.update(run_name=report['run_name'], source_run=(report.get('source_run') or {}).get('run_name'),
+                   stage=stage, role=result.get('role'),
                    functional=result.get('functional'), security=result.get('security'),
                    evaluator_version=provenance.get('version'), evaluator_manifest_sha256=provenance.get('manifest_sha256'),
                    snapshot_manifest_sha256=result.get('snapshot_manifest_sha256'),
@@ -679,7 +833,8 @@ def csv_report(report):
         tokens = (investigation.get('resources') or {}).get('reported_tokens') or {}
         memory = agent.get('memory') or {}
         directory = Path(investigation['artifact']).parent
-        row = dict(run_name=report['run_name'], run_id=report.get('run_id'), checkpoint=investigation['checkpoint'],
+        row = dict(run_name=report['run_name'], source_run=(report.get('source_run') or {}).get('run_name'),
+                   run_id=report.get('run_id'), checkpoint=investigation['checkpoint'],
                    attempt=directory.name, session_id=None, outcome=investigation['status'],
                    artifact=investigation['artifact'], stage='investigation',
                    role='primary' if directory.name == '1' else 'rerun',
@@ -775,7 +930,7 @@ def main():
     comparison.add_argument('--runs-root', default=os.environ.get('PRINCIPIIS_RUNS_ROOT', str(Path.home() / '.local/share/principiis/runs')))
     comparison.add_argument('--format', choices=('markdown', 'json', 'csv'), default='markdown')
     commands = {}
-    for name in ('init', 'develop', 'evaluate', 'status', 'preview', 'cleanup', 'cleanup-evaluation', 'cleanup-investigation', 'report', 'logs'):
+    for name in ('init', 'derive-evaluation', 'develop', 'evaluate', 'status', 'preview', 'cleanup', 'cleanup-evaluation', 'cleanup-investigation', 'report', 'logs'):
         command = sub.add_parser(name)
         commands[name] = command
         command.add_argument('--run', required=True)
@@ -790,11 +945,13 @@ def main():
     commands['init'].add_argument('--condition', default='baseline')
     commands['init'].add_argument('--investigation', choices=('none', 'final', 'each-step'), default='final')
     commands['init'].add_argument('--steps', type=int, choices=(3, 10), default=3)
+    commands['derive-evaluation'].add_argument('--source-run', required=True, help='completed original run in the same runs root')
+    commands['derive-evaluation'].add_argument('--evaluator-manifest', required=True, help='qualified replacement evaluator release')
     commands['develop'].add_argument('--step', required=True)
     commands['develop'].add_argument('--retry', action='store_true')
     evaluation_target = commands['evaluate'].add_mutually_exclusive_group(required=True)
     evaluation_target.add_argument('--step')
-    evaluation_target.add_argument('--final', action='store_true', help='review the final ten-step snapshot')
+    evaluation_target.add_argument('--final', action='store_true', help='review the final frozen checkpoint')
     commands['evaluate'].add_argument('--ai-review', action='store_true', help='run the separate Codex security review instead of hidden checks')
     commands['evaluate'].add_argument('--rerun', action='store_true')
     commands['evaluate'].add_argument('--config', help='separate reviewer configuration; required with --ai-review')
@@ -828,7 +985,7 @@ def main():
         if args.command in ('develop', 'evaluate'):
             from .progress import Progress
             root, _ = load_run(args)
-            step = 'step-10' if args.command == 'evaluate' and args.final else selected_step(root, args.step)
+            step = final_step(root) if args.command == 'evaluate' and args.final else selected_step(root, args.step)
             stage = 'ai-review' if args.command == 'evaluate' and args.ai_review else args.command
             progress = Progress(root, stage, step, verbose=args.verbose,
                                 interval=10 if args.verbose else 30)
@@ -844,6 +1001,8 @@ def main():
                                                           ai_review=args.command == 'evaluate' and args.ai_review)
         elif args.command == 'init':
             report = initialize(args)
+        elif args.command == 'derive-evaluation':
+            report = derive_evaluation(args)
         elif args.command == 'preview':
             report = preview(args)
         elif args.command == 'cleanup':
@@ -856,7 +1015,9 @@ def main():
             report = build_status(*load_run(args))
         if args.command == 'report':
             save_report(report)
-        print(json.dumps(report, indent=2) if args.format == 'json' else csv_report(report) if args.format == 'csv' else markdown(report), end='')
+        print(json.dumps(report, indent=2) if args.format == 'json' else csv_report(report) if args.format == 'csv'
+              else development_summary(report, step) if args.command == 'develop' and not args.verbose
+              else markdown(report), end='')
     except (OSError, ValueError, KeyError, TypeError) as error:
         parser.error(str(error))
 

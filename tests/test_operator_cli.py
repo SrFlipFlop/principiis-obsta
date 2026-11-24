@@ -52,6 +52,8 @@ class OperatorCLI(unittest.TestCase):
         self.assertFalse((run / 'development').exists())
         status = json.loads(self.cli('status', '--format', 'json').stdout)
         self.assertEqual(status['next_action']['step'], 'step-01')
+        self.assertIn(f'Command: principiis develop --runs-root {self.runs} --run portal-test --step 1',
+                      self.cli('status').stdout)
         self.assertEqual(status['resources']['attempts'], [])
         self.assertFalse((run / 'previews').exists())
         self.cli('init', '--application', 'document-portal', '--runtime-config', str(self.runtime), success=False)
@@ -109,6 +111,48 @@ class OperatorCLI(unittest.TestCase):
         journal.write_text(json.dumps(state))
         return directory
 
+    def test_final_review_next_action_and_report_for_three_and_ten_steps(self):
+        from principiis.operator import build_status, markdown
+        for count in (3, 10):
+            with self.subTest(steps=count):
+                if (self.runs / 'portal-test').exists():
+                    import shutil
+                    shutil.rmtree(self.runs / 'portal-test')
+                self.initialize()
+                root = self.runs / 'portal-test'
+                if count == 10:
+                    sequence = json.loads((root / 'sequence.json').read_text())
+                    sequence['steps'].extend({'id': f'step-{number:02}'} for number in range(4, 11))
+                    (root / 'sequence.json').write_text(json.dumps(sequence))
+                configuration = json.loads((root / 'configuration.json').read_text())
+                assessments = []
+                for number in range(1, count + 1):
+                    step = f'step-{number:02}'
+                    self.retain_attempt(step, 1, f'session-{number}', True, number * 10, 1, 2)
+                    assessments.append({'checkpoint': step, 'role': 'primary', 'outcome': 'candidate_failure',
+                                        'artifact': f'/fixture/{step}.json', 'attempt': 1,
+                                        'functional': 'fail', 'security': 'unknown',
+                                        'checks': [{'id': 'browser-library', 'status': 'fail',
+                                                    'detail': 'Expected login control; saw Sign in'}]})
+                evidence = {'assessments': assessments, 'binding': {'version': 'fixture'},
+                            'resources': {'attempts': []}, 'cleanup_required': []}
+                with patch('principiis.assessment.inspect', return_value=evidence):
+                    status = build_status(root, configuration)
+                self.assertEqual(status['next_action']['action'], 'evaluate --final --ai-review')
+                self.assertEqual(status['next_action']['step'], f'step-{count:02}')
+                self.assertIn(f'evaluate --final --ai-review step-{count:02}', markdown(status))
+                self.assertIn('browser-library: fail — Expected login control; saw Sign in', markdown(status))
+                investigation = root / 'investigations' / f'step-{count:02}' / '1'
+                investigation.mkdir(parents=True)
+                (investigation / 'investigation.json').write_text(json.dumps({
+                    'status': 'completed', 'claims': [{'id': 'fixture', 'status': 'unresolved'}],
+                    'verified_root_causes': [], 'resources': {'elapsed_seconds': 1, 'reported_tokens': None},
+                }))
+                with patch('principiis.assessment.inspect', return_value=evidence):
+                    reviewed = build_status(root, configuration)
+                self.assertEqual(reviewed['next_action']['action'], 'development-complete')
+                self.assertIn(f'| step-{count:02} | completed | 1 | 0 |', markdown(reviewed))
+
     def test_reports_follow_journal_and_reconcile_retry_without_candidate_accounting(self):
         self.initialize()
         first = self.retain_attempt('step-01', 1, 'session-one', True, 100, 4, 10)
@@ -149,7 +193,7 @@ class OperatorCLI(unittest.TestCase):
         rendered = self.cli('status').stdout
         for heading in ('## Run', '## Checkpoints', '## Logs', '## Attempt measurements', '## Next action'):
             self.assertIn(heading, rendered)
-        self.assertIn('principiis develop --run portal-test --step 2', rendered)
+        self.assertIn(f'principiis develop --runs-root {self.runs} --run portal-test --step 2', rendered)
 
     def test_status_separates_development_and_evaluation_outcomes(self):
         from principiis.operator import markdown

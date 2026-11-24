@@ -27,6 +27,34 @@ assessment or model launch. A declaration is not evidence that a package passed
 qualification; benchmark authors must supply and retain that actual evidence.
 Older unbound runs remain readable but cannot gain an evaluator through the simplified
 operator CLI; create a new run with the manifest at initialization.
+For a retained completed development run whose evaluator binding must remain frozen,
+`derive-evaluation` creates a **new evaluation-only run** with an independently
+qualified and approved evaluator binding. It copies and attests the source run's
+development journal, results, logs and snapshots, but imports no old primary scores.
+The source run is not changed and the derived run rejects `develop`:
+
+```bash
+python3 -m principiis derive-evaluation --runs-root /operator/runs \
+  --source-run original-run --run corrected-evaluation \
+  --evaluator-manifest /operator/private/portal/corrected-release.json
+python3 -m principiis evaluate --runs-root /operator/runs \
+  --run corrected-evaluation --step 1
+```
+
+All source checkpoints must have completed development, and development, evaluation
+and reviewer runtime cleanup must be resolved. The current package version must
+match the source's frozen package version; unchanged request bytes do not justify
+relabelling a development run with a newer package identity. The command validates
+the original journal and snapshots, records
+the source run, source configuration/binding hashes and copied-file hashes in
+`lineage.json`, then binds the new evaluator before exposing the run. `status` checks
+that imported development evidence and the source binding state remain byte-identical.
+Existing `evaluate`,
+`--rerun` and report commands use the derived run's separate canonical assessment
+ledger. Reports mark imported development measurements as copied evidence; they are
+not additional model usage. Comparing source and derived reports must not sum their
+development tokens as independent sessions. A new release still needs normal
+qualification and owner approval; this import does not qualify it.
 For a three-step run, the public `qualified_first_three` / `approved_first_three`
 declaration and private manifest must match all three frozen requests. The ten-step
 initialization gate still requires a separately qualified full package from #9 and its evaluator manifest.
