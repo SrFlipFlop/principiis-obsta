@@ -66,7 +66,7 @@ def _development(checkpoints):
 
 def _review(checkpoints, mode):
     """The separate AI security review, when the frozen run enables it."""
-    unreviewed = lambda c: not c['investigations'] or c['investigations'][0] != 'completed'
+    unreviewed = lambda c: not c['investigations'] or c['investigations'][-1] != 'completed'
     if mode == 'each-step':
         pending = next((c for c in checkpoints if c['primary'] and unreviewed(c)), None)
         command, text = 'evaluate --ai-review', 'Run the separate security investigation for this assessed checkpoint.'
