@@ -42,8 +42,8 @@ class OperatorEvaluationCLI(unittest.TestCase):
     def test_unbound_evaluation_refuses_before_assessment_allocation(self):
         rejected = self.cli('evaluate', '--step', '1', success=False)
         self.assertIn('unbound', rejected.stderr)
-        self.assertFalse((self.run / 'assessments').exists())
-        self.assertFalse((self.run / 'development').exists())
+        status = json.loads(self.cli('status', '--format', 'json').stdout)
+        self.assertEqual((status['assessments'], status['resources']['attempts']), ([], []))
 
     def test_saved_reports_keep_primary_and_rerun_rows_with_separate_resources(self):
         from principiis import resource
@@ -55,7 +55,7 @@ class OperatorEvaluationCLI(unittest.TestCase):
         for number, role, outcome, duration in ((1, 'primary', 'candidate_failure', 2),
                                                  (2, 'rerun', 'evaluator_error', 3)):
             # Reports render the status dictionary; these assessments need no files on disk.
-            path = self.run / 'development/evaluations/step-01' / str(number) / 'result.json'
+            path = self.base / f'assessment-{number}.json'
             assessment = {
                 'run_id': 'engineering-control', 'session_id': f'assessment-{number}',
                 'checkpoint': 'step-01', 'attempt': number, 'role': role,
