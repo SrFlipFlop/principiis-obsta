@@ -1,35 +1,38 @@
-"""Engineering controls at the explicit binding/retained-assessment seam."""
+"""Engineering controls at the evaluator binding and restricted assessment seam."""
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
-from support import FIXTURE_CONTRACT, NODE_ORACLE, temporary_directory
+from support import FIXTURE_CONTRACT, NODE_ORACLE, create_run, temporary_directory
 import fixture_runtime
 import unittest
 
+from principiis.assessment import bind
+from principiis.run_store import RunStore
+
 ROOT = Path(__file__).resolve().parents[1]
+REQUEST = 'Engineering control requirements'
 
 
 class AssessmentCLI(unittest.TestCase):
     def test_unqualified_release_cannot_bind_or_allocate_an_assessment(self):
         with temporary_directory() as temporary:
-            root = Path(temporary)
-            (root / 'configuration.json').write_text(json.dumps({'application': 'document-portal'}))
-            declaration = root / 'declaration.json'
+            store = create_run(Path(temporary) / 'run')
+            declaration = Path(temporary) / 'declaration.json'
             declaration.write_text('{}')
-            process = subprocess.run([sys.executable, '-m', 'principiis.assessment', 'bind',
-                                      '--root', str(root), '--declaration', str(declaration)],
-                                     cwd=ROOT, capture_output=True, text=True)
-            self.assertNotEqual(process.returncode, 0)
-            self.assertIn('qualified', process.stderr)
-            self.assertFalse((root / 'evaluator-binding.json').exists())
-            self.assertFalse((root / 'development/evaluations').exists())
+            with self.assertRaisesRegex(ValueError, 'qualified'):
+                bind(store, declaration)
+            reopened = RunStore.open(store.root)
+            self.assertIsNone(reopened.binding)
+            self.assertEqual(reopened.assessments, [])
 
 
 class QualifiedAssessmentCLI(unittest.TestCase):
+    """A copied controller checkout with a fixture package and private bundle; no model, no real Docker."""
+
     def setUp(self):
-        import shutil
         self.temporary = temporary_directory()
         self.addCleanup(self.temporary.cleanup)
         self.base = Path(self.temporary.name)
@@ -37,21 +40,11 @@ class QualifiedAssessmentCLI(unittest.TestCase):
         self.source.mkdir()
         shutil.copytree(ROOT / 'principiis', self.source / 'principiis', ignore=shutil.ignore_patterns('__pycache__'))
         self.package = self.source / 'benchmarks/document-portal'
-        self.package.mkdir(parents=True)
+        (self.package / 'requests').mkdir(parents=True)
+        (self.package / 'requests/01.txt').write_text(REQUEST)
         self.root = self.base / 'run'
-        self.root.mkdir()
-        (self.root / 'requests').mkdir()
-        (self.root / 'requests/01.txt').write_text('Engineering control requirements')
         self.image = 'sha256:' + 'a' * 64
         self.checker_image = 'sha256:' + 'b' * 64
-        (self.root / 'runtime.json').write_text(json.dumps({'image': self.image}))
-        (self.root / 'sequence.json').write_text(json.dumps({'id': 'document-portal', 'version': 'fixture',
-            'condition': {'id': 'ordinary', 'version': '1'}, 'steps': [{'id': 'step-01', 'version': 'fixture',
-            'sequence_version': 'fixture', 'request': 'requests/01.txt'}]}))
-        self.configuration = {'application': 'document-portal', 'run_name': 'control',
-            'package_version': 'fixture', 'frozen_files': {name: self.digest(self.root / name)
-            for name in ('runtime.json', 'sequence.json', 'requests/01.txt')}}
-        (self.root / 'configuration.json').write_text(json.dumps(self.configuration))
         self.bundle = self.base / 'private'
         self.bundle.mkdir()
         (self.bundle / 'contract.json').write_text(json.dumps({'browser-read': 'functional', 'backend-denial': 'security'}))
@@ -60,100 +53,117 @@ class QualifiedAssessmentCLI(unittest.TestCase):
         (self.bundle / 'dependencies.json').write_text(json.dumps({'complete': True, 'images': {
             self.image: {'packages': [{'name': 'python', 'version': '3.12'}], 'preparation_evidence': ['preparation.json']},
             self.checker_image: {'packages': [{'name': 'playwright', 'version': '1.56.1'}], 'preparation_evidence': ['preparation.json']}}}))
-        self.declaration = {'version': 'engineering-1', 'complete': True, 'requests': {'requests/01.txt': self.digest(self.root / 'requests/01.txt')},
+        self.declaration = {'version': 'engineering-1', 'complete': True,
+            'requests': {'requests/01.txt': self.digest(self.package / 'requests/01.txt')},
             'runtime_image': self.image, 'evaluator_images': {'step-01': self.checker_image},
             'seccomp': 'seccomp.json', 'dependency_manifest': 'dependencies.json',
             'steps': {'step-01': {'contract': 'contract.json', 'app_command': ['python', '/workspace/app.py']}},
             'files': {path.name: self.digest(path) for path in self.bundle.iterdir()}}
-        (self.package / 'requests').mkdir()
-        (self.package / 'requests/01.txt').write_bytes((self.root / 'requests/01.txt').read_bytes())
         self.publish()
 
     @staticmethod
     def digest(path):
         return hashlib.sha256(path.read_bytes()).hexdigest()
 
-    def publish(self):
+    def publish(self, **package):
         self.path = self.bundle / 'bundle.json'
         self.path.write_text(json.dumps(self.declaration))
-        (self.package / 'package.json').write_text(json.dumps({'id': 'document-portal', 'version': 'fixture',
-            'steps': 1, 'qualified_through': 1, 'private_bundle_sha256': self.digest(self.path), 'files': {'requests/01.txt': self.digest(self.package / 'requests/01.txt')}}))
+        (self.package / 'package.json').write_text(json.dumps(dict({
+            'id': 'document-portal', 'version': 'fixture', 'steps': 1, 'qualified_through': 1,
+            'private_bundle_sha256': self.digest(self.path),
+            'files': {'requests/01.txt': self.digest(self.package / 'requests/01.txt')}}, **package)))
 
-    def cli(self, *arguments):
-        return subprocess.run([sys.executable, '-m', 'principiis.assessment', *arguments,
-                               '--root', str(self.root)], cwd=self.source, capture_output=True, text=True)
+    def make_run(self, runtime=None, name='run', requests=(REQUEST,), **configuration):
+        return create_run(self.base / name, requests=list(requests),
+                          runtime=runtime or {'image': self.image, 'docker': '/nonexistent/docker'}, **configuration)
+
+    def bind(self, name='run'):
+        return bind(RunStore.open(self.base / name), self.path, package=self.package)
+
+    def operator(self, command, *arguments, run='run', success=True, **options):
+        """The operator CLI of the copied checkout, with JSON output."""
+        process = subprocess.run([sys.executable, '-m', 'principiis', command, '--run', run,
+                                  '--runs-root', str(self.base), '--format', 'json', *arguments],
+                                 cwd=self.source, capture_output=True, text=True, **options)
+        if success is None:
+            return process
+        if success:
+            self.assertEqual(process.returncode, 0, process.stderr)
+            return json.loads(process.stdout)
+        self.assertNotEqual(process.returncode, 0, process.stdout)
+        return process
+
+    def generate_checkpoint(self, command=None):
+        command = command or "from pathlib import Path; Path('app.py').write_text('print(42)')"
+        runtime = self.base / 'fixture-runtime.json'
+        runtime.write_text(json.dumps({'argv': [sys.executable, '-c', command]}))
+        fixture_runtime.develop(self.root, 'step-01', runtime)
 
     def test_binding_freezes_complete_evaluator_separately_from_development(self):
+        self.make_run()
         before = {path: path.read_bytes() for path in self.root.rglob('*') if path.is_file()}
-        process = self.cli('bind', '--declaration', str(self.path))
-        self.assertEqual(process.returncode, 0, process.stderr)
-        binding = json.loads((self.root / 'evaluator-binding.json').read_text())
-        self.assertEqual(binding['manifest_sha256'], self.digest(self.path))
-        self.assertEqual(binding['version'], 'engineering-1')
+        self.bind()
+        store = RunStore.open(self.root)
+        self.assertEqual(store.binding['manifest_sha256'], self.digest(self.path))
+        self.assertEqual(store.binding['version'], 'engineering-1')
         for path, contents in before.items():
             self.assertEqual(path.read_bytes(), contents)
-        self.assertFalse((self.root / 'development').exists())
+        self.assertEqual(store.attempts, [])
 
     def test_release_binds_only_within_its_qualified_steps(self):
-        sequence = json.loads((self.root / 'sequence.json').read_text())
+        requests = [REQUEST, 'Engineering request 2', 'Engineering request 3']
         for number in (2, 3):
             name = f'requests/{number:02}.txt'
-            (self.root / name).write_text(f'Engineering request {number}')
-            (self.package / name).write_bytes((self.root / name).read_bytes())
-            sequence['steps'].append({'id':f'step-{number:02}', 'version':'fixture',
-                                      'sequence_version':'fixture', 'request':name})
-            self.declaration['requests'][name] = self.digest(self.root / name)
+            (self.package / name).write_text(requests[number - 1])
+            self.declaration['requests'][name] = self.digest(self.package / name)
             self.declaration['evaluator_images'][f'step-{number:02}'] = self.checker_image
             self.declaration['steps'][f'step-{number:02}'] = self.declaration['steps']['step-01']
-        (self.root / 'sequence.json').write_text(json.dumps(sequence))
-        self.configuration['frozen_files'] = {name:self.digest(self.root / name)
-            for name in ('runtime.json','sequence.json','requests/01.txt','requests/02.txt','requests/03.txt')}
-        (self.root / 'configuration.json').write_text(json.dumps(self.configuration))
-        self.path.write_text(json.dumps(self.declaration))
-        package = json.loads((self.package / 'package.json').read_text())
-        package.update(steps=10, qualified_through=3, private_bundle_sha256=self.digest(self.path))
-        package['files'].update({name:self.digest(self.package / name)
-                                 for name in ('requests/02.txt','requests/03.txt')})
-        (self.package / 'package.json').write_text(json.dumps(package))
-        accepted = self.cli('bind','--declaration',str(self.path))
-        self.assertEqual(accepted.returncode,0,accepted.stderr)
-        self.assertTrue((self.root/'evaluator-binding.json').exists())
-        (self.root/'evaluator-binding.json').unlink()
-        package['qualified_through'] = 2
-        (self.package/'package.json').write_text(json.dumps(package))
-        rejected = self.cli('bind','--declaration',str(self.path))
-        self.assertNotEqual(rejected.returncode,0)
-        self.assertIn('qualified through step 2', rejected.stderr)
+        files = {name: self.digest(self.package / name) for name in self.declaration['requests']}
+        self.publish(steps=10, qualified_through=3, files=files)
+        self.make_run(requests=requests)
+        self.bind()
+        self.assertTrue(RunStore.open(self.root).binding)
+        self.publish(steps=10, qualified_through=2, files=files)
+        self.make_run(name='second', requests=requests)
+        with self.assertRaisesRegex(ValueError, 'qualified through step 2'):
+            self.bind('second')
 
-    def evaluated_command(self):
+    def evaluated(self):
+        self.make_run()
         self.generate_checkpoint()
-        self.assertEqual(self.cli('bind', '--declaration', str(self.path)).returncode, 0)
-        assessed = self.cli('evaluate', '--step', 'step-01')
-        self.assertEqual(assessed.returncode, 0, assessed.stderr)
-        record = json.loads((self.root / 'development/evaluations/step-01/1/result.json').read_text())
-        return json.loads(Path(record['evidence']).read_text())['evaluator_command']
+        self.bind()
+        return self.operator('evaluate', '--step', '1')['assessments'][0]
 
     def test_declared_evaluator_command_runs_in_the_evaluator_image(self):
         self.declaration['evaluator_command'] = ['python3', '/checks/run.py']
         self.publish()
-        self.assertEqual(self.evaluated_command(), ['python3', '/checks/run.py'])
+        evidence = json.loads(Path(self.evaluated()['evidence']).read_text())
+        self.assertEqual(evidence['evaluator_command'], ['python3', '/checks/run.py'])
 
     def test_declaration_predating_evaluator_command_keeps_node_oracle_and_binds_unchanged(self):
         # Declarations frozen before #68 also carried owner-review fields; they bind as before.
         self.declaration.update(qualification_status='qualified_first_three', owner_review='approved_first_three')
         self.publish()
-        self.assertEqual(self.evaluated_command(), ['node', '/oracle/check.cjs'])
-        binding = json.loads((self.root / 'evaluator-binding.json').read_text())
+        evidence = json.loads(Path(self.evaluated()['evidence']).read_text())
+        self.assertEqual(evidence['evaluator_command'], ['node', '/oracle/check.cjs'])
+        binding = RunStore.open(self.root).binding
         self.assertEqual(binding['manifest_sha256'], self.digest(self.path))
         self.assertEqual(binding['declaration'], self.declaration)
 
-    def test_bound_assessment_rejects_changed_dependency_before_allocating(self):
-        self.assertEqual(self.cli('bind', '--declaration', str(self.path)).returncode, 0)
-        (self.bundle / 'preparation.json').write_text('changed after binding')
-        process = self.cli('evaluate', '--step', 'step-01')
-        self.assertNotEqual(process.returncode, 0)
+    def test_assessment_records_the_controller_commit_instead_of_source_hashes(self):
+        assessment = self.evaluated()
+        self.assertIn('commit', assessment['controller'])
+        self.assertNotIn('controller_sources', assessment)
+        self.assertNotIn('sha256', assessment['python_executable'])
+
+    def test_bound_assessment_rejects_changed_checks_before_allocating(self):
+        self.make_run()
+        self.generate_checkpoint()
+        self.bind()
+        (self.bundle / 'contract.json').write_text(json.dumps({'other': 'functional', 'denial': 'security'}))
+        process = self.operator('evaluate', '--step', '1', success=False)
         self.assertIn('dependency content changed', process.stderr)
-        self.assertFalse((self.root / 'development/evaluations').exists())
+        self.assertEqual(self.operator('status')['assessments'], [])
 
     def test_restricted_runner_accepts_bound_links_without_following_host_targets(self):
         from principiis.snapshot import preserve
@@ -178,12 +188,6 @@ class QualifiedAssessmentCLI(unittest.TestCase):
         self.assertIn('No such file', result['error'])
         self.assertTrue((snapshot / 'python').is_symlink())
 
-    def generate_checkpoint(self, command=None):
-        command = command or "from pathlib import Path; Path('app.py').write_text('print(42)')"
-        runtime = self.base / 'fixture-runtime.json'
-        runtime.write_text(json.dumps({'argv': [sys.executable, '-c', command]}))
-        fixture_runtime.develop(self.root / 'sequence.json', self.root / 'development', 'step-01', runtime)
-
     def test_real_restricted_runner_failure_is_retained_and_rerun_is_explicit(self):
         # The actual restricted runner executes; image inspection fails at the
         # Docker boundary while cleanup succeeds. No candidate code runs on host.
@@ -198,34 +202,26 @@ else:
  raise SystemExit(1)
 ''')
         docker.chmod(0o755)
-        runtime = self.root / 'runtime.json'
-        runtime.write_text(json.dumps({'image': self.image, 'docker': str(docker)}))
-        self.configuration['frozen_files']['runtime.json'] = self.digest(runtime)
-        (self.root / 'configuration.json').write_text(json.dumps(self.configuration))
+        self.make_run({'image': self.image, 'docker': str(docker)})
         self.generate_checkpoint()
         original = {path: path.read_bytes() for path in (self.root / 'development/steps/step-01').rglob('*') if path.is_file()}
-        self.assertEqual(self.cli('bind', '--declaration', str(self.path)).returncode, 0)
-        process = self.cli('evaluate', '--step', 'step-01')
-        self.assertEqual(process.returncode, 0, process.stderr)
-        primary = self.root / 'development/evaluations/step-01/1/result.json'
-        first = primary.read_bytes()
-        result = json.loads(first)
+        self.bind()
+        result = self.operator('evaluate', '--step', '1')['assessments'][0]
         self.assertEqual((result['outcome'], result['functional'], result['security']),
                          ('evaluator_error', 'unassessable', 'unassessable'))
         self.assertGreater(result['evaluation']['elapsed_seconds'], 0)
         self.assertIsNone(result['evaluation']['tokens'])
         self.assertTrue(Path(result['evidence']).is_file())
-        repeated = self.cli('evaluate', '--step', 'step-01')
-        self.assertNotEqual(repeated.returncode, 0)
+        repeated = self.operator('evaluate', '--step', '1', success=False)
         self.assertIn('--rerun', repeated.stderr)
-        rerun = self.cli('evaluate', '--step', 'step-01', '--rerun')
-        self.assertEqual(rerun.returncode, 0, rerun.stderr)
-        self.assertEqual(primary.read_bytes(), first)
-        self.assertEqual(json.loads((primary.parent.parent / '2/result.json').read_text())['role'], 'rerun')
+        rerun = self.operator('evaluate', '--step', '1', '--rerun')
+        self.assertEqual(rerun['assessments'][0], result)
+        self.assertEqual(rerun['assessments'][1]['role'], 'rerun')
         for path, contents in original.items():
             self.assertEqual(path.read_bytes(), contents)
 
     def test_candidate_virtual_environment_packages_are_retained_before_runtime_launch(self):
+        self.make_run()
         self.generate_checkpoint("""from pathlib import Path
 root = Path('.venv/lib/python3.12/site-packages')
 package = root / 'sample-1.2.dist-info'
@@ -234,10 +230,8 @@ package.mkdir(parents=True)
 Path('.venv/pyvenv.cfg').write_text('home = /usr/local/bin\\n')
 Path('app.py').write_text('print(42)')
 """)
-        self.assertEqual(self.cli('bind', '--declaration', str(self.path)).returncode, 0)
-        assessed = self.cli('evaluate', '--step', 'step-01')
-        self.assertEqual(assessed.returncode, 0, assessed.stderr)
-        record = json.loads((self.root / 'development/evaluations/step-01/1/result.json').read_text())
+        self.bind()
+        record = self.operator('evaluate', '--step', '1')['assessments'][0]
         provenance = record['candidate_dependencies']
         self.assertEqual(provenance['environments'][0]['sites'][0]['packages'],
                          [{'name': 'sample', 'version': '1.2',
@@ -247,6 +241,7 @@ Path('app.py').write_text('print(42)')
         self.assertTrue(record['runtime_launch_attempted'])
 
     def test_uninventoried_candidate_virtual_environment_blocks_runtime_launch(self):
+        self.make_run()
         self.generate_checkpoint("""from pathlib import Path
 root = Path('.venv/lib/python3.12/site-packages')
 root.mkdir(parents=True)
@@ -254,39 +249,18 @@ root.mkdir(parents=True)
 Path('.venv/pyvenv.cfg').write_text('home = /usr/local/bin\\n')
 Path('app.py').write_text('print(42)')
 """)
-        self.assertEqual(self.cli('bind', '--declaration', str(self.path)).returncode, 0)
-        assessed = self.cli('evaluate', '--step', 'step-01')
-        self.assertEqual(assessed.returncode, 0, assessed.stderr)
-        record = json.loads((self.root / 'development/evaluations/step-01/1/result.json').read_text())
+        self.bind()
+        record = self.operator('evaluate', '--step', '1')['assessments'][0]
         self.assertEqual(record['outcome'], 'evaluator_error')
         self.assertFalse(record['runtime_launch_attempted'])
         self.assertIn('unsupported candidate dependency metadata', record['error'])
 
     def test_retained_binding_remains_readable_after_author_release_changes(self):
-        self.assertEqual(self.cli('bind', '--declaration', str(self.path)).returncode, 0)
+        self.make_run()
+        self.bind()
         (self.package / 'package.json').write_text('{"version":"later-draft"}')
         self.path.unlink()
-        process = self.cli('inspect')
-        self.assertEqual(process.returncode, 0, process.stderr)
-        self.assertEqual(json.loads(process.stdout)['binding']['version'], 'engineering-1')
-
-    def test_assessment_cannot_be_repointed_away_from_completed_checkpoint(self):
-        runtime = self.root / 'runtime.json'
-        runtime.write_text(json.dumps({'image': self.image, 'docker': '/nonexistent/docker'}))
-        self.configuration['frozen_files']['runtime.json'] = self.digest(runtime)
-        (self.root / 'configuration.json').write_text(json.dumps(self.configuration))
-        self.generate_checkpoint()
-        self.assertEqual(self.cli('bind', '--declaration', str(self.path)).returncode, 0)
-        self.assertEqual(self.cli('evaluate', '--step', 'step-01').returncode, 0)
-        parent = self.root / 'development/evaluations/step-01'
-        result = json.loads((parent / '1/result.json').read_text())
-        ledger = json.loads((parent / 'allocations.json').read_text())
-        result['developer_result_sha256'] = ledger[0]['developer_result_sha256'] = '0' * 64
-        (parent / '1/result.json').write_text(json.dumps(result))
-        (parent / 'allocations.json').write_text(json.dumps(ledger))
-        process = self.cli('inspect')
-        self.assertNotEqual(process.returncode, 0)
-        self.assertIn('completed development', process.stderr)
+        self.assertEqual(self.operator('status')['assessment_binding']['version'], 'engineering-1')
 
     def test_executed_check_vectors_keep_unassessable_and_missing_checks_distinct(self):
         docker = self.base / 'docker'
@@ -400,14 +374,11 @@ elif args[:1]==['rm']:
 else: print('engineering lifecycle boundary')
 ''')
         docker.chmod(0o755)
-        runtime = self.root / 'runtime.json'
-        runtime.write_text(json.dumps({'image': self.image, 'docker': str(docker)}))
-        self.configuration['frozen_files']['runtime.json'] = self.digest(runtime)
-        (self.root / 'configuration.json').write_text(json.dumps(self.configuration))
+        self.make_run({'image': self.image, 'docker': str(docker)})
         self.generate_checkpoint()
-        self.assertEqual(self.cli('bind', '--declaration', str(self.path)).returncode, 0)
-        process = subprocess.Popen([sys.executable, '-m', 'principiis.assessment', 'evaluate',
-                                   '--root', str(self.root), '--step', 'step-01'],
+        self.bind()
+        process = subprocess.Popen([sys.executable, '-m', 'principiis', 'evaluate', '--run', 'run',
+                                    '--runs-root', str(self.base), '--step', '1', '--format', 'json'],
                                   cwd=self.source, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             deadline = time.monotonic() + 5
@@ -415,12 +386,12 @@ else: print('engineering lifecycle boundary')
                 time.sleep(.01)
             self.assertTrue((self.base / 'application-active').exists())
             self.assertTrue((self.base / 'check-running').exists())
-            allocated = json.loads((self.root / 'development/evaluations/step-01/allocations.json').read_text())[0]
+            allocated = self.operator('status')['assessments'][0]
             process.terminate()
             stdout, stderr = process.communicate(timeout=10)
             self.assertEqual(process.returncode, 0, stderr)
             self.assertFalse((self.base / 'application-active').exists(), 'detached application survived interrupted assessment')
-            result = json.loads((self.root / 'development/evaluations/step-01/1/result.json').read_text())
+            result = json.loads(stdout)['assessments'][0]
             self.assertEqual(result['session_id'], allocated['session_id'])
             self.assertEqual((result['role'], result['outcome']), ('primary', 'evaluator_error'))
             self.assertFalse(result['cleanup_pending'])
@@ -439,16 +410,12 @@ else: print('engineering lifecycle boundary')
                 except ProcessLookupError:
                     pass
 
+
     def test_unresolved_runtime_cleanup_retains_container_identities(self):
-        runtime = self.root / 'runtime.json'
-        runtime.write_text(json.dumps({'image': self.image, 'docker': '/nonexistent/docker'}))
-        self.configuration['frozen_files']['runtime.json'] = self.digest(runtime)
-        (self.root / 'configuration.json').write_text(json.dumps(self.configuration))
+        self.make_run()
         self.generate_checkpoint()
-        self.assertEqual(self.cli('bind', '--declaration', str(self.path)).returncode, 0)
-        process = self.cli('evaluate', '--step', 'step-01')
-        self.assertEqual(process.returncode, 0, process.stderr)
-        result = json.loads((self.root / 'development/evaluations/step-01/1/result.json').read_text())
+        self.bind()
+        result = self.operator('evaluate', '--step', '1')['assessments'][0]
         self.assertTrue(result['cleanup_pending'])
         self.assertEqual(result['outcome'], 'evaluator_error')
         allocation = json.loads(Path(result['runtime_allocation']).read_text())
@@ -456,37 +423,29 @@ else: print('engineering lifecycle boundary')
         self.assertEqual(result['containers'], allocation['containers'])
         self.assertEqual(result['cleanup_argv'], allocation['cleanup_argv'])
         self.assertEqual(set(result['containers']), {'application', 'evaluator'})
-        rejected = self.cli('evaluate', '--step', 'step-01', '--rerun')
-        self.assertNotEqual(rejected.returncode, 0)
+        rejected = self.operator('evaluate', '--step', '1', '--rerun', success=False)
         self.assertIn('cleanup', rejected.stderr)
-        ledger = self.root / 'development/evaluations/step-01/allocations.json'
-        self.assertEqual(len(json.loads(ledger.read_text())), 1)
+        self.assertEqual(len(self.operator('status')['assessments']), 1)
 
     def test_candidate_copy_failure_does_not_require_runtime_cleanup(self):
         import resource
+        self.make_run()
         self.generate_checkpoint("from pathlib import Path; Path('payload').write_bytes(b'x' * 262144)")
-        self.assertEqual(self.cli('bind', '--declaration', str(self.path)).returncode, 0)
+        self.bind()
 
         def limit_new_file_size():
             resource.setrlimit(resource.RLIMIT_FSIZE, (131072, 131072))
 
-        command = [sys.executable, '-m', 'principiis.assessment', 'evaluate',
-                   '--root', str(self.root), '--step', 'step-01']
-        first = subprocess.run(command, cwd=self.source, capture_output=True, text=True,
-                               preexec_fn=limit_new_file_size)
-        self.assertEqual(first.returncode, 0, first.stderr)
-        result_path = self.root / 'development/evaluations/step-01/1/result.json'
-        original = result_path.read_bytes()
-        result = json.loads(original)
+        result = self.operator('evaluate', '--step', '1', preexec_fn=limit_new_file_size)['assessments'][0]
         self.assertEqual(result['outcome'], 'evaluator_error')
         self.assertIn('File too large', result['error'])
         self.assertFalse(result['cleanup_pending'])
         self.assertEqual(result['evaluation'], {})
         self.assertFalse(Path(result['evidence']).parent.exists())
-        inspected = self.cli('inspect')
-        self.assertEqual(inspected.returncode, 0, inspected.stderr)
-        self.assertEqual(json.loads(inspected.stdout)['cleanup_required'], [])
-        rerun = subprocess.run([*command, '--rerun'], cwd=self.source,
-                               capture_output=True, text=True, preexec_fn=limit_new_file_size)
-        self.assertEqual(rerun.returncode, 0, rerun.stderr)
-        self.assertEqual(result_path.read_bytes(), original)
+        self.assertEqual(self.operator('status')['evaluation_cleanup_required'], [])
+        rerun = self.operator('evaluate', '--step', '1', '--rerun', preexec_fn=limit_new_file_size)
+        self.assertEqual(rerun['assessments'][0], result)
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -1,9 +1,13 @@
 """The develop -> evaluate pipeline, driven through its interface with fake runtimes."""
 import json
 from pathlib import Path
+import subprocess
+import sys
+import time
 import unittest
 
 from support import temporary_directory
+import fixture_runtime
 from principiis import pipeline
 from principiis.run_store import RunStore, digest
 
@@ -81,8 +85,7 @@ class CheckpointPipeline(unittest.TestCase):
         manifest = {'version': 'fixture-1', 'files': {}, 'runtime_image': IMAGE, 'steps': {step: {} for step in STEPS}}
         declaration.write_text(json.dumps(manifest))
         store.bind({'version': 'fixture-1', 'files': {}, 'declaration': manifest, 'manifest_sha256': digest(declaration),
-                    'package_sha256': digest(declaration),
-                    'development_configuration_sha256': digest(store.root / 'configuration.json')},
+                    'package_sha256': digest(declaration)},
                    declaration, declaration)
 
     def develop(self, step, runtime=None, retry=False, store=None):
@@ -191,6 +194,55 @@ class CheckpointPipeline(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'dependency content changed'):
             pipeline.evaluate(self.store, 'step-01', rerun=False, evaluator=FakeEvaluator(changed='contract.json'))
         self.assertEqual(self.store.assessments, [])
+
+    def test_orphan_allocation_requires_explicit_retry_with_distinct_attempt(self):
+        self.develop('step-01')
+        self.store.allocate_attempt('step-02')  # The controller died before writing a result.
+        with self.assertRaisesRegex(ValueError, 'explicit --retry'):
+            self.develop('step-02', store=RunStore.open(self.store.root))
+        store = RunStore.open(self.store.root)
+        result = self.develop('step-02', retry=True, store=store)
+        self.assertEqual(result['attempt'], 2)
+        self.assertEqual((store.completed('step-02').snapshot / 'prior-notes').read_text(), 'request 1')
+
+    def test_sigterm_retains_partial_evidence_and_retry_restarts_from_last_snapshot(self):
+        self.develop('step-01')
+        agent, config = self.base / 'agent.py', self.base / 'runtime-config.json'
+        config.write_text(json.dumps({'argv': [sys.executable, str(agent)]}))
+        agent.write_text(
+            "from pathlib import Path\nimport time\n"
+            "assert Path('notes').read_text() == 'request 1'\n"
+            "Path('notes').write_text('partial edits must not continue')\n"
+            "Path('partial').write_text('retain')\n"
+            "print('{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":7,\"output_tokens\":2}}',flush=True)\n"
+            "time.sleep(60)\n")
+        process = subprocess.Popen([sys.executable, fixture_runtime.__file__, str(self.store.root), 'step-02', str(config)],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            partial = self.store.root / 'development/steps/step-02/workspace/partial'
+            deadline = time.monotonic() + 5
+            while not partial.exists() and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertTrue(partial.exists())
+            process.terminate()
+            process.communicate(timeout=5)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=5)
+        store = RunStore.open(self.store.root)
+        interrupted = store.attempts_for('step-02')[0]
+        self.assertFalse(interrupted.completed)
+        self.assertIn('interrupted', interrupted.result['execution']['error'])
+        self.assertGreater(interrupted.result['execution']['elapsed_seconds'], 0)
+        self.assertIn('turn.completed', (interrupted.directory / 'executor.stdout').read_text())
+        retained = (interrupted.directory / 'result.json').read_bytes()
+        agent.write_text("from pathlib import Path\nimport sys\n"
+                         "assert Path('notes').read_text() == 'request 1'\n"
+                         "assert not Path('partial').exists()\n"
+                         "Path('notes').write_text(sys.stdin.read())\n")
+        self.assertTrue(fixture_runtime.develop(store.root, 'step-02', config, retry=True)['completed'])
+        self.assertEqual((interrupted.directory / 'result.json').read_bytes(), retained)
 
     def test_evaluation_requires_a_completed_checkpoint(self):
         self.bind(self.store)

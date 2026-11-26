@@ -18,17 +18,11 @@ class DerivedRunCLI(unittest.TestCase):
         docker = fixture.base/'unavailable-image-docker'
         docker.write_text('#!'+sys.executable+'\nimport sys\nsys.exit(0 if "rm" in sys.argv else 1)\n')
         docker.chmod(0o755)
-        runtime = fixture.root/'runtime.json'
-        runtime.write_text(json.dumps({'image':fixture.image,'docker':str(docker)}))
-        fixture.configuration['frozen_files']['runtime.json'] = fixture.digest(runtime)
-        fixture.configuration.update(run_name='run', run_mode='development-rehearsal',
-            evaluator_binding='unbound', investigation='none',
-            condition={'id':'ordinary','version':'1'})
-        (fixture.root/'configuration.json').write_text(json.dumps(fixture.configuration))
+        fixture.make_run({'image':fixture.image,'docker':str(docker)}, condition={'id':'ordinary','version':'1'})
         fixture.generate_checkpoint()
-        self.assertEqual(fixture.cli('bind','--declaration',str(fixture.path)).returncode,0)
+        fixture.bind()
         # A prior bound primary must remain in the source run, never be imported.
-        self.assertEqual(fixture.cli('evaluate','--step','step-01').returncode,0)
+        fixture.operator('evaluate','--step','1')
         fixture.declaration['version'] = 'engineering-corrected-2'
         fixture.publish()
 

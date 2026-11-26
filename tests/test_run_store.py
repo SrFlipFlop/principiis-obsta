@@ -135,8 +135,7 @@ class RunStoreTest(unittest.TestCase):
         declaration.write_text(json.dumps({'version': 'v', 'files': {}}))
         store.bind({'version': 'v', 'files': {}, 'declaration': {'version': 'v', 'files': {}},
                     'manifest_sha256': digest(declaration),
-                    'package_sha256': digest(self.root / 'sequence.json'),
-                    'development_configuration_sha256': digest(self.root / 'configuration.json')},
+                    'package_sha256': digest(self.root / 'sequence.json')},
                    declaration, self.root / 'sequence.json')
         output = store.allocate_assessment({
             'stage': 'independent_evaluation', 'run_id': store.run_id, 'session_id': 'assessment-1',

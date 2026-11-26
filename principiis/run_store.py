@@ -462,6 +462,7 @@ class RunStore:
 
     def bind(self, binding, declaration, release):
         """Freeze the evaluator declaration and public release next to its binding."""
+        binding = dict(binding, development_configuration_sha256=digest(self.root / 'configuration.json'))
         target = self.root / 'evaluator-binding.json'
         if target.is_symlink():
             raise ValueError('evaluator binding cannot be a symlink')

@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import shutil
 import time
+from types import SimpleNamespace
 
 from .development_runtime import DevelopmentRuntime, load_config
 from .resource import token_usage
@@ -104,6 +105,40 @@ def investigate(args):
         report['primary']['unchanged'] = digest(primary) == original
         (output / 'investigation.json').write_text(json.dumps(report, indent=2) + '\n')
     return report
+
+
+def review_checkpoint(store, checkpoint, *, mode, config, prompt, prompt_version, rerun):
+    """Run the operator's separate AI review of one assessed checkpoint, retaining every attempt."""
+    primary = checkpoint['primary_assessment']
+    if not checkpoint['completed'] or not primary:
+        raise ValueError('completed checkpoint and primary assessment required before investigation')
+    config_path, prompt_path = Path(config).resolve(), Path(prompt).resolve()
+    settings = json.loads(config_path.read_text())
+    if 'runtime_config' not in settings or 'agent' in settings or 'codex_config' in settings or settings.get('evidence') != {}:
+        raise ValueError('operator investigation requires an isolated Codex runtime and no host proof commands')
+    reviewer, developer = load_config(settings['runtime_config']), load_config(store.root / 'runtime.json')
+    if Path(reviewer['auth_file']).resolve() == Path(developer['auth_file']).resolve():
+        raise ValueError('reviewer requires separately provisioned subscription authentication')
+    binding = {'config_sha256': digest(config_path), 'prompt_sha256': digest(prompt_path),
+               'runtime_config_sha256': digest(Path(settings['runtime_config'])),
+               'prompt_version': prompt_version, 'mode': mode}
+    binding_path = store.root / 'investigation-binding.json'
+    if binding_path.exists() and json.loads(binding_path.read_text()) != binding:
+        raise ValueError('investigation configuration changed; use a new run')
+    binding_path.write_text(json.dumps(binding, indent=2) + '\n')
+    previous = [Path(entry['artifact']).parent for entry in checkpoint['investigations']]
+    if previous and not rerun:
+        raise ValueError('investigation already retained; explicit --rerun required')
+    if not previous and rerun:
+        raise ValueError('no investigation to rerun')
+    output = store.root / 'investigations' / checkpoint['id'] / str(max((int(p.name) for p in previous), default=0) + 1)
+    result = investigate(SimpleNamespace(snapshot=checkpoint['source'], primary=primary['artifact'],
+                                         config=str(config_path), prompt=str(prompt_path),
+                                         prompt_version=prompt_version, output=str(output)))
+    allocation = store.runtime_allocation(output / 'runtime.json')
+    if result['status'] == 'evaluator_error' and allocation and allocation.get('state') != 'removed':
+        raise ValueError('reviewer container cleanup unresolved; inspect retained runtime allocation')
+    return result
 
 
 def main():

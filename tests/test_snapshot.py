@@ -7,17 +7,12 @@ import unittest
 from unittest.mock import patch
 
 from principiis.snapshot import preserve, validate
-from principiis.manual import run as run_checkpoint
+from principiis import pipeline
+from support import create_run
 
 
 IMAGE = 'sha256:' + 'a' * 64
 BINDING = {'image': IMAGE, 'symlink_targets': ['/usr/local/bin/python3.12']}
-
-
-def run(task, runtime, output, *, visible_request, prior_snapshot=None):
-    return run_checkpoint(task, runtime, output, prior_snapshot=prior_snapshot, run_id='run',
-                          sequence={'id': 's', 'version': '1'}, visible_request=visible_request,
-                          attempt=1, result_metadata={})
 
 
 class SnapshotRuntimeLinks(unittest.TestCase):
@@ -114,23 +109,18 @@ class SnapshotRuntimeLinks(unittest.TestCase):
                     (workspace / 'notes').write_text('continued from retained environment')
                 return {'exit_status': 0}
 
-        task = self.root / 'task.json'
-        task.write_text(json.dumps({'id': 'one', 'version': '1', 'condition': {'id': 'ordinary', 'version': '1'}}))
-        first = self.root / 'first'
-        result = run(task, Runtime(), first, visible_request='first')
-        self.assertTrue(result['completed'])
-        second = self.root / 'second'
-        result = run(task, Runtime(), second, prior_snapshot=first / 'snapshot', visible_request='second')
-        self.assertTrue(result['completed'])
-        self.assertEqual((second / 'snapshot/notes').read_text(), 'continued from retained environment')
+        store = create_run(self.root / 'run', requests=['first', 'second', 'third'])
+        self.assertTrue(pipeline.develop(store, 'step-01', retry=False, runtime=Runtime())['completed'])
+        self.assertTrue(pipeline.develop(store, 'step-02', retry=False, runtime=Runtime())['completed'])
+        self.assertEqual((store.completed('step-02').snapshot / 'notes').read_text(),
+                         'continued from retained environment')
 
         class DifferentRuntime(Runtime):
             snapshot_binding = dict(BINDING, image='sha256:' + 'b' * 64)
 
-        rejected = self.root / 'different-image'
         with self.assertRaisesRegex(ValueError, 'runtime image'):
-            run(task, DifferentRuntime(), rejected, prior_snapshot=first / 'snapshot', visible_request='second')
-        self.assertFalse(rejected.exists())
+            pipeline.develop(store, 'step-03', retry=False, runtime=DifferentRuntime())
+        self.assertEqual(store.attempts_for('step-03'), [])
 
 
 if __name__ == '__main__':

@@ -47,7 +47,8 @@ class OperatorEvaluationCLI(unittest.TestCase):
 
     def test_saved_reports_keep_primary_and_rerun_rows_with_separate_resources(self):
         from principiis import resource
-        from principiis.operator import save_report
+        from principiis import reporting
+        from principiis.run_store import RunStore
         report = json.loads(self.cli('status', '--format', 'json').stdout)
         assessments = []
         attempts = []
@@ -76,7 +77,7 @@ class OperatorEvaluationCLI(unittest.TestCase):
                              'artifact': str(path), 'stages': {'development': {}, 'evaluation': assessment['evaluation']}})
         report.update(assessments=assessments, assessment_binding={'version': 'engineering-v1'},
                       resources=resource.summarize(attempts))
-        output = save_report(report)
+        output = RunStore(self.run).save_reports(reporting.files(report))
         rows = list(csv.DictReader(io.StringIO((output / 'development.csv').read_text())))
         self.assertEqual([row['stage'] for row in rows], ['evaluation', 'evaluation'])
         self.assertEqual([row['role'] for row in rows], ['primary', 'rerun'])
@@ -98,31 +99,11 @@ class OperatorEvaluationCLI(unittest.TestCase):
         docker = fixture.base / 'unavailable-image-docker'
         docker.write_text('#!' + sys.executable + '\nimport sys\nsys.exit(0 if "rm" in sys.argv else 1)\n')
         docker.chmod(0o755)
-        runtime = fixture.root / 'runtime.json'
-        runtime.write_text(json.dumps({'image': fixture.image, 'docker': str(docker)}))
-        fixture.configuration.update(run_name='run', run_mode='development-rehearsal', evaluator_binding='unbound')
-        fixture.configuration['frozen_files']['runtime.json'] = fixture.digest(runtime)
-        (fixture.root / 'configuration.json').write_text(json.dumps(fixture.configuration))
+        fixture.make_run({'image': fixture.image, 'docker': str(docker)})
         fixture.generate_checkpoint()
         before = {path: path.read_bytes() for path in (fixture.root / 'development/steps/step-01').rglob('*') if path.is_file()}
-
-        def operator(command, *arguments, success=True):
-            process = subprocess.run([sys.executable, '-m', 'principiis', command, '--run', 'run',
-                '--runs-root', str(fixture.base), '--format', 'json', *arguments],
-                cwd=fixture.source, capture_output=True, text=True)
-            if success:
-                self.assertEqual(process.returncode, 0, process.stderr)
-                return json.loads(process.stdout)
-            self.assertNotEqual(process.returncode, 0)
-            return process
-
-        binding = subprocess.run([sys.executable, '-c',
-            'import json, pathlib, sys; from principiis.assessment import bind; '
-            'root=pathlib.Path(sys.argv[1]); '
-            'bind(root, json.loads((root/"configuration.json").read_text()), sys.argv[2])',
-            str(fixture.root), str(fixture.path)],
-            cwd=fixture.source, capture_output=True, text=True)
-        self.assertEqual(binding.returncode, 0, binding.stderr)
+        operator = fixture.operator
+        fixture.bind()
         first = operator('evaluate', '--step', '1')
         primary = first['checkpoints'][0]['primary_assessment']
         self.assertEqual(primary['outcome'], 'evaluator_error')
@@ -174,25 +155,13 @@ class OperatorEvaluationCLI(unittest.TestCase):
                           ' print("Error response from daemon: No such container: " + sys.argv[-1], file=sys.stderr)\n'
                           'sys.exit(1)\n')
         docker.chmod(0o755)
-        runtime = fixture.root / 'runtime.json'
-        runtime.write_text(json.dumps({'image': fixture.image, 'docker': str(docker)}))
-        fixture.configuration.update(run_name='run', run_mode='development-rehearsal', evaluator_binding='unbound')
-        fixture.configuration['frozen_files']['runtime.json'] = fixture.digest(runtime)
-        (fixture.root / 'configuration.json').write_text(json.dumps(fixture.configuration))
+        fixture.make_run({'image': fixture.image, 'docker': str(docker)})
         fixture.generate_checkpoint()
+        fixture.bind()
 
         def operator(command, *arguments):
-            return subprocess.run([sys.executable, '-m', 'principiis', command,
-                '--run', 'run', '--runs-root', str(fixture.base), '--format', 'json', *arguments],
-                cwd=fixture.source, capture_output=True, text=True)
+            return fixture.operator(command, *arguments, success=None)
 
-        binding = subprocess.run([sys.executable, '-c',
-            'import json, pathlib, sys; from principiis.assessment import bind; '
-            'root=pathlib.Path(sys.argv[1]); '
-            'bind(root, json.loads((root/"configuration.json").read_text()), sys.argv[2])',
-            str(fixture.root), str(fixture.path)],
-            cwd=fixture.source, capture_output=True, text=True)
-        self.assertEqual(binding.returncode, 0, binding.stderr)
         first = operator('evaluate', '--step', '1')
         self.assertEqual(first.returncode, 0, first.stderr)
         report = json.loads(first.stdout)
@@ -202,7 +171,7 @@ class OperatorEvaluationCLI(unittest.TestCase):
         blocked = operator('evaluate', '--step', '1', '--rerun')
         self.assertNotEqual(blocked.returncode, 0)
         self.assertIn('cleanup', blocked.stderr)
-        self.assertEqual(len(json.loads((primary.parent.parent / 'allocations.json').read_text())), 1)
+        self.assertEqual(len(fixture.operator('status')['assessments']), 1)
         marker.touch()
         cleaned = operator('cleanup-evaluation', '--step', '1')
         self.assertEqual(cleaned.returncode, 0, cleaned.stderr)

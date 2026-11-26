@@ -48,12 +48,11 @@ class ConditionCLI(unittest.TestCase):
             result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             root = base / 'runs/first'
-            sequence = json.loads((root / 'sequence.json').read_text())
-            self.assertEqual(sequence['condition']['id'], 'baseline')
-            self.assertEqual(sequence['condition']['version'], '1')
-            self.assertEqual(json.loads((root / 'condition.json').read_text())['kind'], 'ordinary')
-            self.assertEqual(json.loads((root / 'configuration.json').read_text())['investigation'], 'final')
-            self.assertIn('condition.json', json.loads((root / 'configuration.json').read_text())['frozen_files'])
+            from principiis.run_store import RunStore
+            store = RunStore.open(root)
+            self.assertEqual(store.sequence['condition'], {'id': 'baseline', 'version': '1'})
+            self.assertEqual(store.frozen('condition.json')['kind'], 'ordinary')
+            self.assertEqual(store.configuration['investigation'], 'final')
             (root / 'condition.json').write_text('{}')
             status = subprocess.run([sys.executable, '-m', 'principiis', 'status', '--run', 'first',
                                      '--runs-root', str(base / 'runs')], cwd=ROOT,
@@ -119,16 +118,6 @@ class ConditionCLI(unittest.TestCase):
             events = [json.loads(line) for line in logs.stdout.splitlines()]
             self.assertEqual([event['event'] for event in events], ['started', 'failed'])
             self.assertEqual([event['step'] for event in events], ['step-03', 'step-03'])
-
-    def test_final_step_selects_three_and_ten_step_sequences(self):
-        from principiis.operator import final_step
-        with temporary_directory() as directory:
-            root = Path(directory)
-            for count in (3, 10):
-                (root / 'sequence.json').write_text(json.dumps({
-                    'steps': [{'id': f'step-{number:02}'} for number in range(1, count + 1)]
-                }))
-                self.assertEqual(final_step(root), f'step-{count:02}')
 
     def test_evaluate_review_flags_select_review_without_starting_it(self):
         command = [sys.executable, '-m', 'principiis', 'evaluate', '--run', 'unused',

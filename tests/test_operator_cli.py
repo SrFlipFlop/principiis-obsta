@@ -42,12 +42,12 @@ class OperatorCLI(unittest.TestCase):
     def test_init_freezes_real_requests_without_models_or_dummy_evaluators(self):
         initialized = self.initialize()
         run = self.runs / 'portal-test'
-        sequence = json.loads((run / 'sequence.json').read_text())
-        self.assertEqual([s['id'] for s in sequence['steps']], ['step-01', 'step-02', 'step-03'])
-        for number, step in enumerate(sequence['steps'], 1):
-            self.assertNotIn('check', step)
-            self.assertEqual((run / step['request']).read_bytes(),
-                             (ROOT / f'benchmarks/document-portal/requests/{number:02}.txt').read_bytes())
+        from principiis.run_store import RunStore
+        store = RunStore.open(run)
+        self.assertEqual(store.step_ids, ['step-01', 'step-02', 'step-03'])
+        self.assertEqual(store.request_text(2), '\n\n'.join(
+            (ROOT / f'benchmarks/document-portal/requests/{number:02}.txt').read_text() for number in (1, 2, 3)))
+        self.assertTrue(all('check' not in step for step in store.sequence['steps']))
         self.assertIn('unbound', initialized.stdout)
         self.assertFalse((run / 'development').exists())
         status = json.loads(self.cli('status', '--format', 'json').stdout)
@@ -79,14 +79,16 @@ class OperatorCLI(unittest.TestCase):
         self.assertIn('new run', rejected.stderr)
         self.assertFalse((run / 'development').exists())
 
-    def retain_attempt(self, step, number, session, completed, start, duration, input_tokens):
-        run = self.runs / 'portal-test'
-        relative = f'steps/{step}' if number == 1 else f'attempts/{step}/{number}'
-        directory = run / 'development' / relative
+    def retain_attempt(self, step, number, session, completed, start, duration, input_tokens, root=None):
+        from principiis.run_store import RunStore
+        store = RunStore.open(root or self.runs / 'portal-test')
+        attempt = store.allocate_attempt(step)
+        self.assertEqual(attempt.number, number)
+        directory = attempt.directory
         directory.mkdir(parents=True)
         (directory / 'workspace').mkdir()
         result = {
-            'run_id': 'fixture-run', 'session_id': session, 'checkpoint': step,
+            'run_id': store.run_id, 'session_id': session, 'checkpoint': step,
             'attempt': number, 'outcome': 'pending_evaluation' if completed else 'incomplete',
             'completed': completed, 'execution': {
                 'exit_status': 0 if completed else None, 'elapsed_seconds': duration,
@@ -105,51 +107,44 @@ class OperatorCLI(unittest.TestCase):
             from principiis.snapshot import preserve
             (directory / 'workspace/app.py').write_text('# retained source fixture, never executed\n')
             preserve(directory / 'workspace', directory / 'snapshot')
-        journal = run / 'development/manual.json'
-        state = json.loads(journal.read_text()) if journal.exists() else {'run_id': 'fixture-run', 'attempts': []}
-        state['attempts'].append({'id': step, 'artifact': relative, 'attempt': number})
-        journal.write_text(json.dumps(state))
         return directory
 
     def test_final_review_next_action_and_report_for_three_and_ten_steps(self):
-        from principiis.operator import build_status, markdown
+        from principiis import status
+        from principiis.reporting import markdown
+        from principiis.run_store import RunStore
+        from support import create_run
         for count in (3, 10):
             with self.subTest(steps=count):
-                if (self.runs / 'portal-test').exists():
-                    import shutil
-                    shutil.rmtree(self.runs / 'portal-test')
-                self.initialize()
-                root = self.runs / 'portal-test'
-                if count == 10:
-                    sequence = json.loads((root / 'sequence.json').read_text())
-                    sequence['steps'].extend({'id': f'step-{number:02}'} for number in range(4, 11))
-                    (root / 'sequence.json').write_text(json.dumps(sequence))
-                configuration = json.loads((root / 'configuration.json').read_text())
+                root = self.base / f'final-{count}'
+                create_run(root, steps=count, investigation='final')
                 assessments = []
                 for number in range(1, count + 1):
                     step = f'step-{number:02}'
-                    self.retain_attempt(step, 1, f'session-{number}', True, number * 10, 1, 2)
+                    self.retain_attempt(step, 1, f'session-{number}', True, number * 10, 1, 2, root=root)
                     assessments.append({'checkpoint': step, 'role': 'primary', 'outcome': 'candidate_failure',
                                         'artifact': f'/fixture/{step}.json', 'attempt': 1,
+                                        'run_id': 'fixture', 'session_id': f'assessment-{number}', 'evaluation': {},
                                         'functional': 'fail', 'security': 'unknown',
                                         'checks': [{'id': 'browser-library', 'status': 'fail',
                                                     'detail': 'Expected login control; saw Sign in'}]})
-                evidence = {'assessments': assessments, 'binding': {'version': 'fixture'},
-                            'resources': {'attempts': []}, 'cleanup_required': []}
-                with patch('principiis.assessment.inspect', return_value=evidence):
-                    status = build_status(root, configuration)
-                self.assertEqual(status['next_action']['action'], 'evaluate --final --ai-review')
-                self.assertEqual(status['next_action']['step'], f'step-{count:02}')
-                self.assertIn(f'evaluate --final --ai-review step-{count:02}', markdown(status))
-                self.assertIn('browser-library: fail — Expected login control; saw Sign in', markdown(status))
+
+                def assessed():
+                    store = RunStore.open(root)
+                    store.binding, store.assessments = {'version': 'fixture'}, assessments
+                    return status.build(store)
+                report = assessed()
+                self.assertEqual(report['next_action']['action'], 'evaluate --final --ai-review')
+                self.assertEqual(report['next_action']['step'], f'step-{count:02}')
+                self.assertIn(f'evaluate --final --ai-review step-{count:02}', markdown(report))
+                self.assertIn('browser-library: fail — Expected login control; saw Sign in', markdown(report))
                 investigation = root / 'investigations' / f'step-{count:02}' / '1'
                 investigation.mkdir(parents=True)
                 (investigation / 'investigation.json').write_text(json.dumps({
                     'status': 'completed', 'claims': [{'id': 'fixture', 'status': 'unresolved'}],
                     'verified_root_causes': [], 'resources': {'elapsed_seconds': 1, 'reported_tokens': None},
                 }))
-                with patch('principiis.assessment.inspect', return_value=evidence):
-                    reviewed = build_status(root, configuration)
+                reviewed = assessed()
                 self.assertEqual(reviewed['next_action']['action'], 'development-complete')
                 self.assertIn(f'| step-{count:02} | completed | 1 | 0 |', markdown(reviewed))
 
@@ -196,7 +191,7 @@ class OperatorCLI(unittest.TestCase):
         self.assertIn(f'principiis develop --runs-root {self.runs} --run portal-test --step 2', rendered)
 
     def test_status_separates_development_and_evaluation_outcomes(self):
-        from principiis.operator import markdown
+        from principiis.reporting import markdown
         report = {
             'run_name': 'demo', 'run_mode': 'development-rehearsal', 'application': 'document-portal',
             'package_version': 'v1', 'condition': {'id': 'baseline'}, 'investigation': 'none',
@@ -242,16 +237,6 @@ class OperatorCLI(unittest.TestCase):
         self.assertEqual(report['resources']['totals']['development']['attempts_present'], 2)
         self.assertIsNone(report['resources']['totals']['development']['duration_seconds'])
         self.assertIn('interrupted', report['checkpoints'][1]['status'])
-
-    def test_status_rejects_journal_paths_into_candidate_files(self):
-        self.initialize()
-        attempt = self.retain_attempt('step-01', 1, 'first', True, 100, 1, 10)
-        journal = self.runs / 'portal-test/development/manual.json'
-        state = json.loads(journal.read_text())
-        state['attempts'][0]['artifact'] = 'steps/step-01/workspace'
-        journal.write_text(json.dumps(state))
-        rejected = self.cli('status', success=False)
-        self.assertIn('artifact', rejected.stderr)
 
     def test_status_and_report_refuse_corrupted_completed_evidence(self):
         self.initialize()

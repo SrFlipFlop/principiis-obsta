@@ -64,25 +64,19 @@ class OperatorDevelopmentCLI(unittest.TestCase):
             count_path.write_text(str(count))
             step=min(count,3)
             assert delivered == '\\n\\n'.join(expected[:step]), 'incorrect incremental disclosure'
-            assert 'manual_cli_invocation' not in delivered, 'operator record leaked to developer prompt'
             assert '--ephemeral' in args and '--ignore-rules' in args and '--ignore-user-config' in args
             if count == 1:
                 assert list(workspace.iterdir()) == [], 'first project is not empty'
             else:
                 assert (workspace/'notes').read_text() == '\\n\\n'.join(expected[:step-1]), 'prior completed notes missing'
                 assert not (workspace/'partial').exists(), 'partial edits entered retry'
-            # This executable is a trusted host-side fixture, so it can inspect
-            # controller evidence. Neither path is included among container mounts.
+            # This executable is a trusted host-side fixture, so it can inspect the
+            # initial attempt evidence durable before launch. It is not among the mounts.
             initial=json.loads((workspace.parent/'result.json').read_text())
-            journal=json.loads((base/'runs/portal-integration/development/manual.json').read_text())
-            invocation=initial['launch_authorization']
-            assert invocation == journal['attempts'][-1]['launch_authorization'], 'launch record not durable before process'
             assert initial['execution'] == {} and initial['completed'] is False
-            assert invocation['step'] == 'step-%02d'%step
-            assert invocation['kind'] == 'manual_cli_invocation'
+            assert initial['checkpoint'] == 'step-%02d'%step
             with (base/'deliveries.jsonl').open('a') as stream:
-                stream.write(json.dumps({'count':count,'request':delivered,'initial_session':initial['session_id'],
-                                         'invocation_kind':invocation['kind']})+'\\n')
+                stream.write(json.dumps({'count':count,'request':delivered,'initial_session':initial['session_id']})+'\\n')
             event={'type':'turn.completed','id':'fixture-turn-%s'%count,
                    'usage':{'input_tokens':count*10,'cached_input_tokens':2,
                             'output_tokens':5,'reasoning_output_tokens':1}}
@@ -144,7 +138,6 @@ class OperatorDevelopmentCLI(unittest.TestCase):
         first_result_bytes = (first / 'result.json').read_bytes()
         first_result = json.loads(first_result_bytes)
         self.assertTrue(first_result['completed'])
-        self.assertEqual(first_result['evaluator_binding'], 'unbound')
         self.assertEqual(first_result['evaluation'], {})
         self.assertFalse((self.run / 'development/steps/step-02').exists())
 
@@ -188,8 +181,6 @@ class OperatorDevelopmentCLI(unittest.TestCase):
 
         deliveries = [json.loads(line) for line in (self.base / 'deliveries.jsonl').read_text().splitlines()]
         self.assertEqual(len({item['initial_session'] for item in deliveries}), 4)
-        self.assertTrue(all(item['invocation_kind'] == 'manual_cli_invocation' for item in deliveries))
-        self.assertTrue(all('manual_cli_invocation' not in item['request'] for item in deliveries))
 
         report_json = json.loads(self.cli('report', '--format', 'json').stdout)
         report_csv = self.cli('report', '--format', 'csv').stdout

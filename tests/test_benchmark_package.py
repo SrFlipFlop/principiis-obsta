@@ -95,8 +95,7 @@ class BenchmarkPackageCLI(unittest.TestCase):
         self.assertEqual(status['assessment_binding']['manifest_sha256'], digest(manifest))
         self.assertEqual(status['next_action']['action'], 'develop')
         run = self.runs / 'ledger'
-        sequence = json.loads((run / 'sequence.json').read_text())
-        self.assertEqual([step['id'] for step in sequence['steps']], ['step-01', 'step-02'])
+        self.assertEqual([checkpoint['id'] for checkpoint in status['checkpoints']], ['step-01', 'step-02'])
         self.assertEqual((run / 'requests/02.txt').read_bytes(), (package / 'requests/02.txt').read_bytes())
 
     def test_step_count_is_bounded_by_the_qualified_evaluator(self):
@@ -105,9 +104,8 @@ class BenchmarkPackageCLI(unittest.TestCase):
         self.assertIn('qualified through step 11', rejected.stderr)
         self.assertFalse((self.runs / 'too-long').exists())
         self.init('fixture-ledger', 'eleven', '--steps', '11')
-        sequence = json.loads((self.runs / 'eleven/sequence.json').read_text())
-        self.assertEqual(sequence['steps'][-1]['id'], 'step-11')
         status = self.principiis('status', '--run', 'eleven', '--runs-root', str(self.runs))
+        self.assertIn('| step-11 | not-started |', status.stdout)
         self.assertIn('--step 1', status.stdout)
         logs = self.principiis('logs', '--run', 'eleven', '--runs-root', str(self.runs), '--step', '11')
         self.assertEqual(logs.returncode, 0)
