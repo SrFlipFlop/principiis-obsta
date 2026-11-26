@@ -84,8 +84,8 @@ mismatch. Model and reasoning remain at harness defaults.
 Development `/tmp` and the fresh home tmpfs explicitly allow executable files so
 ordinary temporary build tools and user-local executables can run. Both retain
 nosuid/nodev, bounded size and disposable contents. The inner workspace profile's
-write permissions are unchanged. This development-only setting is recorded in adapter
-version/fingerprint and execution evidence; preview keeps its previous tmpfs policy.
+write permissions are unchanged. This development-only setting is recorded in the adapter
+version (each result's `runtime_version`) and execution evidence; preview keeps its previous tmpfs policy.
 Preflight executes a temporary tool inside Codex's sandbox, and the opt-in runtime
 control additionally executes a user-local tool in the outer container.
 
@@ -108,7 +108,7 @@ syscalls, and a `clone3` ENOSYS fallback. The outer nonroot UID, dropped capabil
 read-only root and no-new-privileges remain enforced. This policy exposes additional
 kernel operations compared with Docker's default; passing controls is not proof
 against kernel or container escapes. Preview keeps its existing policy. The policy
-digest enters adapter version/fingerprint, execution evidence and the cleanup sidecar;
+digest enters the adapter version (`runtime_version`), execution evidence and the cleanup sidecar;
 changing it prevents silent continuation of an existing development run. See the
 attribution and modification record in
 [`fixtures/development/NOTICE`](../../fixtures/development/NOTICE).

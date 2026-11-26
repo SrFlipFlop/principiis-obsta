@@ -4,7 +4,7 @@ These commands compose the retained checkpoint controller. They implement operat
 boundaries; engineering controls do not complete live acceptance. The current portal
 release is qualified through request 3 only; #9 remains the
 ten-step prerequisite. Existing milestone-1 snapshots
-retain their development results and fingerprints. No primary assessment is inferred
+retain their development results. No primary assessment is inferred
 from a preview, candidate-owned test, source inspection or a historical control score.
 
 Bind a qualified evaluator release when creating the run:
@@ -74,8 +74,11 @@ each checkpoint to its `contract` and `app_command`. `seccomp` and
 `dependency_manifest` name hashed dependencies. The dependency inventory maps exact
 image IDs to resolved package names/versions and hashed preparation receipts.
 Binding retains frozen public/private metadata copies so historical reports remain
-readable after a subsequent author release; evaluation verifies the original private
-dependencies again before allocation.
+readable after a subsequent author release. `init` and `derive-evaluation` verify the
+whole declaration once, when binding. Before allocating an assessment, `evaluate`
+re-hashes only the private files that step uses (its check contract and the seccomp
+profile) against the binding and refuses on any change; the restricted evaluator
+image IDs stay pinned by the binding.
 
 For each assessment, the controller inventories installed distribution metadata in
 retained Python virtual environments before launching the restricted runtime. The

@@ -44,6 +44,11 @@ def check_develop(store, step, *, retry):
 def develop(store, step, *, retry, runtime):
     """Run one fresh developer session from the prior snapshot and preserve its own."""
     index = check_develop(store, step, retry=retry)
+    version = getattr(runtime, 'version', None)
+    recorded = next((a.result.get('runtime_version') for a in store.attempts
+                     if a.completed and a.result.get('runtime_version') is not None), None)
+    if recorded is not None and version != recorded:
+        raise ValueError('development runtime changed since earlier checkpoints; use a new run')
     binding = getattr(runtime, 'snapshot_binding', None)
     prior = store.completed(store.step_ids[index - 1]) if index else None
     if prior is not None:
@@ -64,6 +69,7 @@ def develop(store, step, *, retry, runtime):
         'task': {'id': task['id'], 'version': task['version']}, 'condition': store.sequence['condition'],
         'attempt': attempt.number, 'checkpoint': step, 'outcome': 'incomplete', 'functional': 'unknown',
         'security': 'unknown', 'execution': {}, 'evaluation': {}, 'completed': False, 'controller': controller(),
+        'runtime_version': version,
     }
     store.save_attempt(attempt, result)
     try:

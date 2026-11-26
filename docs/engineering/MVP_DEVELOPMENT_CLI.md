@@ -62,7 +62,6 @@ Out-of-order selection and missing/corrupted prior checkpoints are rejected.
 Status reports `wait` while an operator action holds the per-run lock. Competing
 development, preview and cleanup commands are rejected, preserving allocation
 history. Read-only inspection remains available with explicitly partial measurements.
-Do not mix the legacy manual CLI with concurrent operator commands.
 
 An incomplete attempt retains its workspace, logs and exposed measurements. Use an
 explicit retry, for example in a separately named recovery run:
@@ -87,7 +86,28 @@ separate evidence; original sidecars and results remain unchanged. A failed clea
 stays blocked. Logs/usage emitted after an abrupt controller death may be unavailable.
 A missing completed result or changed snapshot
 is an integrity error, rather than permission to regenerate a completed checkpoint.
-Changing frozen request/runtime configuration requires a new identified run.
+Changing frozen request/runtime configuration requires a new identified run, and so
+does a changed development runtime version (sandbox policy digest, Codex version,
+permission settings): each development result records `runtime_version`, and later
+steps must match it.
+
+## Run records
+
+`principiis/run_store.py` owns the run directory; its module docstring lists the
+layout. `configuration.json` is the single freeze manifest: run identity, mode, the
+controller's git commit (`controller.commit`, `dirty` when tracked controller sources
+differ from it) and `frozen_files` digests of `runtime.json`, `condition.json`,
+`sequence.json` and the requests. Every command opens the store once, which verifies
+the manifest, lineage, evaluator binding, journal, retained snapshots and assessment
+ledgers; it does not re-verify them during the same command. Development and
+assessment results record the controller commit instead of per-file source hashes.
+
+Runs created before #69 keep a fingerprint in `development/manual.json`, per-step
+`development/tasks/` records and manual invocation records. They stay readable:
+`status`, `report`, `develop`, `evaluate` and `derive-evaluation` ignore those
+extra records, and `derive-evaluation` still copies `tasks/` into its attested
+inventory. Those older development results have no `runtime_version`, so continuing an
+older run does not check the runtime version.
 
 Preview a completed checkpoint using separately versioned startup configuration:
 

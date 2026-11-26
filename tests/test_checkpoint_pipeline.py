@@ -195,6 +195,19 @@ class CheckpointPipeline(unittest.TestCase):
             pipeline.evaluate(self.store, 'step-01', rerun=False, evaluator=FakeEvaluator(changed='contract.json'))
         self.assertEqual(self.store.assessments, [])
 
+    def test_changed_runtime_version_cannot_continue_the_run(self):
+        first = FakeRuntime()
+        first.version = {'sandbox_policy_sha256': 'a', 'codex': 'codex-cli 1'}
+        self.assertEqual(self.develop('step-01', first)['runtime_version'], first.version)
+        changed = FakeRuntime()
+        changed.version = dict(first.version, sandbox_policy_sha256='b')
+        with self.assertRaisesRegex(ValueError, 'development runtime changed'):
+            self.develop('step-02', changed)
+        self.assertEqual(self.store.attempts_for('step-02'), [])
+        same = FakeRuntime()
+        same.version = dict(first.version)
+        self.assertTrue(self.develop('step-02', same)['completed'])
+
     def test_orphan_allocation_requires_explicit_retry_with_distinct_attempt(self):
         self.develop('step-01')
         self.store.allocate_attempt('step-02')  # The controller died before writing a result.
