@@ -21,8 +21,8 @@ The specification governs approved scope. The glossary defines terms, ADRs expla
 | Live milestone-1 evidence and owner acceptance | [Requests 2–3, interruption/retry and reconciled exports](reviews/ISSUES_41_42_LIVE_QUALIFICATION_20261117.md) |
 | Manual checkpoint operation | [Manual workflow](../MANUAL_CHECKPOINT_WORKFLOW.md) and [HITL issue #38](https://github.com/SrFlipFlop/principiis-obsta/issues/38) |
 | Architecture and proposed improvements | [Architecture review](reviews/ARCHITECTURE_REVIEW.md) |
-| Checkpoint/executor contracts | [Checkpoint CLI](../engineering/CHECKPOINT_CLI.md) |
-| Suite selection and reporting | [Suite CLI](../engineering/SUITE_CLI.md) |
+| Checkpoint/executor contracts | [Checkpoint CLI](https://github.com/SrFlipFlop/principiis-obsta/blob/1653743/docs/engineering/CHECKPOINT_CLI.md) |
+| Suite selection and reporting | [Suite CLI](https://github.com/SrFlipFlop/principiis-obsta/blob/1653743/docs/engineering/SUITE_CLI.md) |
 | Restricted browser/backend execution | [Restricted evaluation](../RESTRICTED_EVALUATION.md) |
 | Supplemental evaluator findings | [Independent investigation](../engineering/INDEPENDENT_INVESTIGATION.md) |
 | Benchmark authoring | [Application catalog](../BENCHMARK_APPLICATIONS.md), then the relevant `benchmarks/<application>/BENCHMARK_DESIGN.md` and package metadata |
