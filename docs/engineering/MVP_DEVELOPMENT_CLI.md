@@ -1,12 +1,10 @@
 # Portal development commands (#40–#42)
 
 Implemented foundations, 2026-11-16. This composes the existing manual checkpoint
-controller; it does not introduce another execution engine. The [approved baseline
-specification](../BASELINE_PILOT_SPEC.md) governs scope and execution settings.
-Runtime preparation/review, actual subscription development, usable preview and the
-owner's acceptance remain required before closing milestone 1. Regression fixtures
-are not live acceptance evidence. See the [implementation verification
-record](../reviews/MVP_1_IMPLEMENTATION.md).
+controller; it does not introduce another execution engine. Scope and execution
+settings are in [PROJECT.md](../../PROJECT.md). Milestone 1 was accepted live under
+#40–#42; regression fixtures are not live acceptance evidence. See the [implementation
+verification record](../archive/reviews/MVP_1_IMPLEMENTATION.md).
 
 From this checkout, inspect `python3 -m principiis --help`. Commands use the Python
 standard library. Initialize a reusable run outside the research checkout and outside
@@ -67,7 +65,7 @@ history. Read-only inspection remains available with explicitly partial measurem
 Do not mix the legacy manual CLI with concurrent operator commands.
 
 An incomplete attempt retains its workspace, logs and exposed measurements. Use an
-explicit retry only when authorized, for example in a separately named recovery run:
+explicit retry, for example in a separately named recovery run:
 
 ```bash
 python3 -m principiis develop --run portal-recovery --step 2 --retry
@@ -138,7 +136,7 @@ status: incomplete generation or a failed preview is still a recorded outcome.
 Configuration/selection/integrity errors exit nonzero. A cleanup failure remains
 explicit evidence and must not erase the observed process exit status.
 
-The [runtime fix controls](../reviews/MVP_1_RUNTIME_FIXES.md) exercise nested
+The [runtime fix controls](../archive/reviews/MVP_1_RUNTIME_FIXES.md) exercise nested
 workspace-write sandboxing and retained Python virtual environments on the local
 Docker host. Interpreter links are bound to the exact development image; preview
 must use that same image and can launch `.venv/bin/python app.py` when the candidate
@@ -147,7 +145,7 @@ subscription access, image/access review, generated-application dependencies and
 restricted browser acceptance remain separate live qualification work. Preserve
 failures instead of regenerating a completed candidate.
 
-The subsequent [authorized #41–#42 qualification](../reviews/ISSUES_41_42_LIVE_QUALIFICATION_20261117.md)
+The subsequent [#41–#42 qualification](../archive/reviews/ISSUES_41_42_LIVE_QUALIFICATION_20261117.md)
 records actual requests 2–3, restricted generated-portal browser previews, a separately
 identified real interruption/explicit retry and reconciled per-run exports. The owner
 walkthrough and acceptance are recorded there. Hidden evaluation remains

@@ -1,4 +1,4 @@
-> Current authority: [approved baseline pilot spec](BASELINE_PILOT_SPEC.md), accepted by the owner on 2026-11-14, with execution decisions added on 2026-11-15. This document retains research proposals and the alignment record; historical multi-arm pilot, fixed-stack and offline-development suggestions are not current scope. Comparative interventions remain deferred; current baseline execution settings are in the approved spec.
+> Research record for the paper; not required reading. Current scope and decisions are in [PROJECT.md](../../PROJECT.md). Approval and authorization wording below is dated history, superseded by the four hard rules in [AGENTS.md](../../AGENTS.md). Historical multi-arm pilot, fixed-stack and offline-development suggestions are not current scope.
 
 # Experimental protocol — research proposals and alignment record
 
@@ -69,7 +69,7 @@ Report what happened, including failures, evaluator disagreement, costs, confoun
 
 ## Qualification amendments proposed after research — 2026-11-14
 
-These amendments are proposals for alignment, not an approved protocol. See [evaluation critique](research/03_EVALUATION_VALIDITY.md) for evidence, preregistration fields and failure rules.
+These amendments are proposals for alignment, not an approved protocol. See [evaluation critique](03_EVALUATION_VALIDITY.md) for evidence, preregistration fields and failure rules.
 
 - Choose one primary estimand/contrast before sample size: single-run joint success averaged by task is a candidate. Distinguish fixed-task from population inference. Treat the 36-run example as an engineering pilot; three tasks are three task clusters.
 - Independently audit C3/C4 clause-level information equivalence, including assumptions and trust boundaries. Record input lengths and preparation costs. C5 discovery is a different mechanism.
@@ -200,4 +200,4 @@ Do not implement live agent-session recovery as an initial requirement. An inter
 
 The owner rejected an offline/preinstalled-dependencies-only development policy as unnecessary complexity. Preserve ordinary Codex tools, dependency installation and documentation/network access under normal permissions. Vary security interventions, not routine development access. Record that configuration and keep it comparable across conditions. Generated-application/evaluator isolation and hidden-test separation remain intact.
 
-Consolidated scope is in [baseline pilot spec draft](BASELINE_PILOT_SPEC.md); remaining routine implementation details should be resolved simply during spec/ticket work rather than expanded into research decisions. The draft awaits review and does not authorize implementation.
+Consolidated scope was approved in the [baseline pilot spec](../archive/BASELINE_PILOT_SPEC.md) (now archived; see `PROJECT.md`). Routine implementation details should be resolved simply rather than expanded into research decisions.

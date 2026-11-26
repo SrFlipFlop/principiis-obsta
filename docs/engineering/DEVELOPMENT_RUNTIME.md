@@ -1,11 +1,11 @@
 # Development runtime and preview (#40)
 
-Implemented 2026-11-16 for development rehearsals under the [approved baseline
-specification](../BASELINE_PILOT_SPEC.md). Runtime preparation, runtime qualification,
+Implemented 2026-11-16 for development rehearsals; scope is in
+[PROJECT.md](../../PROJECT.md). Runtime preparation, runtime qualification,
 live Codex development and preview acceptance are separate evidence. The fake-Docker
 regression tests establish controller behavior; they do not qualify Docker containment,
-subscription access or an actual generated portal. A scoped live launch still needs
-the authorization required by issue #40.
+subscription access or an actual generated portal. Live Codex runs follow the hard
+rules in [AGENTS.md](../../AGENTS.md).
 
 `DevelopmentRuntime` uses the local Docker daemon at
 `unix:///var/run/docker.sock`. It never inherits a Docker context, API credentials,
@@ -242,13 +242,13 @@ Toolchain preparation succeeded locally on 2026-11-16 as
 initial nested workspace sandbox did not: default Docker policy rejected namespace
 creation; a diagnostic with the existing evaluation seccomp profile reached a mount
 operation denial. Those failures remain in the
-[implementation verification record](../reviews/MVP_1_IMPLEMENTATION.md).
-The subsequent [runtime fix verification](../reviews/MVP_1_RUNTIME_FIXES.md) records
+[implementation verification record](../archive/reviews/MVP_1_IMPLEMENTATION.md).
+The subsequent [runtime fix verification](../archive/reviews/MVP_1_RUNTIME_FIXES.md) records
 the corrected policy and real model-free sandbox/environment controls. These controls
 do not establish subscription access, actual generated-portal behavior or owner live
 acceptance.
 
-The owner's subsequent [authorized request-1 run](../reviews/ISSUE_40_LIVE_RUN_20261117.md)
+The owner's subsequent [request-1 run](../archive/reviews/ISSUE_40_LIVE_RUN_20261117.md)
 completed actual subscription development and a restricted generated-portal preview.
 On this Snap Docker host, `/tmp` was invisible to the daemon for bind mounting;
 `/var/tmp/principiis-live-runs` was actually tested and used. Choose a run root visible

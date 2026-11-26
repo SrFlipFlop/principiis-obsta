@@ -17,7 +17,7 @@ The aim is to publish reproducible experiments, a public repository, and a techn
 ## Start here
 
 1. Read [`docs/START_HERE.md`](START_HERE.md) for a handoff to Codex and the **no-implementation gate**.
-2. Read [`docs/RESEARCH_CHARTER.md`](RESEARCH_CHARTER.md) and [`docs/EXPERIMENT_PROTOCOL.md`](EXPERIMENT_PROTOCOL.md) for provisional hypotheses and evaluation principles.
+2. Read [`docs/RESEARCH_CHARTER.md`](../research/RESEARCH_CHARTER.md) and [`docs/EXPERIMENT_PROTOCOL.md`](../research/EXPERIMENT_PROTOCOL.md) for provisional hypotheses and evaluation principles.
 3. Ask Codex to spawn read-only research subagents as described in [`docs/RESEARCH_ASSIGNMENTS.md`](RESEARCH_ASSIGNMENTS.md).
 4. After research has been consolidated, the owner invokes Matt Pocock's **`/grill-with-docs`** to align objectives and terminology before any engineering starts. See [`docs/MATT_POCOCK_WORKFLOW.md`](MATT_POCOCK_WORKFLOW.md).
 

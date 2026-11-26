@@ -1,6 +1,6 @@
 # Remaining decisions and authoring work
 
-Owner completed `/grill-with-docs` and approved [baseline pilot specification](BASELINE_PILOT_SPEC.md) on 2026-11-14. Agreed vocabulary is in [GLOSSARY.md](../GLOSSARY.md); the five themes/backend assignments are in [application catalog](BENCHMARK_APPLICATIONS.md). Do not reopen accepted scope to settle routine implementation details.
+Owner completed `/grill-with-docs` and approved [baseline pilot specification](BASELINE_PILOT_SPEC.md) on 2026-11-14. Agreed vocabulary is in [GLOSSARY.md](../../GLOSSARY.md); the five themes/backend assignments are in [application catalog](../BENCHMARK_APPLICATIONS.md). Do not reopen accepted scope to settle routine implementation details.
 
 ## Agreed baseline scope
 
@@ -34,7 +34,7 @@ Issue #8's current `v3-draft1` first three requests completed model-free restric
 
 ## Later research phases
 
-- Intervention order and precise artifacts: generic guidance, skills, one-pass review/repair, threat-modeling specs and justified combinations. The owner selected a [custom plan–implement–verify skill direction](DEVELOPMENT_SKILL_CONDITION.md) for later study; its exact artifact, delivery and comparative run still require qualification and approval. Threat-model delivery and supplied versus inferred facts remain open.
+- Intervention order and precise artifacts: generic guidance, skills, one-pass review/repair, threat-modeling specs and justified combinations. The owner selected a [custom plan–implement–verify skill direction](../DEVELOPMENT_SKILL_CONDITION.md) for later study; its exact artifact, delivery and comparative run still require qualification and approval. Threat-model delivery and supplied versus inferred facts remain open.
 - Generic-review comparator and cost accounting for review studies; exact hook implementation validated before use.
 - Upfront-development comparison, repeated runs, additional harnesses/models, Java and other ecosystem coverage.
 - Fine-tuning requires a separately justified dataset, evaluation and resource plan; no training authorized now.

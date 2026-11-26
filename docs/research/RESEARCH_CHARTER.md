@@ -1,4 +1,4 @@
-> Owner approved [baseline pilot scope](BASELINE_PILOT_SPEC.md) on 2026-11-14 following `/grill-with-docs`. Candidate research questions/hypotheses below remain proposals for later phases; alignment history is retained for rationale.
+> Research record for the paper; not required reading. Current scope and decisions are in [PROJECT.md](../../PROJECT.md). Approval and authorization wording below is dated history, superseded by the four hard rules in [AGENTS.md](../../AGENTS.md).
 
 # Research charter — baseline scope aligned
 
@@ -48,7 +48,7 @@ These are candidate questions, **not pre-registered hypotheses or settled priori
 
 ## Research refresh — 2026-11-14
 
-The [four-track synthesis](research/05_SYNTHESIS.md) narrows the novelty options: prior work already tests security guidance, contextual requirements, risk selection and repair. No claim or arm is approved. A candidate contribution is separating identical security information from threat-model representation; a transparent replication is also valid. All four original intervention families remain in scope as research directions, with training/combined interventions deferred. Generalization must match the sampled task population, and a publishable null/negative result is an owner-level decision.
+The [four-track synthesis](05_SYNTHESIS.md) narrows the novelty options: prior work already tests security guidance, contextual requirements, risk selection and repair. No claim or arm is approved. A candidate contribution is separating identical security information from threat-model representation; a transparent replication is also valid. All four original intervention families remain in scope as research directions, with training/combined interventions deferred. Generalization must match the sampled task population, and a publishable null/negative result is an owner-level decision.
 
 ## Owner clarification during alignment — 2026-11-14
 
@@ -170,4 +170,4 @@ Resume completed sequences at the next step in a fresh session. Preserve interru
 
 ### Realistic agent workflow and simplicity
 
-Owner prioritizes ordinary developer-agent behavior and experimentation with security solutions, later harnesses/models. Do not force offline development or turn routine scaffolding details into research dimensions. Keep normal development tools/access, passive measurement and hidden evaluation boundaries. Consolidated scope is in the draft `docs/BASELINE_PILOT_SPEC.md`, pending review.
+Owner prioritizes ordinary developer-agent behavior and experimentation with security solutions, later harnesses/models. Do not force offline development or turn routine scaffolding details into research dimensions. Keep normal development tools/access, passive measurement and hidden evaluation boundaries. Consolidated scope was later approved and is now summarized in `PROJECT.md`.

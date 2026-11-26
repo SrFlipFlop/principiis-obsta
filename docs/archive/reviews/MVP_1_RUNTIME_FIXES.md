@@ -20,7 +20,7 @@ now permits the operations needed by the nested unprivileged workspace sandbox:
 `mount`, `umount2`, `pivot_root`, `openat2` and `faccessat2`, with `clone3` returning
 ENOSYS for the existing clone fallback. The inherited namespace rules come from the
 attributed Playwright profile. Attribution, Apache license and modifications are in
-[`fixtures/development/NOTICE`](../../fixtures/development/NOTICE).
+[`fixtures/development/NOTICE`](../../../fixtures/development/NOTICE).
 
 The outer container retains its nonroot operator UID, dropped capabilities,
 no-new-privileges, read-only root and resource limits. Preview does not receive the
@@ -67,7 +67,7 @@ partial workspace evidence retained.
 Development restore and preview require the same image. Legacy host evaluator and
 investigation entry points explicitly refuse image-bound links. No environment is
 silently excluded, rewritten or reinstalled during snapshot preservation. See the
-[snapshot contract](../engineering/SNAPSHOT_ENVIRONMENTS.md).
+[snapshot contract](../../engineering/SNAPSHOT_ENVIRONMENTS.md).
 
 ## Observed controls and retained failures
 

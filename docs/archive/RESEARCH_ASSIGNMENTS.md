@@ -28,4 +28,4 @@ After all reports: rank research gaps by potential contribution and effort; dist
 
 ## Execution record — 2026-11-14
 
-All four read-only tracks completed and were awaited before cross-track synthesis. The session supports three children plus the parent, so literature/benchmark/evaluation ran concurrently and harness research began at the first free slot. Supplied role instructions were passed through general-agent delegation; this tool exposes no named TOML profile selector. Separate source-backed reports are in [research index](research/README.md); no child edited shared files or produced task solutions.
+All four read-only tracks completed and were awaited before cross-track synthesis. The session supports three children plus the parent, so literature/benchmark/evaluation ran concurrently and harness research began at the first free slot. Supplied role instructions were passed through general-agent delegation; this tool exposes no named TOML profile selector. Separate source-backed reports are in [research index](../research/README.md); no child edited shared files or produced task solutions.
