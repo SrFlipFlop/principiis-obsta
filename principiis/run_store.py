@@ -24,7 +24,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import fcntl
 from functools import lru_cache
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -33,15 +32,12 @@ import shutil
 import subprocess
 import uuid
 
-from .jsonio import write_json
+from .benchmark import cumulative_request
+from .jsonio import digest, write_json
 from .snapshot import validate
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 MAX_ATTEMPTS = 4  # One attempt plus the three explicit retries.
-
-
-def digest(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def _name(value):
@@ -348,7 +344,7 @@ class RunStore:
 
     def request_text(self, through):
         """The cumulative request text a developer sees at step index `through` (0-based)."""
-        return '\n\n'.join((self.root / step['request']).read_text() for step in self.sequence['steps'][:through + 1])
+        return cumulative_request((self.root / step['request']).read_text() for step in self.sequence['steps'][:through + 1])
 
     def development_files(self):
         """Inventory of development evidence, excluding later evaluations."""

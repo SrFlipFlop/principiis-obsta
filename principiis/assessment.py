@@ -5,7 +5,6 @@ that pins its digest, and freezes it into the run. `RestrictedEvaluator` is the
 production evaluator for `principiis.pipeline.evaluate`: it runs the bound checks
 in separate restricted containers through `principiis.evaluation`.
 """
-import hashlib
 import json
 from pathlib import Path
 import re
@@ -13,6 +12,7 @@ import sys
 
 from . import benchmark
 from .execution import execute
+from .jsonio import digest
 
 # Declarations bound before the field existed ran the Node oracle adapter's entrypoint.
 NODE_ORACLE_COMMAND = ['node', '/oracle/check.cjs']
@@ -25,10 +25,6 @@ def evaluator_command(manifest):
             or not all(isinstance(arg, str) and arg and '\0' not in arg for arg in command)):
         raise ValueError('evaluator command must be a nonempty argv')
     return command
-
-
-def sha(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def _relative(directory, name):
@@ -57,7 +53,7 @@ def load_declaration(store, declaration_path, package):
     metadata = json.loads(metadata_path.read_text())
     sequence = store.sequence
     benchmark.check_sequence(metadata, sequence)
-    if sha(path) != metadata['private_bundle_sha256']:
+    if digest(path) != metadata['private_bundle_sha256']:
         raise ValueError('evaluator declaration differs from the qualified public release')
     manifest = json.loads(path.read_text())
     if (not isinstance(manifest, dict) or not isinstance(manifest.get('version'), str)
@@ -74,13 +70,13 @@ def load_declaration(store, declaration_path, package):
     if manifest.get('requests') != expected_requests:
         raise ValueError('evaluator requests differ from the frozen development requests')
     for name, expected in expected_requests.items():
-        if metadata.get('files', {}).get(name) != expected or sha(_relative(package, name)) != expected:
+        if metadata.get('files', {}).get(name) != expected or digest(_relative(package, name)) != expected:
             raise ValueError('qualified public request differs from the frozen development request')
     files = manifest.get('files')
     if not isinstance(files, dict) or not files:
         raise ValueError('complete evaluator dependency files are required')
     for name, expected in files.items():
-        if not isinstance(expected, str) or not re.fullmatch(r'[0-9a-f]{64}', expected) or sha(_relative(path.parent, name)) != expected:
+        if not isinstance(expected, str) or not re.fullmatch(r'[0-9a-f]{64}', expected) or digest(_relative(path.parent, name)) != expected:
             raise ValueError('evaluator dependency content changed: ' + str(name))
 
     def dependency(name):
@@ -126,8 +122,8 @@ def load_declaration(store, declaration_path, package):
         for receipt in receipts:
             dependency(receipt)
     return {'schema_version': 1, 'version': manifest['version'], 'manifest': str(path),
-            'manifest_sha256': sha(path), 'files': files, 'declaration': manifest,
-            'package_sha256': sha(metadata_path)}
+            'manifest_sha256': digest(path), 'files': files, 'declaration': manifest,
+            'package_sha256': digest(metadata_path)}
 
 
 def bind(store, declaration_path, package=None):
@@ -148,7 +144,7 @@ class RestrictedEvaluator:
 
     def _file(self, name):
         path = _relative(self.directory, name)
-        if sha(path) != self.binding['files'].get(name):
+        if digest(path) != self.binding['files'].get(name):
             raise ValueError('evaluator dependency content changed: ' + str(name))
         return path
 

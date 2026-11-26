@@ -37,9 +37,7 @@ class RealPortalRelease(unittest.TestCase):
     def test_modified_frozen_request_is_rejected_before_release(self):
         with temporary_directory() as temp:
             root = pathlib.Path(temp)
-            (root/'principiis').mkdir()
-            (root/'principiis/__init__.py').touch()
-            shutil.copyfile(ROOT/'principiis/benchmark.py',root/'principiis/benchmark.py')
+            shutil.copytree(ROOT/'principiis',root/'principiis',ignore=shutil.ignore_patterns('__pycache__'))
             package=root/'benchmarks/document-portal'
             shutil.copytree(ROOT/'benchmarks/document-portal',package)
             with (package/'requests/01.txt').open('a') as f:f.write('Unexpected changed requirement')

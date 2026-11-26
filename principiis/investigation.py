@@ -4,7 +4,6 @@ Untrusted application probes must use the restricted evaluation runner, never ho
 execution. Reviewer claims are retained unresolved.
 """
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -12,12 +11,9 @@ import time
 from types import SimpleNamespace
 
 from .development_runtime import DevelopmentRuntime, load_config
+from .jsonio import digest
 from .resource import token_usage
 from .snapshot import inventory, validate
-
-
-def digest(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def investigate(args):

@@ -6,18 +6,15 @@ evaluator declaration whose SHA-256 the package pins as `private_bundle_sha256`.
 `qualified_through` is the last step whose evaluator passed its controls (ADR 0002).
 """
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import re
 
+from .jsonio import digest, sha256
+
 BENCHMARKS = Path(__file__).resolve().parents[1] / 'benchmarks'
 _NAME = re.compile(r'[a-z][a-z0-9-]*')
 _DIGEST = re.compile(r'[0-9a-f]{64}')
-
-
-def sha(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def step_id(number):
@@ -26,6 +23,11 @@ def step_id(number):
 
 def request_name(number):
     return f'requests/{number:02}.txt'
+
+
+def cumulative_request(texts):
+    """The text a developer sees at a step: every request so far, oldest first."""
+    return '\n\n'.join(texts)
 
 
 def applications():
@@ -89,7 +91,7 @@ def load(application):
             raise ValueError('package manifest paths must be regular files within the package')
         if not isinstance(expected, str) or not _DIGEST.fullmatch(expected):
             raise ValueError('package manifest requires SHA-256 digests')
-        if sha(item) != expected:
+        if digest(item) != expected:
             raise ValueError('package content mismatch: ' + name)
         if name in requests and not item.read_text().strip():
             raise ValueError('package requests must be nonempty UTF-8 text')
@@ -105,7 +107,7 @@ def requests(application, metadata, count):
     for number in range(1, count + 1):
         name = request_name(number)
         content = (package / name).read_bytes()
-        if hashlib.sha256(content).hexdigest() != metadata['files'][name]:
+        if sha256(content) != metadata['files'][name]:
             raise ValueError('package content mismatch: ' + name)
         released.append((name, content))
     return released
@@ -114,7 +116,7 @@ def requests(application, metadata, count):
 def release(application, step, output):
     """Author tool: write the cumulative request text a developer sees at `step`."""
     metadata = load(application)
-    text = '\n\n'.join(content.decode() for _, content in requests(application, metadata, step))
+    text = cumulative_request(content.decode() for _, content in requests(application, metadata, step))
     Path(output).mkdir(parents=True, exist_ok=False)
     (Path(output) / 'request.txt').write_text(text)
 
