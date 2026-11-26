@@ -11,7 +11,8 @@ JSON themselves. Layout under `$PRINCIPIIS_RUNS_ROOT/<run>/`:
     development/manual.json                       development attempt journal
     development/steps/<step>/, development/attempts/<step>/<n>/   attempt evidence
     development/evaluations/<step>/allocations.json, <n>/     assessment ledger
-    previews/, runtime-cleanups/, investigation-cleanups/, investigations/
+    investigation-binding.json, investigations/<step>/<n>/   AI review attempts
+    previews/, runtime-cleanups/, investigation-cleanups/
 
 `RunStore.open` verifies the freeze manifest, lineage, evaluator binding, journal,
 retained snapshots and assessment ledgers once. Writes through the store keep
@@ -475,6 +476,13 @@ class RunStore:
             (self.root / 'evaluator-release.json').write_bytes(Path(release).read_bytes())
             write_json(target, binding)
         self.binding = binding
+
+    def bind_investigation(self, binding):
+        """Freeze the AI reviewer configuration on first use; later reviews must match it."""
+        path = self.root / 'investigation-binding.json'
+        if path.exists() and json.loads(path.read_text()) != binding:
+            raise ValueError('investigation configuration changed; use a new run')
+        write_json(path, binding)
 
     def add_record(self, kind, entry):
         """Index an auxiliary record before its work starts."""

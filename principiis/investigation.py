@@ -122,15 +122,12 @@ def review_checkpoint(store, checkpoint, *, mode, config, prompt, prompt_version
     binding = {'config_sha256': digest(config_path), 'prompt_sha256': digest(prompt_path),
                'runtime_config_sha256': digest(Path(settings['runtime_config'])),
                'prompt_version': prompt_version, 'mode': mode}
-    binding_path = store.root / 'investigation-binding.json'
-    if binding_path.exists() and json.loads(binding_path.read_text()) != binding:
-        raise ValueError('investigation configuration changed; use a new run')
-    binding_path.write_text(json.dumps(binding, indent=2) + '\n')
     previous = [Path(entry['artifact']).parent for entry in checkpoint['investigations']]
     if previous and not rerun:
         raise ValueError('investigation already retained; explicit --rerun required')
     if not previous and rerun:
         raise ValueError('no investigation to rerun')
+    store.bind_investigation(binding)
     output = store.root / 'investigations' / checkpoint['id'] / str(max((int(p.name) for p in previous), default=0) + 1)
     result = investigate(SimpleNamespace(snapshot=checkpoint['source'], primary=primary['artifact'],
                                          config=str(config_path), prompt=str(prompt_path),

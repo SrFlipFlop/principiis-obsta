@@ -79,6 +79,23 @@ class InvestigationCLI(unittest.TestCase):
                 self.assertNotIn('Traceback', result.stderr)
                 self.assertFalse(self.output.exists())
 
+    def test_rejected_rerun_does_not_freeze_the_reviewer_configuration(self):
+        from principiis.investigation import review_checkpoint
+        from support import create_run
+        developer_auth = self.base / 'developer-auth.json'
+        developer_auth.write_text('opaque')
+        runtime = json.loads(self.reviewer_runtime('{}').read_text())
+        store = create_run(self.base / 'run', runtime=dict(runtime, auth_file=str(developer_auth)))
+        checkpoint = {'id': 'step-01', 'completed': True, 'primary_assessment': {'artifact': str(self.primary)},
+                      'investigations': [], 'source': str(self.snapshot)}
+        for version in ('1', '2'):
+            config = self.base / f'config-{version}.json'
+            config.write_text(json.dumps({'version': version, 'runtime_config': str(self.base / 'reviewer-runtime.json'),
+                                          'evidence': {}}))
+            with self.subTest(version), self.assertRaisesRegex(ValueError, 'no investigation to rerun'):
+                review_checkpoint(store, checkpoint, mode='each-step', config=config, prompt=self.prompt,
+                                  prompt_version='1', rerun=True)
+
 
 if __name__ == '__main__':
     unittest.main()
