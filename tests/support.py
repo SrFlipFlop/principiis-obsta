@@ -73,3 +73,33 @@ def remove_evaluator_binding(root):
 def forge_evaluator_binding(root):
     """Write an evaluator binding the controller never made."""
     (Path(root) / EVALUATOR_BINDING[0]).write_text('{}')
+
+
+def frozen_input(root, name):
+    """A frozen run input such as `runtime.json`, for tests that change it after init."""
+    from principiis.run_store import RunStore
+    store = RunStore.open(root)
+    if name not in store.configuration['frozen_files']:
+        raise ValueError('not a frozen run input: ' + name)
+    return store.root / name
+
+
+def runtime_allocation(root, step='step-01'):
+    """Where `step`'s latest development attempt keeps its container allocation record."""
+    return development_result(root, step).parent / 'runtime.json'
+
+
+def retain_investigation(root, step, record):
+    """Write an AI review record where the reviewer would, without running one."""
+    import json
+    from principiis.run_store import RunStore
+    directory = RunStore.open(root).investigation_directory(step)
+    directory.mkdir(parents=True)
+    (directory / 'investigation.json').write_text(json.dumps(record))
+    return directory
+
+
+def development_files(root):
+    """The run store's digest inventory of development evidence, for immutability checks."""
+    from principiis.run_store import RunStore
+    return RunStore.open(root).development_files()
