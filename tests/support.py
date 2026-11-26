@@ -35,3 +35,41 @@ def create_run(root, *, steps=3, runtime=None, application='document-portal', re
                 'evaluator_binding': 'unbound', 'investigation': 'none', 'package_version': 'fixture',
                 'condition': sequence['condition']}
     return RunStore.create(root, dict(defaults, **configuration), inputs)
+
+
+# ---- run-store tamper helpers ---------------------------------------------
+# Tests outside the run store never parse run JSON. Tamper tests that must
+# corrupt a retained record find it here, through the store's own layout.
+
+def development_result(root, step='step-01'):
+    """The controller's result file for `step`'s latest development attempt."""
+    from principiis.run_store import RunStore
+    return RunStore.open(root).attempts_for(step)[-1].directory / 'result.json'
+
+
+def assessment_result(root, step='step-01', attempt=1):
+    """The controller's result file for one retained assessment of `step`."""
+    from principiis.run_store import RunStore
+    return Path(RunStore.open(root).assessments_for(step)[attempt - 1]['artifact'])
+
+
+def edit_record(path, **changes):
+    """Rewrite a retained JSON record with `changes`, bypassing the store's integrity checks."""
+    import json
+    path.write_text(json.dumps(dict(json.loads(path.read_text()), **changes)))
+
+
+EVALUATOR_BINDING = ('evaluator-binding.json', 'evaluator-manifest.json', 'evaluator-release.json')
+
+
+def remove_evaluator_binding(root):
+    """Return a bound run to its never-bound state: no binding and no assessments."""
+    import shutil
+    shutil.rmtree(Path(root) / 'development/evaluations')
+    for name in EVALUATOR_BINDING:
+        (Path(root) / name).unlink()
+
+
+def forge_evaluator_binding(root):
+    """Write an evaluator binding the controller never made."""
+    (Path(root) / EVALUATOR_BINDING[0]).write_text('{}')

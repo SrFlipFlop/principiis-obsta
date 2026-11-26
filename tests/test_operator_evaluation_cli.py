@@ -54,8 +54,8 @@ class OperatorEvaluationCLI(unittest.TestCase):
         attempts = []
         for number, role, outcome, duration in ((1, 'primary', 'candidate_failure', 2),
                                                  (2, 'rerun', 'evaluator_error', 3)):
-            directory = self.run / 'development/evaluations/step-01' / str(number)
-            directory.mkdir(parents=True)
+            # Reports render the status dictionary; these assessments need no files on disk.
+            path = self.run / 'development/evaluations/step-01' / str(number) / 'result.json'
             assessment = {
                 'run_id': 'engineering-control', 'session_id': f'assessment-{number}',
                 'checkpoint': 'step-01', 'attempt': number, 'role': role,
@@ -69,8 +69,6 @@ class OperatorEvaluationCLI(unittest.TestCase):
                                'memory': {'scope': 'engineering evaluator subprocess',
                                           'peak_sampled_rss_bytes': 123}, 'tokens': None},
             }
-            path = directory / 'result.json'
-            path.write_text(json.dumps(assessment))
             assessments.append(dict(assessment, artifact=str(path)))
             attempts.append({'run_id': assessment['run_id'], 'session_id': assessment['session_id'],
                              'checkpoint': 'step-01', 'attempt': number, 'outcome': outcome,
