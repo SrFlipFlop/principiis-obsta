@@ -403,6 +403,12 @@ class RunStore:
                 found.append(dict(record, checkpoint=step, artifact=str(path)))
         return found
 
+    def investigation_directory(self, step):
+        """Where `step`'s next AI review attempt goes; the reviewer creates it."""
+        numbers = [int(Path(entry['artifact']).parent.name) for entry in self.investigations()
+                   if entry['checkpoint'] == step]
+        return self.root / 'investigations' / step / str(max(numbers, default=0) + 1)
+
     def record(self, path):
         """A retained controller JSON record inside this run, such as an attempt result or a
         container allocation next to its evidence; None when it was never written."""

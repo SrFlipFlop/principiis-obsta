@@ -156,6 +156,15 @@ class RunStoreTest(unittest.TestCase):
         self.assertEqual([entry['status'] for entry in store.investigations()],
                          [f'attempt-{number}' for number in range(1, 12)])
 
+    def test_next_investigation_directory_follows_retained_attempts(self):
+        store = create(self.root)
+        first = store.investigation_directory('step-01')
+        self.assertEqual(first, self.root / 'investigations/step-01/1')
+        first.mkdir(parents=True)
+        (first / 'investigation.json').write_text('{"status": "evaluator_error"}')
+        self.assertEqual(store.investigation_directory('step-01'), self.root / 'investigations/step-01/2')
+        self.assertEqual(store.investigation_directory('step-02'), self.root / 'investigations/step-02/1')
+
 
 if __name__ == '__main__':
     unittest.main()
