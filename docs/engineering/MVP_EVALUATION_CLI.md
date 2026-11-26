@@ -2,12 +2,12 @@
 
 These commands compose the retained checkpoint controller. They implement operator
 boundaries; engineering controls do not complete live acceptance. The current portal
-release is qualified and owner-approved through request 3 only; #9 remains the
+release is qualified through request 3 only; #9 remains the
 ten-step prerequisite. Existing milestone-1 snapshots
 retain their development results and fingerprints. No primary assessment is inferred
 from a preview, candidate-owned test, source inspection or a historical control score.
 
-Bind a qualified, owner-approved evaluator release when creating the run:
+Bind a qualified evaluator release when creating the run:
 
 ```bash
 python3 -m principiis init --run portal-first --runs-root /operator/runs \
@@ -29,7 +29,7 @@ Older unbound runs remain readable but cannot gain an evaluator through the simp
 operator CLI; create a new run with the manifest at initialization.
 For a retained completed development run whose evaluator binding must remain frozen,
 `derive-evaluation` creates a **new evaluation-only run** with an independently
-qualified and approved evaluator binding. It copies and attests the source run's
+qualified evaluator binding. It copies and attests the source run's
 development journal, results, logs and snapshots, but imports no old primary scores.
 The source run is not changed and the derived run rejects `develop`:
 
@@ -53,8 +53,8 @@ Existing `evaluate`,
 `--rerun` and report commands use the derived run's separate canonical assessment
 ledger. Reports mark imported development measurements as copied evidence; they are
 not additional model usage. Comparing source and derived reports must not sum their
-development tokens as independent sessions. A new release still needs normal
-qualification and owner approval; this import does not qualify it.
+development tokens as independent sessions. A new release still needs its own control tests
+([ADR 0002](../adr/0002-control-tests-qualify-evaluator-versions.md)); this import does not qualify it.
 For a three-step run, the public `qualified_first_three` / `approved_first_three`
 declaration and private manifest must match all three frozen requests. The ten-step
 initialization gate still requires a separately qualified full package from #9 and its evaluator manifest.
