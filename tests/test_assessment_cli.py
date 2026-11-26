@@ -5,7 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-from support import FIXTURE_CONTRACT, NODE_ORACLE, create_run, temporary_directory
+from support import FIXTURE_CONTRACT, NODE_ORACLE, attempt_files, create_run, temporary_directory
 import fixture_runtime
 import unittest
 
@@ -77,6 +77,10 @@ class QualifiedAssessmentCLI(unittest.TestCase):
         return create_run(self.base / name, requests=list(requests),
                           runtime=runtime or {'image': self.image, 'docker': '/nonexistent/docker'}, **configuration)
 
+    def record(self, path):
+        """A retained run record named by operator output, read through the run store."""
+        return RunStore(self.root).record(path)
+
     def bind(self, name='run'):
         return bind(RunStore.open(self.base / name), self.path, package=self.package)
 
@@ -137,14 +141,14 @@ class QualifiedAssessmentCLI(unittest.TestCase):
     def test_declared_evaluator_command_runs_in_the_evaluator_image(self):
         self.declaration['evaluator_command'] = ['python3', '/checks/run.py']
         self.publish()
-        evidence = json.loads(Path(self.evaluated()['evidence']).read_text())
+        evidence = self.record(self.evaluated()['evidence'])
         self.assertEqual(evidence['evaluator_command'], ['python3', '/checks/run.py'])
 
     def test_declaration_predating_evaluator_command_keeps_node_oracle_and_binds_unchanged(self):
         # Declarations frozen before #68 also carried owner-review fields; they bind as before.
         self.declaration.update(qualification_status='qualified_first_three', owner_review='approved_first_three')
         self.publish()
-        evidence = json.loads(Path(self.evaluated()['evidence']).read_text())
+        evidence = self.record(self.evaluated()['evidence'])
         self.assertEqual(evidence['evaluator_command'], ['node', '/oracle/check.cjs'])
         binding = RunStore.open(self.root).binding
         self.assertEqual(binding['manifest_sha256'], self.digest(self.path))
@@ -204,7 +208,7 @@ else:
         docker.chmod(0o755)
         self.make_run({'image': self.image, 'docker': str(docker)})
         self.generate_checkpoint()
-        original = {path: path.read_bytes() for path in (self.root / 'development/steps/step-01').rglob('*') if path.is_file()}
+        original = attempt_files(self.root)
         self.bind()
         result = self.operator('evaluate', '--step', '1')['assessments'][0]
         self.assertEqual((result['outcome'], result['functional'], result['security']),
@@ -217,8 +221,7 @@ else:
         rerun = self.operator('evaluate', '--step', '1', '--rerun')
         self.assertEqual(rerun['assessments'][0], result)
         self.assertEqual(rerun['assessments'][1]['role'], 'rerun')
-        for path, contents in original.items():
-            self.assertEqual(path.read_bytes(), contents)
+        self.assertEqual(attempt_files(self.root), original)
 
     def test_candidate_virtual_environment_packages_are_retained_before_runtime_launch(self):
         self.make_run()
@@ -396,7 +399,7 @@ else: print('engineering lifecycle boundary')
             self.assertEqual((result['role'], result['outcome']), ('primary', 'evaluator_error'))
             self.assertFalse(result['cleanup_pending'])
             self.assertFalse(result['evaluation']['termination']['forced'])
-            restricted = json.loads(Path(result['evidence']).read_text())
+            restricted = self.record(result['evidence'])
             self.assertTrue(restricted['resources_removed'])
             self.assertIn('interrupt', restricted['error'])
         finally:
@@ -418,7 +421,7 @@ else: print('engineering lifecycle boundary')
         result = self.operator('evaluate', '--step', '1')['assessments'][0]
         self.assertTrue(result['cleanup_pending'])
         self.assertEqual(result['outcome'], 'evaluator_error')
-        allocation = json.loads(Path(result['runtime_allocation']).read_text())
+        allocation = self.record(result['runtime_allocation'])
         self.assertFalse(allocation['resources_removed'])
         self.assertEqual(result['containers'], allocation['containers'])
         self.assertEqual(result['cleanup_argv'], allocation['cleanup_argv'])

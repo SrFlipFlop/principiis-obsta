@@ -6,7 +6,7 @@ import sys
 import time
 import unittest
 
-from support import temporary_directory
+from support import attempt_files, temporary_directory
 import fixture_runtime
 from principiis import pipeline
 from principiis.run_store import RunStore, digest
@@ -113,7 +113,7 @@ class CheckpointPipeline(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'no failed attempt'):
             self.develop('step-01', retry=True)
         self.assertEqual(self.store.attempts, [])
-        self.assertFalse((self.store.root / 'development').exists())
+        self.assertEqual(RunStore.open(self.store.root).attempts, [])
 
     def test_failed_attempt_is_retained_and_retry_restarts_from_the_last_snapshot(self):
         self.develop('step-01')
@@ -249,13 +249,13 @@ class CheckpointPipeline(unittest.TestCase):
         self.assertIn('interrupted', interrupted.result['execution']['error'])
         self.assertGreater(interrupted.result['execution']['elapsed_seconds'], 0)
         self.assertIn('turn.completed', (interrupted.directory / 'executor.stdout').read_text())
-        retained = (interrupted.directory / 'result.json').read_bytes()
+        retained = attempt_files(store.root)
         agent.write_text("from pathlib import Path\nimport sys\n"
                          "assert Path('notes').read_text() == 'request 1'\n"
                          "assert not Path('partial').exists()\n"
                          "Path('notes').write_text(sys.stdin.read())\n")
         self.assertTrue(fixture_runtime.develop(store.root, 'step-02', config, retry=True)['completed'])
-        self.assertEqual((interrupted.directory / 'result.json').read_bytes(), retained)
+        self.assertLessEqual(retained.items(), attempt_files(store.root).items())
 
     def test_evaluation_requires_a_completed_checkpoint(self):
         self.bind(self.store)

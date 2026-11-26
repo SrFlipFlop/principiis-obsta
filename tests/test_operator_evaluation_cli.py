@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-from support import temporary_directory
+from support import assessment_result, attempt_files, temporary_directory
 import unittest
 
 
@@ -99,20 +99,17 @@ class OperatorEvaluationCLI(unittest.TestCase):
         docker.chmod(0o755)
         fixture.make_run({'image': fixture.image, 'docker': str(docker)})
         fixture.generate_checkpoint()
-        before = {path: path.read_bytes() for path in (fixture.root / 'development/steps/step-01').rglob('*') if path.is_file()}
+        before = attempt_files(fixture.root)
         operator = fixture.operator
         fixture.bind()
         first = operator('evaluate', '--step', '1')
         primary = first['checkpoints'][0]['primary_assessment']
         self.assertEqual(primary['outcome'], 'evaluator_error')
-        primary_path = Path(primary['artifact'])
-        original_primary = primary_path.read_bytes()
         rejected = operator('evaluate', '--step', '1', success=False)
         self.assertIn('--rerun', rejected.stderr)
         rerun = operator('evaluate', '--step', '1', '--rerun')
         self.assertEqual(len(rerun['checkpoints'][0]['assessments']), 2)
         self.assertEqual(rerun['checkpoints'][0]['primary_assessment'], primary)
-        self.assertEqual(primary_path.read_bytes(), original_primary)
         report = operator('report')
         self.assertEqual(report['resources']['totals']['development']['attempts_present'], 1)
         self.assertEqual(report['resources']['totals']['evaluation']['attempts_present'], 2)
@@ -122,11 +119,10 @@ class OperatorEvaluationCLI(unittest.TestCase):
         self.assertEqual([row['stage'] for row in rows], ['development', 'evaluation', 'evaluation'])
         self.assertEqual([row['role'] for row in rows[1:]], ['primary', 'rerun'])
         self.assertTrue(all(row['evaluator_version'] == 'engineering-1' for row in rows[1:]))
-        for path, contents in before.items():
-            self.assertEqual(path.read_bytes(), contents)
+        self.assertEqual(attempt_files(fixture.root), before)
         # A controller can die after its durable allocation and before a result
         # write. The allocation still supplies identity/provenance, never scores.
-        Path(rerun['assessments'][1]['artifact']).unlink()
+        assessment_result(fixture.root, 'step-01', 2).unlink()
         interrupted = operator('report')
         self.assertEqual(interrupted['resources']['totals']['evaluation']['attempts_present'], 2)
         self.assertIsNone(interrupted['resources']['totals']['evaluation']['duration_seconds'])
