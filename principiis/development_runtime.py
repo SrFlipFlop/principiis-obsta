@@ -11,7 +11,7 @@ import uuid
 
 from .codex import redact
 from .execution import execute
-from .resume import write_json
+from .jsonio import write_json
 
 
 CHECKOUT = Path(__file__).resolve().parents[1]

@@ -7,11 +7,17 @@ import unittest
 from unittest.mock import patch
 
 from principiis.snapshot import preserve, validate
-from principiis.__main__ import run
+from principiis.manual import run as run_checkpoint
 
 
 IMAGE = 'sha256:' + 'a' * 64
 BINDING = {'image': IMAGE, 'symlink_targets': ['/usr/local/bin/python3.12']}
+
+
+def run(task, runtime, output, *, visible_request, prior_snapshot=None):
+    return run_checkpoint(task, runtime, output, prior_snapshot=prior_snapshot, run_id='run',
+                          sequence={'id': 's', 'version': '1'}, visible_request=visible_request,
+                          attempt=1, result_metadata={})
 
 
 class SnapshotRuntimeLinks(unittest.TestCase):
@@ -111,10 +117,10 @@ class SnapshotRuntimeLinks(unittest.TestCase):
         task = self.root / 'task.json'
         task.write_text(json.dumps({'id': 'one', 'version': '1', 'condition': {'id': 'ordinary', 'version': '1'}}))
         first = self.root / 'first'
-        result = run(task, Runtime(), first, visible_request='first', defer_evaluation=True)
+        result = run(task, Runtime(), first, visible_request='first')
         self.assertTrue(result['completed'])
         second = self.root / 'second'
-        result = run(task, Runtime(), second, prior_snapshot=first / 'snapshot', visible_request='second', defer_evaluation=True)
+        result = run(task, Runtime(), second, prior_snapshot=first / 'snapshot', visible_request='second')
         self.assertTrue(result['completed'])
         self.assertEqual((second / 'snapshot/notes').read_text(), 'continued from retained environment')
 
@@ -123,29 +129,8 @@ class SnapshotRuntimeLinks(unittest.TestCase):
 
         rejected = self.root / 'different-image'
         with self.assertRaisesRegex(ValueError, 'runtime image'):
-            run(task, DifferentRuntime(), rejected, prior_snapshot=first / 'snapshot', visible_request='second', defer_evaluation=True)
+            run(task, DifferentRuntime(), rejected, prior_snapshot=first / 'snapshot', visible_request='second')
         self.assertFalse(rejected.exists())
-
-    def test_legacy_host_evaluation_cannot_consume_runtime_links(self):
-        class Runtime:
-            snapshot_binding = BINDING
-
-            def execute(adapter, workspace, request, stdout, stderr):
-                shutil.copytree(self.workspace, workspace, dirs_exist_ok=True, symlinks=True)
-                return {'exit_status': 0}
-
-        check = self.root / 'check.py'
-        marker = self.root / 'host-evaluator-ran'
-        check.write_text(f'from pathlib import Path\nPath({str(marker)!r}).touch()\n')
-        import sys
-        task = self.root / 'task.json'
-        task.write_text(json.dumps({'id': 'one', 'version': '1', 'condition': {'id': 'ordinary', 'version': '1'}, 'check': [sys.executable, str(check)]}))
-        output = self.root / 'host-evaluation'
-        result = run(task, Runtime(), output, visible_request='first')
-        self.assertTrue(result['completed'])
-        self.assertEqual(result['outcome'], 'evaluator_error')
-        self.assertIn('runtime image', result['evaluation']['error'])
-        self.assertFalse(marker.exists())
 
 
 if __name__ == '__main__':

@@ -12,7 +12,7 @@ import subprocess
 import time
 import uuid
 from .snapshot import validate, inventory
-from .resume import write_json
+from .jsonio import write_json
 from .development_runtime import docker_environment, docker_command
 
 

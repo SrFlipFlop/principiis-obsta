@@ -71,17 +71,6 @@ class ResourcesCLI(unittest.TestCase):
             status = Path('/proc') / str(pid) / 'stat'
             self.assertTrue(not status.exists() or status.read_text().split(') ')[1].startswith('Z'))
 
-    def test_real_fixture_retains_separate_development_and_evaluation_measurements(self):
-        with temporary_directory() as directory:
-            output = Path(directory) / 'attempt'
-            completed = subprocess.run([sys.executable, '-m', 'principiis', 'run', '--task', str(ROOT / 'fixtures/engineering/task.json'), '--executor', json.dumps([sys.executable, str(ROOT / 'fixtures/engineering/executor.py'), 'pass']), '--output', str(output)], cwd=ROOT, capture_output=True, text=True)
-            self.assertEqual(completed.returncode, 0, completed.stderr)
-            result = json.loads((output / 'result.json').read_text())
-            for stage in ('execution', 'evaluation'):
-                self.assertGreater(result[stage]['elapsed_seconds'], 0)
-                self.assertGreater(result[stage]['finished_at'], result[stage]['started_at'])
-                self.assertIn('peak_sampled_rss_bytes', result[stage]['memory'])
-
     def test_missing_usage_and_duration_do_not_disappear_from_totals(self):
         with temporary_directory() as directory:
             root = Path(directory)

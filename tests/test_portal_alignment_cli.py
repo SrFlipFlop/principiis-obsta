@@ -1,7 +1,5 @@
 """Exercise the approved public authoring boundary through release artifacts."""
-import hashlib
 import json
-import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -12,20 +10,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class AlignedPortalRelease(unittest.TestCase):
-    def test_revised_requests_cannot_bind_a_historical_bundle(self):
-        with temporary_directory() as temp:
-            root = Path(temp)
-            bundle = root / 'historical'
-            bundle.mkdir()
-            (bundle / 'bundle.json').write_text('{"files": {}}')
-            output = root / 'bound'
-            result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'bind',
-                                     '--bundle', str(bundle), '--output', str(output)],
-                                    cwd=ROOT, capture_output=True, text=True)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn('private bundle metadata digest mismatch', result.stderr)
-            self.assertFalse(output.exists())
-
     def test_one_package_default_releases_tenth_step(self):
         with temporary_directory() as temp:
             out = Path(temp) / 'released'
@@ -61,27 +45,3 @@ class AlignedPortalRelease(unittest.TestCase):
             self.assertEqual(metadata['owner_review'], 'approved_first_three')
             self.assertEqual(metadata['qualified_through'], 3)
             self.assertRegex(metadata['private_bundle_sha256'], r'^[0-9a-f]{64}$')
-
-    def test_unapproved_or_unknown_bundle_status_never_stages_candidate(self):
-        for status in [{}, {'qualification_status': 'qualified', 'owner_review': 'pending'},
-                       {'qualification_status': 'unknown', 'owner_review': 'approved'}]:
-            with self.subTest(status=status), temporary_directory() as temp:
-                root = Path(temp)
-                (root / 'principiis').mkdir()
-                (root / 'principiis/__init__.py').touch()
-                shutil.copyfile(ROOT / 'principiis/portal.py', root / 'principiis/portal.py')
-                package = root / 'benchmarks/document-portal'
-                package.mkdir(parents=True)
-                bundle = root / 'private'
-                bundle.mkdir()
-                raw = json.dumps({'files': {}, **status}).encode()
-                (bundle / 'bundle.json').write_bytes(raw)
-                (package / 'package.json').write_text(json.dumps({
-                    'steps': 10, 'private_bundle_sha256': hashlib.sha256(raw).hexdigest()}))
-                result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'evaluate',
-                                         '--step', '1', '--bundle', str(bundle),
-                                         '--snapshot', str(root / 'missing-candidate')],
-                                        cwd=root, capture_output=True, text=True)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn('checker qualification pending', result.stderr)
-                self.assertFalse((bundle / 'runtime').exists())

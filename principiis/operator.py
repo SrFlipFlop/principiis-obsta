@@ -17,7 +17,7 @@ from types import SimpleNamespace
 import uuid
 
 from . import resource
-from .resume import write_json
+from .jsonio import write_json
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 
@@ -510,8 +510,8 @@ def develop(args):
         launch = {'kind': 'manual_cli_invocation', 'command': 'develop',
                   'step': step, 'retry': args.retry}
         manual_develop(SimpleNamespace(sequence=str(root / 'sequence.json'), output=str(root / 'development'),
-                                       step=step, executor=None, codex_config=None, runtime_config=str(root / 'runtime.json'),
-                                       development_only=True, retry=args.retry, launch_authorization=launch))
+                                       step=step, runtime_config=str(root / 'runtime.json'),
+                                       retry=args.retry, launch_authorization=launch))
     return build_status(root, configuration)
 
 

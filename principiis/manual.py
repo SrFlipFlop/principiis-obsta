@@ -1,30 +1,16 @@
-"""Explicit single-checkpoint development and append-only primary evaluation."""
-import argparse
+"""Explicit single-checkpoint development in the isolated runtime."""
 import hashlib
 import json
 from pathlib import Path
 import shutil
-import signal
-import tempfile
 import uuid
 
-from .__main__ import run, evaluator_scores
-from .execution import execute
-from .resume import write_json
-from .snapshot import validate
-from .task import check_argv
-
-
-def sha(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+from .jsonio import write_json
+from .snapshot import preserve, validate
 
 
 def _text(value):
     return isinstance(value, str) and bool(value.strip()) and '\0' not in value
-
-
-def _argv(value):
-    return isinstance(value, list) and bool(value) and all(_text(arg) for arg in value)
 
 
 def _attempt_artifact(step, number):
@@ -84,8 +70,8 @@ def _journal_attempts(root, state, ids=None):
     return loaded, completed
 
 
-def _development_contract(source, development_only):
-    """Validate requests independently of evaluator readiness, before allocation."""
+def _development_contract(source):
+    """Validate requests before allocation; evaluators are bound separately."""
     manifest = json.loads(source.read_text())
     if not isinstance(manifest, dict):
         raise ValueError('sequence object required')
@@ -105,8 +91,6 @@ def _development_contract(source, development_only):
     for step in steps:
         if not _text(step.get('version')) or step.get('sequence_version') != manifest['version']:
             raise ValueError('invalid step version')
-        if ('check' in step and not _argv(step['check'])) or ('check' not in step and not development_only):
-            raise ValueError('valid evaluator command required unless --development-only is explicit')
         if not _text(step.get('request')):
             raise ValueError('request file path required')
         requests.append((source.parent / step['request']).read_text())
@@ -114,43 +98,23 @@ def _development_contract(source, development_only):
 
 
 def develop(args):
+    """Run one development-only checkpoint; called by the operator `develop` command."""
+    from .development_runtime import DevelopmentRuntime
     source = Path(args.sequence).resolve()
-    development_only = getattr(args, 'development_only', False)
-    manifest, requests = _development_contract(source, development_only)
+    manifest, requests = _development_contract(source)
     steps = manifest['steps']
     ids = [s['id'] for s in steps]
     if args.step not in ids:
         raise ValueError('unknown checkpoint')
     root = Path(args.output).resolve()
-    runtime_config = getattr(args, 'runtime_config', None)
-    codex_config = getattr(args, 'codex_config', None)
-    fixture_executor = getattr(args, 'executor', None)
-    if sum(value is not None for value in (runtime_config, codex_config, fixture_executor)) != 1:
-        raise ValueError('select exactly one runtime, Codex configuration or fixture executor')
-    if runtime_config:
-        from .development_runtime import DevelopmentRuntime
-        executor = DevelopmentRuntime(runtime_config, root, source.parent)
-        configuration = {'config': executor.config, 'version': executor.version}
-    elif codex_config:
-        from .codex import Codex
-        executor = Codex(codex_config, root, source.parent)
-        configuration = {'config': executor.config, 'version': executor.version}
-    else:
-        executor = json.loads(fixture_executor)
-        if not _argv(executor):
-            raise ValueError('fixture executor must be a nonempty argv array')
-        configuration = executor
-    if development_only:
-        frozen_manifest = dict(manifest, steps=[{key: value for key, value in step.items() if key != 'check'}
-                                               for step in steps])
-        contract = [frozen_manifest, requests, configuration, {'run_mode': 'development-rehearsal'}]
-    else:
-        check_files = {str((source.parent / a).resolve()): sha(source.parent / a)
-                       for step in steps for a in step['check'] if (source.parent / a).is_file()}
-        contract = [manifest, requests, configuration, check_files]
+    executor = DevelopmentRuntime(args.runtime_config, root, source.parent)
+    configuration = {'config': executor.config, 'version': executor.version}
+    # Evaluator commands never enter the development fingerprint or task records.
+    frozen_manifest = dict(manifest, steps=[{key: value for key, value in step.items() if key != 'check'}
+                                           for step in steps])
+    contract = [frozen_manifest, requests, configuration, {'run_mode': 'development-rehearsal'}]
     fingerprint = hashlib.sha256(json.dumps(contract, sort_keys=True).encode()).hexdigest()
-    run_mode = 'development-rehearsal' if development_only else 'baseline'
-    binding = 'unbound' if development_only else 'task-contract'
+    run_mode, binding = 'development-rehearsal', 'unbound'
     journal = root / 'manual.json'
     if journal.exists():
         state = json.loads(journal.read_text())
@@ -181,10 +145,7 @@ def develop(args):
     artifact = _attempt_artifact(args.step, number)
     task = dict(step, condition=manifest['condition'], run_mode=run_mode, evaluator_binding=binding)
     task['request'] = str((source.parent / step['request']).resolve())
-    if development_only:
-        task.pop('check', None)
-    else:
-        task['check'] = check_argv(source.parent, step['check'])
+    task.pop('check', None)
     if not journal.exists():
         root.mkdir(parents=True, exist_ok=False)
     metadata = root / 'tasks'
@@ -204,131 +165,63 @@ def develop(args):
     result = run(task_path, executor, root / artifact,
         prior_snapshot=completed.get(ids[index-1]) if index else None,
         run_id=state['run_id'], sequence={'id': manifest['id'], 'version': manifest['version']},
-        visible_request='\n\n'.join(requests[:index+1]), attempt=number, defer_evaluation=True,
-        result_metadata=metadata)
+        visible_request='\n\n'.join(requests[:index+1]), attempt=number, result_metadata=metadata)
     allocation.update(completed=result['completed'], outcome=result['outcome'])
     write_json(journal, state)
     return result
 
 
-def evaluate(args):
-    root = Path(args.output).resolve()
-    state = json.loads((root / 'manual.json').read_text())
-    if not isinstance(state, dict):
-        raise ValueError('invalid manual journal')
-    if state.get('evaluator_binding') == 'unbound':
-        raise ValueError('development rehearsal evaluator is unbound; explicit versioned binding is required before evaluation')
-    attempts, _ = _journal_attempts(root, state)
-    completed = [directory for record, directory, result in attempts
-                 if record['id'] == args.step and result and result.get('completed') is True]
-    if not completed:
-        raise ValueError('completed developer checkpoint required')
-    checkpoint = completed[-1]
-    snapshot = checkpoint / 'snapshot'
-    task_path = root / 'tasks' / (args.step + '.json')
-    task = json.loads(task_path.read_text())
-    check = task['check']
-    if not args.evaluator_version:
-        raise ValueError('nonempty evaluator version required')
-    declaration = Path(args.evaluator_manifest).resolve()
-    bundle = json.loads(declaration.read_text())
-    if bundle.get('version') != args.evaluator_version or bundle.get('complete') is not True or not bundle.get('files'):
-        raise ValueError('complete versioned evaluator dependency manifest required')
-    files = {}
-    for relative, digest in bundle['files'].items():
-        path = (declaration.parent / relative).resolve()
-        if Path(relative).is_absolute() or not path.is_relative_to(declaration.parent):
-            raise ValueError('evaluator manifest paths must stay within its directory')
-        if sha(path) != digest:
-            raise ValueError('evaluator manifest file content changed; select a new evaluator version')
-        files[str(path)] = digest
-    if any(str(Path(a).resolve()) not in files for a in check[1:] if Path(a).is_file()):
-        raise ValueError('evaluator command file absent from dependency manifest')
-    provenance = {'version': args.evaluator_version, 'argv': check, 'files': files,
-                  'manifest_sha256': sha(declaration),
-                  'executable_sha256': sha(check[0]) if Path(check[0]).is_file() else None}
-    parent = root / 'evaluations' / args.step
-    parent.mkdir(parents=True, exist_ok=True)
-    ledger_path = parent / 'allocations.json'
-    ledger = json.loads(ledger_path.read_text()) if ledger_path.exists() else []
-    # A legacy orphan has no recoverable identity or provenance. Preserve that fact.
-    known = {entry['attempt'] for entry in ledger}
-    for directory in sorted(parent.iterdir()):
-        if directory.is_dir() and directory.name.isdecimal() and int(directory.name) not in known:
-            existing = directory / 'result.json'
-            if existing.exists():
-                ledger.append(json.loads(existing.read_text()))
-            else:
-                ledger.append({'schema_version': 1, 'attempt': int(directory.name),
-                               'role': 'primary' if directory.name == '1' else 'rerun',
-                               'stage': 'independent_evaluation', 'checkpoint': args.step,
-                               'run_id': None, 'session_id': None, 'developer_result_sha256': None,
-                               'allocation_provenance': 'unknown_legacy',
-                               'provenance': {'version': None}, 'outcome': 'evaluator_error',
-                               'functional': 'unknown', 'security': 'unknown', 'evaluation': {},
-                               'error': 'interrupted legacy allocation; identity and provenance unknown'})
-    for entry in ledger:
-        directory = parent / str(entry['attempt'])
-        directory.mkdir(exist_ok=True)
-        if not (directory/'result.json').exists():
-            write_json(directory/'result.json', dict(entry, error=entry.get('error', 'controller interrupted after allocation')))
-    write_json(ledger_path, ledger)
-    for historical in parent.glob('*/result.json'):
-        previous = json.loads(historical.read_text())
-        if previous['provenance']['version'] == args.evaluator_version and previous['provenance'] != provenance:
-            raise ValueError('evaluator content changed; select a new evaluator version')
-    number = max((e['attempt'] for e in ledger), default=0) + 1
-    output = parent / str(number)
-    result = {'schema_version': 1, 'run_id': state['run_id'], 'session_id': str(uuid.uuid4()),
-              'stage': 'independent_evaluation', 'role': 'primary' if number == 1 else 'rerun',
-              'attempt': number, 'checkpoint': args.step, 'provenance': provenance,
-              'developer_result_sha256': sha(checkpoint/'result.json'),
-              'snapshot': str(snapshot), 'snapshot_manifest_sha256': sha(snapshot.with_suffix('.json')) if snapshot.with_suffix('.json').exists() else None, 'outcome': 'evaluator_error',
-              'functional': 'unknown', 'security': 'unknown', 'evaluation': {}}
-    ledger.append(result)
-    write_json(ledger_path, ledger)
-    output.mkdir(exist_ok=False)
-    write_json(output/'result.json', result)
+def run(task_path, executor, output, *, prior_snapshot, run_id, sequence, visible_request, attempt, result_metadata):
+    """Execute one fresh developer session and preserve its snapshot; evaluation is separate."""
+    task = json.loads(Path(task_path).read_text())
+    snapshot_binding = getattr(executor, 'snapshot_binding', None)
+    if prior_snapshot is not None:
+        validate(prior_snapshot, runtime_image=snapshot_binding['image'] if snapshot_binding else None)
+    output = Path(output).resolve()
+    output.mkdir(parents=True, exist_ok=False)
+    workspace = output / 'workspace'
+    if prior_snapshot is None:
+        workspace.mkdir()
+    else:
+        shutil.copytree(prior_snapshot, workspace, symlinks=True)
+    (output / 'request.txt').write_text(visible_request)
+    result = {
+        'schema_version': 1, 'run_id': run_id,
+        'session_id': str(uuid.uuid4()), 'sequence': sequence,
+        'task': {'id': task['id'], 'version': task['version']},
+        'condition': task['condition'], 'attempt': attempt, 'checkpoint': task['id'],
+        'outcome': 'incomplete', 'functional': 'unknown', 'security': 'unknown',
+        'execution': {}, 'evaluation': {}, 'completed': False,
+    }
+    if set(result_metadata).intersection(result):
+        raise ValueError('result metadata cannot replace controller result fields')
+    result.update(result_metadata)
+    save_result(output, result)
     try:
-        validate(snapshot, runtime_image=None)
-        with tempfile.TemporaryDirectory(prefix='principiis-primary-') as d:
-            candidate = Path(d)/'candidate'
-            shutil.copytree(snapshot, candidate, symlinks=True)
-            with (output/'evaluator.stdout').open('w') as stdout, (output/'evaluator.stderr').open('w') as stderr:
-                result['evaluation'] = execute(check, candidate, '', stdout, stderr)
-        if result['evaluation']['exit_status'] != 0:
-            raise ValueError('predefined evaluator failed')
-        result.update(evaluator_scores(json.loads((output/'evaluator.stdout').read_text())))
-    except (OSError, ValueError, TypeError, KeyboardInterrupt) as error:
-        result['error'] = str(error) or 'controller interrupted'
-    finally:
-        write_json(output/'result.json', result)
-
-
-def main():
-    signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
-    parser = argparse.ArgumentParser(description=__doc__)
-    sub = parser.add_subparsers(dest='command', required=True)
-    dev = sub.add_parser('develop')
-    dev.add_argument('--sequence', required=True)
-    selection = dev.add_mutually_exclusive_group(required=True)
-    selection.add_argument('--executor')
-    selection.add_argument('--codex-config')
-    selection.add_argument('--runtime-config', help='Reviewed isolated subscription runtime configuration')
-    dev.add_argument('--development-only', action='store_true',
-                     help='Record an unbound development rehearsal without requiring evaluator commands')
-    dev.add_argument('--retry', action='store_true')
-    ev = sub.add_parser('evaluate')
-    ev.add_argument('--evaluator-version', required=True)
-    ev.add_argument('--evaluator-manifest', required=True)
-    for command in (dev, ev):
-        command.add_argument('--output', required=True)
-        command.add_argument('--step', required=True)
-    args = parser.parse_args()
+        with (output / 'executor.stdout').open('w') as stdout, (output / 'executor.stderr').open('w') as stderr:
+            result['execution'] = executor.execute(workspace, visible_request, stdout, stderr)
+    except (OSError, KeyboardInterrupt) as error:
+        result['execution'] = {'exit_status': None, 'error': str(error) or 'controller interrupted'}
+    if result['execution']['exit_status'] != 0:
+        save_result(output, result)
+        return result
     try:
-        (develop if args.command == 'develop' else evaluate)(args)
-    except (OSError, ValueError, KeyError) as error:
-        parser.error(str(error))
+        preserve(workspace, output / 'snapshot', runtime_binding=snapshot_binding)
+    except (OSError, ValueError) as error:
+        result['snapshot_error'] = str(error)
+        save_result(output, result)
+        return result
+    result.update(outcome='pending_evaluation', completed=True)
+    save_result(output, result)
+    return result
 
-if __name__ == '__main__':
-    main()
+
+def save_result(output, result):
+    write_json(output / 'result.json', result)
+    (output / 'report.md').write_text(
+        f"Run {result['run_id']}\n\n"
+        f"Task: {result['task']['id']} @ {result['task']['version']}\n\n"
+        f"Condition: {result['condition']['id']} @ {result['condition']['version']}\n\n"
+        f"Attempt: {result['attempt']}; checkpoint: {result['checkpoint']}\n\n"
+        f"Outcome: {result['outcome']}\n\n"
+        f"Functional: {result['functional']}; security: {result['security']}\n")
