@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
+from support import attempt_files, temporary_directory
 import textwrap
 import unittest
 
@@ -16,7 +16,7 @@ IMAGE = 'sha256:' + 'b' * 64
 
 class OperatorDevelopmentCLI(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
+        self.temporary = temporary_directory()
         self.addCleanup(self.temporary.cleanup)
         self.base = Path(self.temporary.name)
         self.runs = self.base / 'runs'
@@ -30,6 +30,8 @@ class OperatorDevelopmentCLI(unittest.TestCase):
         docker.write_text(textwrap.dedent('''\
             #!/usr/bin/env python3
             import json,pathlib,sys
+            sys.path.insert(0,@ROOT@)
+            from principiis.run_store import RunStore
             base=pathlib.Path(@BASE@)
             args=sys.argv[1:]
             assert args[:2] == ['--host','unix:///var/run/docker.sock'], args
@@ -64,25 +66,21 @@ class OperatorDevelopmentCLI(unittest.TestCase):
             count_path.write_text(str(count))
             step=min(count,3)
             assert delivered == '\\n\\n'.join(expected[:step]), 'incorrect incremental disclosure'
-            assert 'manual_cli_invocation' not in delivered, 'operator record leaked to developer prompt'
             assert '--ephemeral' in args and '--ignore-rules' in args and '--ignore-user-config' in args
             if count == 1:
                 assert list(workspace.iterdir()) == [], 'first project is not empty'
             else:
                 assert (workspace/'notes').read_text() == '\\n\\n'.join(expected[:step-1]), 'prior completed notes missing'
                 assert not (workspace/'partial').exists(), 'partial edits entered retry'
-            # This executable is a trusted host-side fixture, so it can inspect
-            # controller evidence. Neither path is included among container mounts.
-            initial=json.loads((workspace.parent/'result.json').read_text())
-            journal=json.loads((base/'runs/portal-integration/development/manual.json').read_text())
-            invocation=initial['launch_authorization']
-            assert invocation == journal['attempts'][-1]['launch_authorization'], 'launch record not durable before process'
+            # This executable is a trusted host-side fixture, so it can inspect the
+            # initial attempt evidence durable before launch. It is not among the mounts.
+            attempt=RunStore.open(@RUN@).attempts[-1]
+            assert attempt.directory/'workspace' == workspace.resolve(), workspace
+            initial=attempt.result
             assert initial['execution'] == {} and initial['completed'] is False
-            assert invocation['step'] == 'step-%02d'%step
-            assert invocation['kind'] == 'manual_cli_invocation'
+            assert initial['checkpoint'] == 'step-%02d'%step
             with (base/'deliveries.jsonl').open('a') as stream:
-                stream.write(json.dumps({'count':count,'request':delivered,'initial_session':initial['session_id'],
-                                         'invocation_kind':invocation['kind']})+'\\n')
+                stream.write(json.dumps({'count':count,'request':delivered,'initial_session':initial['session_id']})+'\\n')
             event={'type':'turn.completed','id':'fixture-turn-%s'%count,
                    'usage':{'input_tokens':count*10,'cached_input_tokens':2,
                             'output_tokens':5,'reasoning_output_tokens':1}}
@@ -98,7 +96,8 @@ class OperatorDevelopmentCLI(unittest.TestCase):
             (workspace/'result.json').write_text(json.dumps({'run_id':'injected','session_id':'injected',
                 'checkpoint':'injected','attempt':999,'outcome':'joint_pass',
                 'execution':{'elapsed_seconds':999999}}))
-            ''').replace('@BASE@', repr(str(self.base))).replace('@IMAGE@', repr(IMAGE)))
+            ''').replace('@BASE@', repr(str(self.base)))
+                         .replace('@ROOT@', repr(str(ROOT))).replace('@RUN@', repr(str(self.run))).replace('@IMAGE@', repr(IMAGE)))
         docker.chmod(0o755)
         self.runtime = self.base / 'runtime.json'
         self.runtime.write_text(json.dumps({'version': '1', 'docker': str(docker), 'image': IMAGE,
@@ -121,6 +120,10 @@ class OperatorDevelopmentCLI(unittest.TestCase):
     def initialize(self):
         return self.cli('init', '--application', 'document-portal', '--runtime-config', str(self.runtime))
 
+    def store(self):
+        from principiis.run_store import RunStore
+        return RunStore.open(self.run)
+
     def development_count(self):
         path = self.base / 'development-count'
         return int(path.read_text()) if path.exists() else 0
@@ -140,20 +143,16 @@ class OperatorDevelopmentCLI(unittest.TestCase):
         first_status = json.loads(self.cli('develop', '--step', '1').stdout)
         self.assertEqual(self.development_count(), 1)
         self.assertEqual(first_status['next_action']['step'], 'step-02')
-        first = self.run / 'development/steps/step-01'
-        first_result_bytes = (first / 'result.json').read_bytes()
-        first_result = json.loads(first_result_bytes)
-        self.assertTrue(first_result['completed'])
-        self.assertEqual(first_result['evaluator_binding'], 'unbound')
+        first_result = self.store().completed('step-01').result
         self.assertEqual(first_result['evaluation'], {})
-        self.assertFalse((self.run / 'development/steps/step-02').exists())
+        self.assertEqual(self.store().attempts_for('step-02'), [])
+        first_files = attempt_files(self.run)
 
         second_status = json.loads(self.cli('develop', '--step', '2').stdout)
         self.assertEqual(self.development_count(), 2)
         self.assertEqual(second_status['next_action']['step'], 'step-03')
-        second = self.run / 'development/steps/step-02'
-        second_result_bytes = (second / 'result.json').read_bytes()
-        second_result = json.loads(second_result_bytes)
+        second_result = self.store().completed('step-02').result
+        second_files = attempt_files(self.run)
         self.assertNotEqual(first_result['session_id'], second_result['session_id'])
         self.assertEqual(first_result['run_id'], second_result['run_id'])
         replay = self.cli('develop', '--step', '1', success=False)
@@ -163,10 +162,10 @@ class OperatorDevelopmentCLI(unittest.TestCase):
         incomplete_status = json.loads(self.cli('develop', '--step', '3').stdout)
         self.assertEqual(self.development_count(), 3)
         self.assertTrue(incomplete_status['next_action']['retry'])
-        incomplete = self.run / 'development/steps/step-03'
-        incomplete_bytes = (incomplete / 'result.json').read_bytes()
-        self.assertFalse(json.loads(incomplete_bytes)['completed'])
-        self.assertTrue((incomplete / 'workspace/partial').is_file())
+        incomplete = self.store().attempts_for('step-03')[0]
+        self.assertFalse(incomplete.completed)
+        self.assertTrue((incomplete.directory / 'workspace/partial').is_file())
+        incomplete_files = attempt_files(self.run)
         implicit_retry = self.cli('develop', '--step', '3', success=False)
         self.assertIn('explicit --retry', implicit_retry.stderr)
         self.assertEqual(self.development_count(), 3)
@@ -174,22 +173,19 @@ class OperatorDevelopmentCLI(unittest.TestCase):
         completed_status = json.loads(self.cli('develop', '--step', '3', '--retry').stdout)
         self.assertEqual(self.development_count(), 4)
         self.assertEqual(completed_status['next_action']['action'], 'development-complete')
-        retried = self.run / 'development/attempts/step-03/2'
-        retried_result = json.loads((retried / 'result.json').read_text())
-        self.assertTrue(retried_result['completed'])
-        self.assertNotEqual(json.loads(incomplete_bytes)['session_id'], retried_result['session_id'])
-        self.assertFalse((retried / 'workspace/partial').exists())
-        self.assertEqual((incomplete / 'result.json').read_bytes(), incomplete_bytes)
-        self.assertEqual((first / 'result.json').read_bytes(), first_result_bytes)
-        self.assertEqual((second / 'result.json').read_bytes(), second_result_bytes)
-        self.assertFalse((self.run / 'development/evaluations').exists())
-        self.assertFalse((self.run / 'previews').exists())
+        retried = self.store().completed('step-03')
+        self.assertEqual(retried.number, 2)
+        self.assertNotEqual(incomplete.result['session_id'], retried.result['session_id'])
+        self.assertFalse((retried.directory / 'workspace/partial').exists())
+        final_files = attempt_files(self.run)
+        for earlier in (first_files, second_files, incomplete_files):
+            self.assertLessEqual(earlier.items(), final_files.items())
+        self.assertEqual(completed_status['assessments'], [])
+        self.assertEqual(completed_status['previews'], [])
         self.assertFalse(any(self.run.rglob('evaluator.stdout')))
 
         deliveries = [json.loads(line) for line in (self.base / 'deliveries.jsonl').read_text().splitlines()]
         self.assertEqual(len({item['initial_session'] for item in deliveries}), 4)
-        self.assertTrue(all(item['invocation_kind'] == 'manual_cli_invocation' for item in deliveries))
-        self.assertTrue(all('manual_cli_invocation' not in item['request'] for item in deliveries))
 
         report_json = json.loads(self.cli('report', '--format', 'json').stdout)
         report_csv = self.cli('report', '--format', 'csv').stdout
@@ -211,7 +207,7 @@ class OperatorDevelopmentCLI(unittest.TestCase):
         self.assertEqual(totals['evaluation']['attempts_present'], 0)
         self.assertTrue(all(row['actual_spending'] == 'unknown' and row['hosted_model_memory'] == 'unknown'
                             for row in rows))
-        self.assertIn(str(retried / 'snapshot'), report_markdown)
+        self.assertIn(str(retried.snapshot), report_markdown)
         self.assertIn('unknown', report_markdown)
         self.assertEqual(json.loads((self.run / 'reports/development.json').read_text()), report_json)
         self.assertEqual((self.run / 'reports/development.csv').read_text(), report_csv)
@@ -223,8 +219,8 @@ class OperatorDevelopmentCLI(unittest.TestCase):
         for selection, extra in (('2', ()), ('4', ()), ('1', ('--retry',))):
             with self.subTest(selection=selection, extra=extra):
                 self.cli('develop', '--step', selection, *extra, success=False)
-                self.assertFalse((self.run / 'development').exists())
+                self.assertEqual(self.store().attempts, [])
                 self.assertEqual(self.development_count(), 0)
         self.cli('develop', '--step', '1', '--authorization', 'unused', success=False)
-        self.assertFalse((self.run / 'development').exists())
+        self.assertEqual(self.store().attempts, [])
         self.assertEqual(self.development_count(), 0)

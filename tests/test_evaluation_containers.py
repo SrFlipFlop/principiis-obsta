@@ -12,6 +12,8 @@ import sys
 import unittest
 import uuid
 
+from support import FIXTURE_CONTRACT, NODE_ORACLE
+
 ROOT = Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(os.getenv('PO_EVALUATION_ROOT'), 'requires prepared Docker/browser environment')
@@ -27,7 +29,7 @@ class BrowserBackendQualification(unittest.TestCase):
         controls = ['safe', 'ui-only', 'reject-all', 'alternative', 'safe', 'ui-only', 'safe']
         for index, control in enumerate(controls):
             output = directory / str(index)
-            command = [sys.executable, '-m', 'principiis.evaluation', '--snapshot', str(snapshot), '--output', str(output), '--app-image', os.environ['PO_APP_IMAGE'], '--evaluator-image', os.environ['PO_EVALUATOR_IMAGE'], '--seccomp', str(seccomp), '--control', control, '--version', 'qualification-2' if index == 6 else 'qualification-1']
+            command = [sys.executable, '-m', 'principiis.evaluation', *FIXTURE_CONTRACT, *NODE_ORACLE, '--snapshot', str(snapshot), '--output', str(output), '--app-image', os.environ['PO_APP_IMAGE'], '--evaluator-image', os.environ['PO_EVALUATOR_IMAGE'], '--seccomp', str(seccomp), '--control', control, '--version', 'qualification-2' if index == 6 else 'qualification-1']
             process = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=180)
             self.assertEqual(process.returncode, 0, process.stderr)
             result = json.loads((output / 'assessment.json').read_text())

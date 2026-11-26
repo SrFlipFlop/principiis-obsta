@@ -1,6 +1,4 @@
 """Compare compatible run evidence without treating checkpoints as independent trials."""
-import csv
-import io
 
 
 def compare_reports(reports):
@@ -50,28 +48,3 @@ def compare_reports(reports):
             'complete': all(all(row['assessment'] is not None for row in run['checkpoints']) for run in rows),
             'runs': rows,
             'interpretation': 'Checkpoints within an application are dependent; these counts are descriptive, not independent samples.'}
-
-
-def markdown(result):
-    lines = [f"Comparison: {result['application']} @ {result['package_version']}", '',
-             '| Run | Condition | Joint pass | Functional fail | Security fail | Unassessable | Supplemental verified | Unresolved claims |',
-             '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |']
-    for row in result['runs']:
-        condition = row['condition'] or {}
-        lines.append(f"| {row['run']} | {condition.get('id', 'unknown')} | {row['joint_pass_checkpoints']} | "
-                     f"{row['functional_fail_checkpoints']} | {row['security_fail_checkpoints']} | "
-                     f"{row['unassessable_checkpoints']} | {row['supplemental_verified_root_causes']} | "
-                     f"{row['supplemental_unresolved_claims']} |")
-    lines.extend(['', result['interpretation'],
-                  'Complete primary assessments: ' + ('yes' if result['complete'] else 'no')])
-    return '\n'.join(lines) + '\n'
-
-
-def csv_report(result):
-    stream = io.StringIO()
-    writer = csv.DictWriter(stream, fieldnames=('run', 'condition', 'step', 'functional', 'security', 'joint_pass', 'assessment'))
-    writer.writeheader()
-    for run in result['runs']:
-        for checkpoint in run['checkpoints']:
-            writer.writerow({'run': run['run'], 'condition': (run['condition'] or {}).get('id'), **checkpoint})
-    return stream.getvalue()

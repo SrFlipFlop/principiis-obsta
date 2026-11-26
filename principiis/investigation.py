@@ -1,35 +1,19 @@
-"""Independent supplemental investigation; trusted controller commands only.
+"""Independent AI security review in the isolated reviewer runtime.
 
 Untrusted application probes must use the restricted evaluation runner, never host
-execution. This orchestration subprocess boundary is not an OS sandbox.
+execution. Reviewer claims are retained unresolved.
 """
 import argparse
-from contextlib import nullcontext
-import hashlib
 import json
 from pathlib import Path
 import shutil
-import tempfile
 import time
+from types import SimpleNamespace
 
-from .execution import execute as measured_execute
+from .development_runtime import DevelopmentRuntime, load_config
+from .jsonio import digest
 from .resource import token_usage
 from .snapshot import inventory, validate
-
-
-def digest(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def execute(argv, cwd, payload, timeout, output, prefix):
-    stdout_path = output / (prefix + '.stdout')
-    stderr_path = output / (prefix + '.stderr')
-    with stdout_path.open('w') as stdout, stderr_path.open('w') as stderr:
-        record = measured_execute(argv, cwd, payload, stdout, stderr,
-                                  env={'PATH': '/usr/local/bin:/usr/bin:/bin'}, timeout=timeout)
-    record.update(stdout_ref=stdout_path.name, stderr_ref=stderr_path.name,
-                  tokens=token_usage(stdout_path))
-    return record, stdout_path.read_text()
 
 
 def investigate(args):
@@ -41,41 +25,28 @@ def investigate(args):
         raise ValueError('investigation output must be outside retained snapshot')
     config_path, prompt_path = Path(args.config).resolve(), Path(args.prompt).resolve()
     config = json.loads(config_path.read_text())
-    if snapshot.with_suffix('.json').exists():
-        if 'runtime_config' in config:
-            from .development_runtime import load_config
-            reviewer = load_config(config['runtime_config'])
-            validate(snapshot, runtime_image=reviewer['image'])
-        else:
-            validate(snapshot, runtime_image=None)
-    else:
-        # Historical investigation fixtures may lack a retained manifest. They
-        # still require self-contained links before any host-side consumer runs.
-        inventory(snapshot)
-    for field in ('version', 'model', 'settings', 'timeout_seconds', 'evidence'):
+    for field in ('version', 'model', 'settings', 'timeout_seconds', 'evidence', 'runtime_config'):
         if field not in config:
             raise ValueError('missing evaluator configuration: ' + field)
-    if not isinstance(config['evidence'], dict) or any(
-            not isinstance(v, dict) or not isinstance(v.get('root_cause'), str) or not v['root_cause']
-            or not isinstance(v.get('scope'), str) or not v['scope'] or 'argv' not in v
-            for v in config['evidence'].values()):
-        raise ValueError('evidence requires operator-declared root cause, scope and argv')
-    if sum(key in config for key in ('agent', 'codex_config', 'runtime_config')) != 1:
-        raise ValueError('select exactly one agent argv, codex_config or runtime_config')
-    if 'runtime_config' in config and config['evidence']:
+    if 'agent' in config or 'codex_config' in config:
+        raise ValueError('investigation requires the isolated reviewer runtime; host agents are not supported')
+    if config['evidence'] != {}:
         raise ValueError('containerized investigation requires reviewed restricted proof support; leave claims unresolved')
-    commands = ([config['agent']] if 'agent' in config else []) + [v['argv'] for v in config['evidence'].values()]
-    if any(not isinstance(c, list) or not c or any(not isinstance(v, str) or not v for v in c) for c in commands):
-        raise ValueError('commands must be nonempty argv arrays')
-    if config['timeout_seconds'] is not None and (not isinstance(config['timeout_seconds'], (int, float)) or isinstance(config['timeout_seconds'], bool) or config['timeout_seconds'] <= 0):
-        raise ValueError('positive timeout or null required')
+    if config['timeout_seconds'] is not None:
+        raise ValueError('isolated Codex reviewer uses unlimited timeout; set timeout_seconds null')
+    reviewer = load_config(config['runtime_config'])
+    if snapshot.with_suffix('.json').exists():
+        validate(snapshot, runtime_image=reviewer['image'])
+    else:
+        # Historical investigation fixtures may lack a retained manifest. They
+        # still require self-contained links before any consumer runs.
+        inventory(snapshot)
     prompt = prompt_path.read_text()
     original = digest(primary)
     output.mkdir(parents=True, exist_ok=False)
     output.chmod(0o700)
     shutil.copyfile(config_path, output / 'config.json')
-    if 'runtime_config' in config:
-        shutil.copyfile(config['runtime_config'], output / 'reviewer-runtime.json')
+    shutil.copyfile(config['runtime_config'], output / 'reviewer-runtime.json')
     (output / 'prompt.txt').write_text(prompt)
     report = {'schema_version': 1, 'stage': 'independent_evaluation', 'status': 'running',
               'primary': {'path': str(primary), 'sha256': original},
@@ -87,79 +58,41 @@ def investigate(args):
                             'measurement_refs': ['agent'], 'elapsed_seconds': None}}
     started = time.monotonic()
     try:
-        context = nullcontext(None) if 'runtime_config' in config else tempfile.TemporaryDirectory(prefix='principiis-investigation-')
-        with context as temporary:
-            workspace = output / 'workspace' if 'runtime_config' in config else Path(temporary) / 'checkpoint'
-            shutil.copytree(snapshot, workspace, symlinks=True)
-            if 'codex_config' in config or 'runtime_config' in config:
-                if 'runtime_config' in config:
-                    from .development_runtime import DevelopmentRuntime
-                    adapter = DevelopmentRuntime(output / 'reviewer-runtime.json', output, snapshot)
-                else:
-                    from .codex import Codex
-                    adapter = Codex(config['codex_config'], output, snapshot)
-                if config['timeout_seconds'] is not None:
-                    raise ValueError('ordinary Codex evaluator uses unlimited timeout; set timeout_seconds null')
-                with (output / 'agent.stdout').open('w') as stdout, (output / 'agent.stderr').open('w') as stderr:
-                    agent = adapter.execute(workspace, prompt, stdout, stderr)
-                agent.update(stdout_ref='agent.stdout', stderr_ref='agent.stderr',
-                             tokens=token_usage(output / 'agent.stdout'))
-                messages = []
-                for line in (output / 'agent.stdout').read_text().splitlines():
-                    try:
-                        event = json.loads(line)
-                    except ValueError:
-                        continue
-                    if isinstance(event, dict) and event.get('type') == 'item.completed':
-                        item = event.get('item', {})
-                        if isinstance(item, dict) and item.get('type') == 'agent_message':
-                            messages.append(item.get('text', ''))
-                response = messages[-1] if messages else ''
-                (output / 'agent.final.txt').write_text(response)
-            else:
-                agent, response = execute(config['agent'], workspace,
-                    json.dumps({'prompt': prompt, 'prompt_version': args.prompt_version,
-                                'checkpoint': str(workspace)}), config['timeout_seconds'], output, 'agent')
-            report['agent'] = agent
-            report['resources']['reported_tokens'] = agent.get('tokens')
-            if agent.get('cleanup_error'):
-                raise ValueError('evaluator runtime cleanup failed; inspect retained allocation')
-            if agent['exit_status'] != 0:
-                raise ValueError('evaluator agent failed')
-            claims = json.loads(response)['claims']
-            if not isinstance(claims, list):
-                raise ValueError('claims must be an array')
-            for number, claim in enumerate(claims):
-                if not isinstance(claim, dict) or any(not isinstance(claim.get(k), str) or not claim[k] for k in ('id', 'root_cause')):
-                    raise ValueError('claims require nonempty id and root_cause')
-                finding = {'id': claim['id'], 'root_cause': claim['root_cause'],
-                           'claim': claim, 'status': 'unresolved', 'evidence_ref': None}
-                proof = config['evidence'].get(claim.get('evidence'))
-                if proof and proof['root_cause'] == claim['root_cause']:
-                    command = proof['argv']
-                    finding['verification_scope'] = proof['scope']
-                    prefix = 'evidence-' + str(number)
-                    proof_workspace = Path(temporary) / prefix
-                    shutil.copytree(snapshot, proof_workspace, symlinks=True)
-                    evidence, text = execute(command, proof_workspace, json.dumps(claim),
-                        config['timeout_seconds'], output, prefix)
-                    evidence_path = output / (prefix + '.json')
-                    evidence['stdout_sha256'] = digest(output / evidence['stdout_ref'])
-                    evidence['stderr_sha256'] = digest(output / evidence['stderr_ref'])
-                    evidence_path.write_text(json.dumps(evidence, indent=2))
-                    finding['evidence_ref'] = evidence_path.name
-                    report['tools'].append(evidence_path.name)
-                    report['resources']['measurement_refs'].append(evidence_path.name)
-                    if evidence['exit_status'] == 0:
-                        try:
-                            reproduced = json.loads(text)['reproduced']
-                            if type(reproduced) is bool:
-                                finding['status'] = 'verified' if reproduced else 'rejected'
-                        except (ValueError, KeyError, TypeError):
-                            pass
-                report['claims'].append(finding)
-            report['verified_root_causes'] = sorted({c['root_cause'] for c in report['claims'] if c['status'] == 'verified'})
-            report['status'] = 'completed'
+        workspace = output / 'workspace'
+        shutil.copytree(snapshot, workspace, symlinks=True)
+        adapter = DevelopmentRuntime(output / 'reviewer-runtime.json', output, snapshot)
+        with (output / 'agent.stdout').open('w') as stdout, (output / 'agent.stderr').open('w') as stderr:
+            agent = adapter.execute(workspace, prompt, stdout, stderr)
+        agent.update(stdout_ref='agent.stdout', stderr_ref='agent.stderr',
+                     tokens=token_usage(output / 'agent.stdout'))
+        messages = []
+        for line in (output / 'agent.stdout').read_text().splitlines():
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(event, dict) and event.get('type') == 'item.completed':
+                item = event.get('item', {})
+                if isinstance(item, dict) and item.get('type') == 'agent_message':
+                    messages.append(item.get('text', ''))
+        response = messages[-1] if messages else ''
+        (output / 'agent.final.txt').write_text(response)
+        report['agent'] = agent
+        report['resources']['reported_tokens'] = agent.get('tokens')
+        if agent.get('cleanup_error'):
+            raise ValueError('evaluator runtime cleanup failed; inspect retained allocation')
+        if agent['exit_status'] != 0:
+            raise ValueError('evaluator agent failed')
+        claims = json.loads(response)['claims']
+        if not isinstance(claims, list):
+            raise ValueError('claims must be an array')
+        for claim in claims:
+            if not isinstance(claim, dict) or any(not isinstance(claim.get(k), str) or not claim[k] for k in ('id', 'root_cause')):
+                raise ValueError('claims require nonempty id and root_cause')
+            # Reviewer claims stay unresolved until restricted proof support is reviewed.
+            report['claims'].append({'id': claim['id'], 'root_cause': claim['root_cause'],
+                                     'claim': claim, 'status': 'unresolved', 'evidence_ref': None})
+        report['status'] = 'completed'
     except (ValueError, KeyError, TypeError, OSError, KeyboardInterrupt) as error:
         report['status'] = 'evaluator_error'
         report['error'] = str(error) or 'controller interrupted'
@@ -168,6 +101,37 @@ def investigate(args):
         report['primary']['unchanged'] = digest(primary) == original
         (output / 'investigation.json').write_text(json.dumps(report, indent=2) + '\n')
     return report
+
+
+def review_checkpoint(store, checkpoint, *, mode, config, prompt, prompt_version, rerun):
+    """Run the operator's separate AI review of one assessed checkpoint, retaining every attempt."""
+    primary = checkpoint['primary_assessment']
+    if not checkpoint['completed'] or not primary:
+        raise ValueError('completed checkpoint and primary assessment required before investigation')
+    config_path, prompt_path = Path(config).resolve(), Path(prompt).resolve()
+    settings = json.loads(config_path.read_text())
+    if 'runtime_config' not in settings or 'agent' in settings or 'codex_config' in settings or settings.get('evidence') != {}:
+        raise ValueError('operator investigation requires an isolated Codex runtime and no host proof commands')
+    reviewer, developer = load_config(settings['runtime_config']), load_config(store.root / 'runtime.json')
+    if Path(reviewer['auth_file']).resolve() == Path(developer['auth_file']).resolve():
+        raise ValueError('reviewer requires separately provisioned subscription authentication')
+    binding = {'config_sha256': digest(config_path), 'prompt_sha256': digest(prompt_path),
+               'runtime_config_sha256': digest(Path(settings['runtime_config'])),
+               'prompt_version': prompt_version, 'mode': mode}
+    previous = checkpoint['investigations']
+    if previous and not rerun:
+        raise ValueError('investigation already retained; explicit --rerun required')
+    if not previous and rerun:
+        raise ValueError('no investigation to rerun')
+    store.bind_investigation(binding)
+    output = store.investigation_directory(checkpoint['id'])
+    result = investigate(SimpleNamespace(snapshot=checkpoint['source'], primary=primary['artifact'],
+                                         config=str(config_path), prompt=str(prompt_path),
+                                         prompt_version=prompt_version, output=str(output)))
+    allocation = store.record(output / 'runtime.json')
+    if result['status'] == 'evaluator_error' and allocation and allocation.get('state') != 'removed':
+        raise ValueError('reviewer container cleanup unresolved; inspect retained runtime allocation')
+    return result
 
 
 def main():

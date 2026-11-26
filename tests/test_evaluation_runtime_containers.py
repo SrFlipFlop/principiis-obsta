@@ -9,6 +9,7 @@ import unittest
 import uuid
 
 from principiis.snapshot import preserve, validate
+from support import FIXTURE_CONTRACT, NODE_ORACLE
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -38,7 +39,7 @@ class RuntimeBoundEvaluation(unittest.TestCase):
         output = base / 'assessment'
         seccomp = base / 'seccomp.json'
         shutil.copy(ROOT / 'fixtures/evaluation/seccomp_profile.json', seccomp)
-        command = [sys.executable, '-m', 'principiis.evaluation', '--snapshot', str(snapshot),
+        command = [sys.executable, '-m', 'principiis.evaluation', *FIXTURE_CONTRACT, *NODE_ORACLE, '--snapshot', str(snapshot),
                    '--output', str(output), '--app-image', image,
                    '--evaluator-image', os.environ['PO_EVALUATOR_IMAGE'],
                    '--docker', os.environ.get('PO_EVALUATION_DOCKER', 'docker'),

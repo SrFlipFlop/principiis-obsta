@@ -11,10 +11,11 @@ import uuid
 
 from .codex import redact
 from .execution import execute
-from .resume import write_json
+from .jsonio import write_json
 
 
-SANDBOX_POLICY = Path(__file__).resolve().parents[1] / 'fixtures/development/seccomp_profile.json'
+CHECKOUT = Path(__file__).resolve().parents[1]
+SANDBOX_POLICY = CHECKOUT / 'fixtures/development/seccomp_profile.json'
 
 
 IMAGE_ID = re.compile(r'sha256:[0-9a-f]{64}\Z')
@@ -37,7 +38,7 @@ except OSError as error:
     assert error.errno in (errno.EACCES, errno.EPERM, errno.EROFS), error
 else:
     raise AssertionError('Codex workspace sandbox allowed outside write')
-assert not pathlib.Path('/home/srflipflop/repos/principiis-obsta/AGENTS.md').exists()
+assert not pathlib.Path(CHECKOUT_INSTRUCTIONS).exists()
 with tempfile.TemporaryDirectory(prefix='po-tool-control-') as temporary:
     tool = pathlib.Path(temporary) / 'tool'
     tool.write_text('#!/bin/sh\nexit 0\n')
@@ -59,7 +60,7 @@ for name in ('python', 'python3', 'python'+str(sys.version_info.major)+'.'+str(s
         assert str(p).startswith('/usr/local/bin/') and p.is_file() and os.access(p,os.X_OK)
         paths.add(str(p))
 print(json.dumps({'sandbox':'workspace-write','symlink_targets':sorted(paths)}))
-"""
+""".replace('CHECKOUT_INSTRUCTIONS', repr(str(CHECKOUT / 'AGENTS.md')))
 
 
 def workspace_permission_settings():

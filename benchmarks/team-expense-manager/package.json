@@ -2,8 +2,7 @@
   "id": "team-expense-manager",
   "version": "v1-draft1",
   "steps": 10,
-  "owner_review": "pending",
-  "qualification_status": "not_started",
+  "qualified_through": 0,
   "files": {
     "README.md": "cb00eff68cfef5d1efac017262182dd6aa50bc63f10b37a97d543cf67bc7b5bd",
     "BENCHMARK_DESIGN.md": "4555b75e34a14bc45b2948cc7043d157d3acdf1d3c3f7037b2ceaa811e71a65e",

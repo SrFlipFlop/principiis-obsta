@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
+from support import temporary_directory
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class ResourcesCLI(unittest.TestCase):
     def test_inspection_counts_attempts_once_and_preserves_unknowns(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             root = Path(directory)
             for name, session, outcome in [('failed', 'a', 'incomplete'), ('retry', 'b', 'joint_pass'), ('copy', 'b', 'joint_pass')]:
                 attempt = root / name
@@ -43,7 +43,7 @@ class ResourcesCLI(unittest.TestCase):
         import signal
         import threading
         import time
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             root = Path(directory)
             ticks = iter([10.0, 13.5])
             dates = iter([100.0, 103.5])
@@ -71,19 +71,8 @@ class ResourcesCLI(unittest.TestCase):
             status = Path('/proc') / str(pid) / 'stat'
             self.assertTrue(not status.exists() or status.read_text().split(') ')[1].startswith('Z'))
 
-    def test_real_fixture_retains_separate_development_and_evaluation_measurements(self):
-        with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / 'attempt'
-            completed = subprocess.run([sys.executable, '-m', 'principiis', 'run', '--task', str(ROOT / 'fixtures/engineering/task.json'), '--executor', json.dumps([sys.executable, str(ROOT / 'fixtures/engineering/executor.py'), 'pass']), '--output', str(output)], cwd=ROOT, capture_output=True, text=True)
-            self.assertEqual(completed.returncode, 0, completed.stderr)
-            result = json.loads((output / 'result.json').read_text())
-            for stage in ('execution', 'evaluation'):
-                self.assertGreater(result[stage]['elapsed_seconds'], 0)
-                self.assertGreater(result[stage]['finished_at'], result[stage]['started_at'])
-                self.assertIn('peak_sampled_rss_bytes', result[stage]['memory'])
-
     def test_missing_usage_and_duration_do_not_disappear_from_totals(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             root = Path(directory)
             for session in ('known', 'unknown'):
                 attempt = root / session
@@ -102,7 +91,7 @@ class ResourcesCLI(unittest.TestCase):
             self.assertIsNone(totals['stage_duration_seconds'])
 
     def test_readable_report_labels_unknown_cost_and_token_subsets(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             root = Path(directory)
             (root / 'result.json').write_text(json.dumps({'run_id': 'r', 'session_id': 's', 'checkpoint': 'step', 'attempt': 1, 'outcome': 'incomplete', 'execution': {'elapsed_seconds': 3}, 'evaluation': {}}))
             completed = subprocess.run([sys.executable, '-m', 'principiis.resource', str(root), '--format', 'markdown'], cwd=ROOT, capture_output=True, text=True)

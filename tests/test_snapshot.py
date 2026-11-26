@@ -2,12 +2,13 @@ import json
 import os
 from pathlib import Path
 import shutil
-import tempfile
+from support import temporary_directory
 import unittest
 from unittest.mock import patch
 
 from principiis.snapshot import preserve, validate
-from principiis.__main__ import run
+from principiis import pipeline
+from support import create_run
 
 
 IMAGE = 'sha256:' + 'a' * 64
@@ -16,7 +17,7 @@ BINDING = {'image': IMAGE, 'symlink_targets': ['/usr/local/bin/python3.12']}
 
 class SnapshotRuntimeLinks(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
+        self.temporary = temporary_directory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.workspace = self.root / 'workspace'
@@ -108,44 +109,18 @@ class SnapshotRuntimeLinks(unittest.TestCase):
                     (workspace / 'notes').write_text('continued from retained environment')
                 return {'exit_status': 0}
 
-        task = self.root / 'task.json'
-        task.write_text(json.dumps({'id': 'one', 'version': '1', 'condition': {'id': 'ordinary', 'version': '1'}}))
-        first = self.root / 'first'
-        result = run(task, Runtime(), first, visible_request='first', defer_evaluation=True)
-        self.assertTrue(result['completed'])
-        second = self.root / 'second'
-        result = run(task, Runtime(), second, prior_snapshot=first / 'snapshot', visible_request='second', defer_evaluation=True)
-        self.assertTrue(result['completed'])
-        self.assertEqual((second / 'snapshot/notes').read_text(), 'continued from retained environment')
+        store = create_run(self.root / 'run', requests=['first', 'second', 'third'])
+        self.assertTrue(pipeline.develop(store, 'step-01', retry=False, runtime=Runtime())['completed'])
+        self.assertTrue(pipeline.develop(store, 'step-02', retry=False, runtime=Runtime())['completed'])
+        self.assertEqual((store.completed('step-02').snapshot / 'notes').read_text(),
+                         'continued from retained environment')
 
         class DifferentRuntime(Runtime):
             snapshot_binding = dict(BINDING, image='sha256:' + 'b' * 64)
 
-        rejected = self.root / 'different-image'
         with self.assertRaisesRegex(ValueError, 'runtime image'):
-            run(task, DifferentRuntime(), rejected, prior_snapshot=first / 'snapshot', visible_request='second', defer_evaluation=True)
-        self.assertFalse(rejected.exists())
-
-    def test_legacy_host_evaluation_cannot_consume_runtime_links(self):
-        class Runtime:
-            snapshot_binding = BINDING
-
-            def execute(adapter, workspace, request, stdout, stderr):
-                shutil.copytree(self.workspace, workspace, dirs_exist_ok=True, symlinks=True)
-                return {'exit_status': 0}
-
-        check = self.root / 'check.py'
-        marker = self.root / 'host-evaluator-ran'
-        check.write_text(f'from pathlib import Path\nPath({str(marker)!r}).touch()\n')
-        import sys
-        task = self.root / 'task.json'
-        task.write_text(json.dumps({'id': 'one', 'version': '1', 'condition': {'id': 'ordinary', 'version': '1'}, 'check': [sys.executable, str(check)]}))
-        output = self.root / 'host-evaluation'
-        result = run(task, Runtime(), output, visible_request='first')
-        self.assertTrue(result['completed'])
-        self.assertEqual(result['outcome'], 'evaluator_error')
-        self.assertIn('runtime image', result['evaluation']['error'])
-        self.assertFalse(marker.exists())
+            pipeline.develop(store, 'step-03', retry=False, runtime=DifferentRuntime())
+        self.assertEqual(store.attempts_for('step-03'), [])
 
 
 if __name__ == '__main__':

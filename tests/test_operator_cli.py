@@ -3,7 +3,8 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
+from support import (development_files, development_result, frozen_input, retain_investigation,
+                     runtime_allocation, temporary_directory)
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -13,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class OperatorCLI(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory()
+        self.directory = temporary_directory()
         self.addCleanup(self.directory.cleanup)
         self.base = Path(self.directory.name)
         self.runs = self.base / 'runs'
@@ -42,20 +43,20 @@ class OperatorCLI(unittest.TestCase):
     def test_init_freezes_real_requests_without_models_or_dummy_evaluators(self):
         initialized = self.initialize()
         run = self.runs / 'portal-test'
-        sequence = json.loads((run / 'sequence.json').read_text())
-        self.assertEqual([s['id'] for s in sequence['steps']], ['step-01', 'step-02', 'step-03'])
-        for number, step in enumerate(sequence['steps'], 1):
-            self.assertNotIn('check', step)
-            self.assertEqual((run / step['request']).read_bytes(),
-                             (ROOT / f'benchmarks/document-portal/requests/{number:02}.txt').read_bytes())
+        from principiis.run_store import RunStore
+        store = RunStore.open(run)
+        self.assertEqual(store.step_ids, ['step-01', 'step-02', 'step-03'])
+        self.assertEqual(store.request_text(2), '\n\n'.join(
+            (ROOT / f'benchmarks/document-portal/requests/{number:02}.txt').read_text() for number in (1, 2, 3)))
+        self.assertTrue(all('check' not in step for step in store.sequence['steps']))
         self.assertIn('unbound', initialized.stdout)
-        self.assertFalse((run / 'development').exists())
+        self.assertEqual(store.attempts, [])
         status = json.loads(self.cli('status', '--format', 'json').stdout)
         self.assertEqual(status['next_action']['step'], 'step-01')
         self.assertIn(f'Command: principiis develop --runs-root {self.runs} --run portal-test --step 1',
                       self.cli('status').stdout)
         self.assertEqual(status['resources']['attempts'], [])
-        self.assertFalse((run / 'previews').exists())
+        self.assertEqual(status['previews'], [])
         self.cli('init', '--application', 'document-portal', '--runtime-config', str(self.runtime), success=False)
 
     def test_invalid_initial_configuration_leaves_no_run(self):
@@ -72,30 +73,33 @@ class OperatorCLI(unittest.TestCase):
 
     def test_changed_frozen_configuration_requires_new_run_before_development(self):
         self.initialize()
-        run = self.runs / 'portal-test'
-        runtime = run / 'runtime.json'
-        runtime.write_text(runtime.read_text() + '\n')
+        runtime = frozen_input(self.runs / 'portal-test', 'runtime.json')
+        original = runtime.read_bytes()
+        runtime.write_bytes(original + b'\n')
         rejected = self.cli('develop', '--step', '1', success=False)
         self.assertIn('new run', rejected.stderr)
-        self.assertFalse((run / 'development').exists())
+        runtime.write_bytes(original)
+        self.assertEqual(json.loads(self.cli('status', '--format', 'json').stdout)['resources']['attempts'], [])
 
-    def retain_attempt(self, step, number, session, completed, start, duration, input_tokens):
-        run = self.runs / 'portal-test'
-        relative = f'steps/{step}' if number == 1 else f'attempts/{step}/{number}'
-        directory = run / 'development' / relative
+    def retain_attempt(self, step, number, session, completed, start, duration, input_tokens, root=None):
+        from principiis.run_store import RunStore
+        store = RunStore.open(root or self.runs / 'portal-test')
+        attempt = store.allocate_attempt(step)
+        self.assertEqual(attempt.number, number)
+        directory = attempt.directory
         directory.mkdir(parents=True)
         (directory / 'workspace').mkdir()
         result = {
-            'run_id': 'fixture-run', 'session_id': session, 'checkpoint': step,
+            'run_id': store.run_id, 'session_id': session, 'checkpoint': step,
+            'task': {'id': step, 'version': 'fixture'}, 'condition': {'id': 'baseline', 'version': '1'},
             'attempt': number, 'outcome': 'pending_evaluation' if completed else 'incomplete',
-            'completed': completed, 'execution': {
+            'functional': 'unknown', 'security': 'unknown', 'completed': completed, 'execution': {
                 'exit_status': 0 if completed else None, 'elapsed_seconds': duration,
                 'started_at': start, 'finished_at': start + duration,
                 'memory': {'peak_sampled_rss_bytes': 123, 'scope': 'fixture subprocess'},
                 'container_memory': {'peak_sampled_bytes': 456, 'scope': 'fixture container'},
             }, 'evaluation': {},
         }
-        (directory / 'result.json').write_text(json.dumps(result))
         (directory / 'executor.stdout').write_text(json.dumps({
             'type': 'turn.completed', 'usage': {'input_tokens': input_tokens,
                                              'cached_input_tokens': 2, 'output_tokens': 3},
@@ -105,51 +109,43 @@ class OperatorCLI(unittest.TestCase):
             from principiis.snapshot import preserve
             (directory / 'workspace/app.py').write_text('# retained source fixture, never executed\n')
             preserve(directory / 'workspace', directory / 'snapshot')
-        journal = run / 'development/manual.json'
-        state = json.loads(journal.read_text()) if journal.exists() else {'run_id': 'fixture-run', 'attempts': []}
-        state['attempts'].append({'id': step, 'artifact': relative, 'attempt': number})
-        journal.write_text(json.dumps(state))
+        store.save_attempt(attempt, result, final=True)
         return directory
 
     def test_final_review_next_action_and_report_for_three_and_ten_steps(self):
-        from principiis.operator import build_status, markdown
+        from principiis import status
+        from principiis.reporting import markdown
+        from principiis.run_store import RunStore
+        from support import create_run
         for count in (3, 10):
             with self.subTest(steps=count):
-                if (self.runs / 'portal-test').exists():
-                    import shutil
-                    shutil.rmtree(self.runs / 'portal-test')
-                self.initialize()
-                root = self.runs / 'portal-test'
-                if count == 10:
-                    sequence = json.loads((root / 'sequence.json').read_text())
-                    sequence['steps'].extend({'id': f'step-{number:02}'} for number in range(4, 11))
-                    (root / 'sequence.json').write_text(json.dumps(sequence))
-                configuration = json.loads((root / 'configuration.json').read_text())
+                root = self.base / f'final-{count}'
+                create_run(root, steps=count, investigation='final')
                 assessments = []
                 for number in range(1, count + 1):
                     step = f'step-{number:02}'
-                    self.retain_attempt(step, 1, f'session-{number}', True, number * 10, 1, 2)
+                    self.retain_attempt(step, 1, f'session-{number}', True, number * 10, 1, 2, root=root)
                     assessments.append({'checkpoint': step, 'role': 'primary', 'outcome': 'candidate_failure',
                                         'artifact': f'/fixture/{step}.json', 'attempt': 1,
+                                        'run_id': 'fixture', 'session_id': f'assessment-{number}', 'evaluation': {},
                                         'functional': 'fail', 'security': 'unknown',
                                         'checks': [{'id': 'browser-library', 'status': 'fail',
                                                     'detail': 'Expected login control; saw Sign in'}]})
-                evidence = {'assessments': assessments, 'binding': {'version': 'fixture'},
-                            'resources': {'attempts': []}, 'cleanup_required': []}
-                with patch('principiis.assessment.inspect', return_value=evidence):
-                    status = build_status(root, configuration)
-                self.assertEqual(status['next_action']['action'], 'evaluate --final --ai-review')
-                self.assertEqual(status['next_action']['step'], f'step-{count:02}')
-                self.assertIn(f'evaluate --final --ai-review step-{count:02}', markdown(status))
-                self.assertIn('browser-library: fail — Expected login control; saw Sign in', markdown(status))
-                investigation = root / 'investigations' / f'step-{count:02}' / '1'
-                investigation.mkdir(parents=True)
-                (investigation / 'investigation.json').write_text(json.dumps({
+
+                def assessed():
+                    store = RunStore.open(root)
+                    store.binding, store.assessments = {'version': 'fixture'}, assessments
+                    return status.build(store)
+                report = assessed()
+                self.assertEqual(report['next_action']['action'], 'evaluate --final --ai-review')
+                self.assertEqual(report['next_action']['step'], f'step-{count:02}')
+                self.assertIn(f'evaluate --final --ai-review step-{count:02}', markdown(report))
+                self.assertIn('browser-library: fail — Expected login control; saw Sign in', markdown(report))
+                retain_investigation(root, f'step-{count:02}', {
                     'status': 'completed', 'claims': [{'id': 'fixture', 'status': 'unresolved'}],
                     'verified_root_causes': [], 'resources': {'elapsed_seconds': 1, 'reported_tokens': None},
-                }))
-                with patch('principiis.assessment.inspect', return_value=evidence):
-                    reviewed = build_status(root, configuration)
+                })
+                reviewed = assessed()
                 self.assertEqual(reviewed['next_action']['action'], 'development-complete')
                 self.assertIn(f'| step-{count:02} | completed | 1 | 0 |', markdown(reviewed))
 
@@ -158,13 +154,12 @@ class OperatorCLI(unittest.TestCase):
         first = self.retain_attempt('step-01', 1, 'session-one', True, 100, 4, 10)
         failed = self.retain_attempt('step-02', 1, 'session-two', False, 110, 2, 20)
         retry = self.retain_attempt('step-02', 2, 'session-three', True, 120, 3, 30)
-        original = {p: p.read_bytes() for directory in (first, failed, retry)
-                    for p in (directory / 'result.json', directory / 'executor.stdout')}
         # A candidate may write a convincing result file; it is never an accounting record.
         (first / 'workspace/result.json').write_text(json.dumps({
             'run_id': 'injected', 'session_id': 'injected', 'checkpoint': 'bad', 'attempt': 999,
             'outcome': 'joint_pass', 'execution': {'elapsed_seconds': 999999},
         }))
+        original = development_files(self.runs / 'portal-test')
         self.cli('report', '--format', 'csv')
         report_dir = self.runs / 'portal-test/reports'
         report = json.loads((report_dir / 'development.json').read_text())
@@ -184,8 +179,7 @@ class OperatorCLI(unittest.TestCase):
         self.assertEqual(report['next_action']['step'], 'step-03')
         self.assertIn('unknown', (report_dir / 'development.md').read_text())
         self.assertIn(str(retry / 'snapshot'), (report_dir / 'development.md').read_text())
-        for path, content in original.items():
-            self.assertEqual(path.read_bytes(), content)
+        self.assertEqual(development_files(self.runs / 'portal-test'), original)
 
     def test_status_groups_run_checkpoint_evidence_and_next_command(self):
         self.initialize()
@@ -196,7 +190,7 @@ class OperatorCLI(unittest.TestCase):
         self.assertIn(f'principiis develop --runs-root {self.runs} --run portal-test --step 2', rendered)
 
     def test_status_separates_development_and_evaluation_outcomes(self):
-        from principiis.operator import markdown
+        from principiis.reporting import markdown
         report = {
             'run_name': 'demo', 'run_mode': 'development-rehearsal', 'application': 'document-portal',
             'package_version': 'v1', 'condition': {'id': 'baseline'}, 'investigation': 'none',
@@ -234,24 +228,14 @@ class OperatorCLI(unittest.TestCase):
     def test_status_surfaces_retry_and_retains_hard_interrupted_allocation(self):
         self.initialize()
         self.retain_attempt('step-01', 1, 'first', True, 100, 1, 10)
-        partial = self.retain_attempt('step-02', 1, 'partial', False, 102, 1, 20)
-        (partial / 'result.json').unlink()  # Abrupt termination between allocation and initial result.
+        self.retain_attempt('step-02', 1, 'partial', False, 102, 1, 20)
+        development_result(self.runs / 'portal-test', 'step-02').unlink()  # Abrupt termination between allocation and initial result.
         report = json.loads(self.cli('status', '--format', 'json').stdout)
         self.assertEqual(report['next_action']['step'], 'step-02')
         self.assertTrue(report['next_action']['retry'])
         self.assertEqual(report['resources']['totals']['development']['attempts_present'], 2)
         self.assertIsNone(report['resources']['totals']['development']['duration_seconds'])
         self.assertIn('interrupted', report['checkpoints'][1]['status'])
-
-    def test_status_rejects_journal_paths_into_candidate_files(self):
-        self.initialize()
-        attempt = self.retain_attempt('step-01', 1, 'first', True, 100, 1, 10)
-        journal = self.runs / 'portal-test/development/manual.json'
-        state = json.loads(journal.read_text())
-        state['attempts'][0]['artifact'] = 'steps/step-01/workspace'
-        journal.write_text(json.dumps(state))
-        rejected = self.cli('status', success=False)
-        self.assertIn('artifact', rejected.stderr)
 
     def test_status_and_report_refuse_corrupted_completed_evidence(self):
         self.initialize()
@@ -297,21 +281,21 @@ class OperatorCLI(unittest.TestCase):
         runtime.update(docker=str(docker), image=IMAGE)
         self.runtime.write_text(json.dumps(runtime))
         self.initialize()
-        attempt = self.retain_attempt('step-01', 1, 'first', True, 100, 1, 10)
+        self.retain_attempt('step-01', 1, 'first', True, 100, 1, 10)
         name = 'po-development-' + 'b' * 32
-        allocation = attempt / 'runtime.json'
+        allocation = runtime_allocation(self.runs / 'portal-test')
         allocation.write_text(json.dumps({'schema_version': 1, 'adapter': 'docker-development-v1',
             'image': IMAGE, 'container': name, 'state': 'allocated',
             'cleanup_argv': docker_command(str(docker), ['rm', '-f', name])}))
-        original = allocation.read_bytes()
+        original = development_files(self.runs / 'portal-test')
         self.assertEqual(json.loads(self.cli('status', '--format', 'json').stdout)['next_action']['action'], 'cleanup')
         self.cli('develop', '--step', '2', success=False)
-        self.assertFalse((self.runs / 'portal-test/development/steps/step-02').exists())
+        self.assertEqual(json.loads(self.cli('status', '--format', 'json').stdout)['checkpoints'][1]['attempts'], 0)
         cleaned = json.loads(self.cli('cleanup', '--step', '1', '--format', 'json').stdout)
         self.assertEqual(cleaned['runtime_cleanup_required'], [])
         self.assertEqual(cleaned['next_action']['step'], 'step-02')
         self.assertEqual(cleaned['runtime_cleanups'][0]['outcome'], 'removed')
-        self.assertEqual(allocation.read_bytes(), original)
+        self.assertEqual(development_files(self.runs / 'portal-test'), original)
 
 
 if __name__ == '__main__':

@@ -1,7 +1,7 @@
 """Progress records are useful without exposing application or evaluator text."""
 import json
 from pathlib import Path
-import tempfile
+from support import temporary_directory
 import unittest
 
 from principiis.progress import Progress, read_events
@@ -9,7 +9,7 @@ from principiis.progress import Progress, read_events
 
 class ProgressTests(unittest.TestCase):
     def test_partial_codex_line_is_retained_until_complete(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             root = Path(directory)
             output = root / 'development/steps/step-01'
             output.mkdir(parents=True)
@@ -24,7 +24,7 @@ class ProgressTests(unittest.TestCase):
             self.assertEqual(sum(item['event'] == 'codex-event' for item in read_events(root)), 1)
 
     def test_progress_retains_events_and_exposes_only_event_names(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             root = Path(directory)
             output = root / 'development/steps/step-01'
             output.mkdir(parents=True)

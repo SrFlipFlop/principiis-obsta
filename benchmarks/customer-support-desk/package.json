@@ -2,8 +2,7 @@
   "id": "customer-support-desk",
   "version": "v1-draft2",
   "steps": 10,
-  "owner_review": "pending",
-  "qualification_status": "not_started",
+  "qualified_through": 0,
   "files": {
     "BENCHMARK_DESIGN.md": "0dbdf38c15fa50c9c693c0b0580bbb044b360e5a78ba19bbc48af4dea697730a",
     "README.md": "51244c28785af5d7b5b60544bf7cec3fa83b0fb1fb429b4785a6e34234d8b8db",

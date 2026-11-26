@@ -2,8 +2,7 @@
   "id": "workflow-dashboard",
   "version": "v1-draft1",
   "steps": 10,
-  "owner_review": "pending",
-  "qualification_status": "not_started",
+  "qualified_through": 0,
   "files": {
     "README.md": "b477e5bcd8bdbb7ad8f5f81bf1ede1290d7be4277c5aefd79edc86e9a0184cc1",
     "BENCHMARK_DESIGN.md": "e3b6f20aefcf91bdb846e666167633b32a29fffa9c5b28605a11aa057f88738e",

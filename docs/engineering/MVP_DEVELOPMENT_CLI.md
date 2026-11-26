@@ -1,12 +1,10 @@
 # Portal development commands (#40–#42)
 
 Implemented foundations, 2026-11-16. This composes the existing manual checkpoint
-controller; it does not introduce another execution engine. The [approved baseline
-specification](../BASELINE_PILOT_SPEC.md) governs scope and execution settings.
-Runtime preparation/review, actual subscription development, usable preview and the
-owner's acceptance remain required before closing milestone 1. Regression fixtures
-are not live acceptance evidence. See the [implementation verification
-record](../reviews/MVP_1_IMPLEMENTATION.md).
+controller; it does not introduce another execution engine. Scope and execution
+settings are in [PROJECT.md](../../PROJECT.md). Milestone 1 was accepted live under
+#40–#42; regression fixtures are not live acceptance evidence. See the [implementation
+verification record](../archive/reviews/MVP_1_IMPLEMENTATION.md).
 
 From this checkout, inspect `python3 -m principiis --help`. Commands use the Python
 standard library. Initialize a reusable run outside the research checkout and outside
@@ -64,10 +62,9 @@ Out-of-order selection and missing/corrupted prior checkpoints are rejected.
 Status reports `wait` while an operator action holds the per-run lock. Competing
 development, preview and cleanup commands are rejected, preserving allocation
 history. Read-only inspection remains available with explicitly partial measurements.
-Do not mix the legacy manual CLI with concurrent operator commands.
 
 An incomplete attempt retains its workspace, logs and exposed measurements. Use an
-explicit retry only when authorized, for example in a separately named recovery run:
+explicit retry, for example in a separately named recovery run:
 
 ```bash
 python3 -m principiis develop --run portal-recovery --step 2 --retry
@@ -89,7 +86,28 @@ separate evidence; original sidecars and results remain unchanged. A failed clea
 stays blocked. Logs/usage emitted after an abrupt controller death may be unavailable.
 A missing completed result or changed snapshot
 is an integrity error, rather than permission to regenerate a completed checkpoint.
-Changing frozen request/runtime configuration requires a new identified run.
+Changing frozen request/runtime configuration requires a new identified run, and so
+does a changed development runtime version (sandbox policy digest, Codex version,
+permission settings): each development result records `runtime_version`, and later
+steps must match it.
+
+## Run records
+
+`principiis/run_store.py` owns the run directory; its module docstring lists the
+layout. `configuration.json` is the single freeze manifest: run identity, mode, the
+controller's git commit (`controller.commit`, `dirty` when tracked controller sources
+differ from it) and `frozen_files` digests of `runtime.json`, `condition.json`,
+`sequence.json` and the requests. Every command opens the store once, which verifies
+the manifest, lineage, evaluator binding, journal, retained snapshots and assessment
+ledgers; it does not re-verify them during the same command. Development and
+assessment results record the controller commit instead of per-file source hashes.
+
+Runs created before #69 keep a fingerprint in `development/manual.json`, per-step
+`development/tasks/` records and manual invocation records. They stay readable:
+`status`, `report`, `develop`, `evaluate` and `derive-evaluation` ignore those
+extra records, and `derive-evaluation` still copies `tasks/` into its attested
+inventory. Those older development results have no `runtime_version`, so continuing an
+older run does not check the runtime version.
 
 Preview a completed checkpoint using separately versioned startup configuration:
 
@@ -138,7 +156,7 @@ status: incomplete generation or a failed preview is still a recorded outcome.
 Configuration/selection/integrity errors exit nonzero. A cleanup failure remains
 explicit evidence and must not erase the observed process exit status.
 
-The [runtime fix controls](../reviews/MVP_1_RUNTIME_FIXES.md) exercise nested
+The [runtime fix controls](../archive/reviews/MVP_1_RUNTIME_FIXES.md) exercise nested
 workspace-write sandboxing and retained Python virtual environments on the local
 Docker host. Interpreter links are bound to the exact development image; preview
 must use that same image and can launch `.venv/bin/python app.py` when the candidate
@@ -147,7 +165,7 @@ subscription access, image/access review, generated-application dependencies and
 restricted browser acceptance remain separate live qualification work. Preserve
 failures instead of regenerating a completed candidate.
 
-The subsequent [authorized #41–#42 qualification](../reviews/ISSUES_41_42_LIVE_QUALIFICATION_20261117.md)
+The subsequent [#41–#42 qualification](../archive/reviews/ISSUES_41_42_LIVE_QUALIFICATION_20261117.md)
 records actual requests 2–3, restricted generated-portal browser previews, a separately
 identified real interruption/explicit retry and reconciled per-run exports. The owner
 walkthrough and acceptance are recorded there. Hidden evaluation remains

@@ -2,12 +2,12 @@
 
 These commands compose the retained checkpoint controller. They implement operator
 boundaries; engineering controls do not complete live acceptance. The current portal
-release is qualified and owner-approved through request 3 only; #9 remains the
+release is qualified through request 3 only; #9 remains the
 ten-step prerequisite. Existing milestone-1 snapshots
-retain their development results and fingerprints. No primary assessment is inferred
+retain their development results. No primary assessment is inferred
 from a preview, candidate-owned test, source inspection or a historical control score.
 
-Bind a qualified, owner-approved evaluator release when creating the run:
+Bind a qualified evaluator release when creating the run:
 
 ```bash
 python3 -m principiis init --run portal-first --runs-root /operator/runs \
@@ -29,7 +29,7 @@ Older unbound runs remain readable but cannot gain an evaluator through the simp
 operator CLI; create a new run with the manifest at initialization.
 For a retained completed development run whose evaluator binding must remain frozen,
 `derive-evaluation` creates a **new evaluation-only run** with an independently
-qualified and approved evaluator binding. It copies and attests the source run's
+qualified evaluator binding. It copies and attests the source run's
 development journal, results, logs and snapshots, but imports no old primary scores.
 The source run is not changed and the derived run rejects `develop`:
 
@@ -53,11 +53,11 @@ Existing `evaluate`,
 `--rerun` and report commands use the derived run's separate canonical assessment
 ledger. Reports mark imported development measurements as copied evidence; they are
 not additional model usage. Comparing source and derived reports must not sum their
-development tokens as independent sessions. A new release still needs normal
-qualification and owner approval; this import does not qualify it.
-For a three-step run, the public `qualified_first_three` / `approved_first_three`
-declaration and private manifest must match all three frozen requests. The ten-step
-initialization gate still requires a separately qualified full package from #9 and its evaluator manifest.
+development tokens as independent sessions. A new release still needs its own control tests
+([ADR 0002](../adr/0002-control-tests-qualify-evaluator-versions.md)); this import does not qualify it.
+A run binds only when its frozen steps are a prefix of the package requests no longer
+than the package's `qualified_through`, and the private manifest matches every frozen
+request. A full-sequence run additionally needs its evaluator manifest at `init`.
 
 Dependency preparation remains an explicit prerequisite: the operator command does
 not guess dependencies, create a lockfile or adapt an incompatible historical bundle.
@@ -67,15 +67,18 @@ restricted evaluator in a disposable copy; evaluation never launches development
 repairs the candidate. Keep hidden tests and results outside
 development contexts and public Git.
 
-The declaration includes `version`, `complete`, `qualification_status`, `owner_review`,
-`requests` (released path/hash pairs), `files` (private dependency path/hash pairs),
+The declaration includes `version`, `complete`, an optional `evaluator_command` argv
+(default `["node", "/oracle/check.cjs"]`), `requests` (released path/hash pairs), `files` (private dependency path/hash pairs),
 `runtime_image`, `evaluator_images` keyed by frozen checkpoint ID, and `steps` mapping
 each checkpoint to its `contract` and `app_command`. `seccomp` and
 `dependency_manifest` name hashed dependencies. The dependency inventory maps exact
 image IDs to resolved package names/versions and hashed preparation receipts.
 Binding retains frozen public/private metadata copies so historical reports remain
-readable after a subsequent author release; evaluation verifies the original private
-dependencies again before allocation.
+readable after a subsequent author release. `init` and `derive-evaluation` verify the
+whole declaration once, when binding. Before allocating an assessment, `evaluate`
+re-hashes only the private files that step uses (its check contract and the seccomp
+profile) against the binding and refuses on any change; the restricted evaluator
+image IDs stay pinned by the binding.
 
 For each assessment, the controller inventories installed distribution metadata in
 retained Python virtual environments before launching the restricted runtime. The
@@ -88,7 +91,7 @@ runtime/checker images. The controller does not install candidate dependencies o
 infer them from a requirements file; an incompatible or missing runtime dependency
 remains an evaluator error. A candidate using dependencies outside the image and
 retained virtual environments needs separate preparation and qualification before
-assessment. Live generated-candidate acceptance remains required for #43.
+assessment. Live generated-candidate acceptance was completed under #43 and #44.
 The current retained Document Portal snapshots have no virtual environment; the
 first-three release inventories their pinned runtime and checker images and records
 their requirements-file hashes. A different candidate environment needs its own
@@ -159,9 +162,9 @@ Missing checks, unavailable runtimes and evaluator errors remain explicit outcom
 Saved reports are derived exports and can be regenerated without changing source
 evidence. All three formats remain operator artifacts containing hidden results.
 
-For a new ten-step qualification run, use `init --steps 10`. This requires #9's
-qualified package and freezes all ten request contracts before allocation; the
-default three-step rehearsal remains available. Bind the qualified evaluator before
+For a full-sequence qualification run, use `init --steps 10` once the package's
+`qualified_through` reaches 10 (for the portal this needs #9). It freezes every request
+contract before allocation; shorter runs within `qualified_through` remain available. Bind the qualified evaluator before
 the first development session. Each further development step requires a separately
 retained primary assessment of the previous completed checkpoint. Candidate failure,
 unassessable results and evaluator errors remain part of the record and permit the

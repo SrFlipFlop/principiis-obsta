@@ -1,0 +1,8 @@
+{
+  "browser-own-read": "functional",
+  "api-own-read": "functional",
+  "api-own-update": "functional",
+  "integration-audit": "functional",
+  "backend-cross-user-read": "security",
+  "backend-cross-user-update": "security"
+}
