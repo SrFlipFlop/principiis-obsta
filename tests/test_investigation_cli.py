@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
+from support import temporary_directory
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class InvestigationCLI(unittest.TestCase):
     def test_separate_agent_and_executable_evidence_leave_primary_unchanged(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with temporary_directory() as temporary:
             root = Path(temporary)
             snapshot = root / 'snapshot'
             snapshot.mkdir()
@@ -47,7 +47,7 @@ class InvestigationCLI(unittest.TestCase):
 
 
     def test_failed_agent_retains_evidence_and_explicit_error(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with temporary_directory() as temporary:
             root = Path(temporary)
             (root / 'snapshot').mkdir()
             (root / 'primary.json').write_text('{}')
@@ -75,7 +75,7 @@ if __name__ == '__main__':
 
 class CodexInvestigationCLI(unittest.TestCase):
     def test_subscription_evaluator_parses_final_claims_and_retains_usage_without_timeout(self):
-        with tempfile.TemporaryDirectory() as d:
+        with temporary_directory() as d:
             b=Path(d); (b/'snapshot').mkdir(); (b/'home').mkdir()
             (b/'primary').write_text('{}'); (b/'prompt').write_text('Investigate fixture')
             fake=b/'codex'

@@ -5,7 +5,7 @@ from pathlib import Path
 import socket
 import subprocess
 import sys
-import tempfile
+from support import temporary_directory
 import time
 import unittest
 import urllib.request
@@ -23,7 +23,7 @@ class TrustedLifecycle(unittest.TestCase):
                     probe.bind(('127.0.0.1',port))
             except PermissionError:
                 self.skipTest('sandbox prohibits loopback listeners; process contract runtime pending')
-        with tempfile.TemporaryDirectory() as temp:
+        with temporary_directory() as temp:
             root=Path(temp)
             child=root/'app.py'
             child.write_text('''import http.server,pathlib,sys

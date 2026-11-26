@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
+from support import temporary_directory
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class SequenceCLI(unittest.TestCase):
     def test_failing_checkpoint_advances_with_notes_and_cumulative_requests(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base = Path(directory)
             (base / 'one.txt').write_text('Build first')
             (base / 'two.txt').write_text('Add second FUTURE_SENTINEL')
@@ -46,7 +46,7 @@ if not (p / 'next').exists():
                 self.assertFalse((base/name/'steps/one/snapshot/next').exists())
 
     def test_invalid_sequence_is_rejected_before_any_artifacts_or_executor(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base = Path(directory)
             (base/'request.txt').write_text('visible')
             valid = {'id':'first','version':'1','sequence_version':'1','request':'request.txt','check':['unused-check']}
@@ -70,7 +70,7 @@ if not (p / 'next').exists():
             self.assertFalse(output.exists())
 
     def test_incomplete_step_retains_partial_files_and_does_not_reveal_next_request(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base = Path(directory)
             (base/'one.txt').write_text('first')
             (base/'two.txt').write_text('future')

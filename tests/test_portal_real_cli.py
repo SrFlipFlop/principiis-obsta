@@ -4,14 +4,14 @@ import shutil
 import pathlib
 import subprocess
 import sys
-import tempfile
+from support import temporary_directory
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 class RealPortalRelease(unittest.TestCase):
     def test_initial_release_is_usable_portal_without_later_requests(self):
-        with tempfile.TemporaryDirectory() as temp:
+        with temporary_directory() as temp:
             out = pathlib.Path(temp) / 'released'
             r = subprocess.run([sys.executable, '-m', 'principiis.portal', 'release', '--step', '1', '--output', str(out)], cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stderr)
@@ -24,7 +24,7 @@ class RealPortalRelease(unittest.TestCase):
             self.assertNotIn('X-User', request)
 
     def test_second_release_retains_build_without_future_archive_change(self):
-        with tempfile.TemporaryDirectory() as temp:
+        with temporary_directory() as temp:
             out = pathlib.Path(temp) / 'released'
             r = subprocess.run([sys.executable, '-m', 'principiis.portal', 'release', '--step', '2', '--output', str(out)], cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stderr)
@@ -35,7 +35,7 @@ class RealPortalRelease(unittest.TestCase):
             self.assertNotIn('Restore', request)
 
     def test_modified_frozen_request_is_rejected_before_release(self):
-        with tempfile.TemporaryDirectory() as temp:
+        with temporary_directory() as temp:
             root = pathlib.Path(temp)
             (root/'principiis').mkdir()
             (root/'principiis/__init__.py').touch()

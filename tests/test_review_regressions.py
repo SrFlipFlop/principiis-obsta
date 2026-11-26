@@ -4,7 +4,7 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
-import tempfile
+from support import temporary_directory
 import time
 import unittest
 
@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class ReviewRegressions(unittest.TestCase):
     def test_hard_killed_evaluator_retains_live_logs_without_scores(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base = Path(directory)
             check = base / 'check.py'
             check.write_text("import os,time\nfrom pathlib import Path\nPath('" + str(base / 'pid') + "').write_text(str(os.getpid()))\nprint('partial stdout',flush=True)\nprint('partial stderr',file=__import__('sys').stderr,flush=True)\ntime.sleep(60)\n")
@@ -48,7 +48,7 @@ class ReviewRegressions(unittest.TestCase):
                         pass
 
     def test_resource_inspection_keeps_hard_interrupted_usage(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base = Path(directory)
             for number in (1, 2):
                 attempt = base / str(number)
@@ -63,7 +63,7 @@ class ReviewRegressions(unittest.TestCase):
             self.assertIsNone(report['attempts'][0]['stages']['development'].get('memory'))
 
     def test_checkpoint_rejects_absolute_workspace_links_without_scoring(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base = Path(directory)
             executor = base / 'executor.py'
             executor.write_text("from pathlib import Path\nPath('target').write_text('original')\nPath('link').symlink_to(Path('target').resolve())\n")
@@ -77,7 +77,7 @@ class ReviewRegressions(unittest.TestCase):
             self.assertEqual(result['functional'], 'unknown')
 
     def test_internal_relative_links_are_isolated_and_corruption_blocks_resume(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base = Path(directory)
             (base / 'one.txt').write_text('one')
             (base / 'two.txt').write_text('two')
@@ -100,7 +100,7 @@ class ReviewRegressions(unittest.TestCase):
             self.assertFalse((output / 'attempts/two/2').exists())
 
     def test_rescore_rejects_modified_retained_snapshot_before_launch(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base = Path(directory)
             output = base / 'run'
             subprocess.run([sys.executable, '-m', 'principiis', 'run', '--task', str(ROOT / 'fixtures/engineering/task.json'), '--executor', json.dumps([sys.executable, str(ROOT / 'fixtures/engineering/executor.py'), 'pass']), '--output', str(output)], cwd=ROOT, check=True)

@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
+from support import temporary_directory
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class ResumeCLI(unittest.TestCase):
     def test_retry_preserves_failed_checkpoint_and_incomplete_attempt(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base = Path(directory)
             for name in ('one', 'two'):
                 (base / (name + '.txt')).write_text(name)
@@ -57,7 +57,7 @@ else:
         import os
         import signal
         import time
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base=Path(directory)
             (base/'one.txt').write_text('one')
             (base/'two.txt').write_text('two')

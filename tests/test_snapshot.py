@@ -2,7 +2,7 @@ import json
 import os
 from pathlib import Path
 import shutil
-import tempfile
+from support import temporary_directory
 import unittest
 from unittest.mock import patch
 
@@ -16,7 +16,7 @@ BINDING = {'image': IMAGE, 'symlink_targets': ['/usr/local/bin/python3.12']}
 
 class SnapshotRuntimeLinks(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
+        self.temporary = temporary_directory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.workspace = self.root / 'workspace'
