@@ -49,8 +49,7 @@ def _contract(path):
 def load_declaration(store, declaration_path, package):
     """Verify an author-published qualified bundle against this frozen run."""
     path = Path(declaration_path).resolve()
-    metadata_path = package / 'package.json'
-    metadata = json.loads(metadata_path.read_text())
+    metadata = benchmark.load(store.configuration.get('application'), package)
     sequence = store.sequence
     benchmark.check_sequence(metadata, sequence)
     if digest(path) != metadata['private_bundle_sha256']:
@@ -60,18 +59,15 @@ def load_declaration(store, declaration_path, package):
             or not manifest['version'].strip() or manifest.get('complete') is not True):
         raise ValueError('complete qualified evaluator declaration required')
     evaluator_command(manifest)
-    if metadata.get('id') != store.configuration.get('application'):
-        raise ValueError('evaluator application differs from the frozen run')
     if metadata.get('version') != store.configuration.get('package_version'):
         raise ValueError('evaluator request package version differs; use a new run')
-    # The store verified these frozen request digests when it opened.
+    # The store verified the frozen request digests when it opened; `load` verified the package's.
     frozen = store.configuration['frozen_files']
     expected_requests = {step['request']: frozen[step['request']] for step in sequence['steps']}
     if manifest.get('requests') != expected_requests:
         raise ValueError('evaluator requests differ from the frozen development requests')
-    for name, expected in expected_requests.items():
-        if metadata.get('files', {}).get(name) != expected or digest(_relative(package, name)) != expected:
-            raise ValueError('qualified public request differs from the frozen development request')
+    if any(metadata['files'][name] != expected for name, expected in expected_requests.items()):
+        raise ValueError('qualified public request differs from the frozen development request')
     files = manifest.get('files')
     if not isinstance(files, dict) or not files:
         raise ValueError('complete evaluator dependency files are required')
@@ -123,7 +119,7 @@ def load_declaration(store, declaration_path, package):
             dependency(receipt)
     return {'schema_version': 1, 'version': manifest['version'], 'manifest': str(path),
             'manifest_sha256': digest(path), 'files': files, 'declaration': manifest,
-            'package_sha256': digest(metadata_path)}
+            'package_sha256': digest(package / 'package.json')}
 
 
 def bind(store, declaration_path, package=None):

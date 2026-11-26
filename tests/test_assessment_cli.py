@@ -119,11 +119,11 @@ class QualifiedAssessmentCLI(unittest.TestCase):
             self.declaration['evaluator_images'][f'step-{number:02}'] = self.checker_image
             self.declaration['steps'][f'step-{number:02}'] = self.declaration['steps']['step-01']
         files = {name: self.digest(self.package / name) for name in self.declaration['requests']}
-        self.publish(steps=10, qualified_through=3, files=files)
+        self.publish(steps=3, qualified_through=3, files=files)
         self.make_run(requests=requests)
         self.bind()
         self.assertTrue(RunStore.open(self.root).binding)
-        self.publish(steps=10, qualified_through=2, files=files)
+        self.publish(steps=3, qualified_through=2, files=files)
         self.make_run(name='second', requests=requests)
         with self.assertRaisesRegex(ValueError, 'qualified through step 2'):
             self.bind('second')

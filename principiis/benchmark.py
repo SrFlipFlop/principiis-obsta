@@ -64,9 +64,12 @@ def check_sequence(metadata, sequence):
                          f'{qualified_through(metadata)}')
 
 
-def load(application):
-    """Read and verify a package: identity, step range and every hashed file."""
-    package = directory(application)
+def load(application, package=None):
+    """Read and verify a package: identity, step range and every hashed file.
+
+    `package` overrides the application's directory under `benchmarks/`.
+    """
+    package = Path(package) if package else directory(application)
     path = package / 'package.json'
     if path.is_symlink() or not path.is_file():
         raise ValueError('unknown application: ' + application)
