@@ -17,9 +17,13 @@ LIFECYCLE=ROOT/'benchmarks/document-portal/executor/lifecycle.py'
 class TrustedLifecycle(unittest.TestCase):
     def test_restart_retains_data_and_does_not_forward_fixture_metadata(self):
         # The sandbox may prohibit local listeners; report that limitation honestly.
+        # The hashed benchmark supervisor fixes ports 8123/8124, so they cannot be
+        # OS-assigned. Probe them as its servers bind (SO_REUSEADDR), so sockets from
+        # a previous run still in TIME_WAIT do not fail this test.
         for port in [8123,8124]:
             try:
                 with socket.socket() as probe:
+                    probe.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
                     probe.bind(('127.0.0.1',port))
             except PermissionError:
                 self.skipTest('sandbox prohibits loopback listeners; process contract runtime pending')
