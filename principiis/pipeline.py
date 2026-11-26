@@ -16,6 +16,8 @@ from .run_store import MAX_ATTEMPTS, controller, digest
 from .snapshot import preserve, validate
 
 OUTCOMES = ('joint_pass', 'candidate_failure', 'unassessable', 'evaluator_error')
+# An assessment that cannot be scored; never counted as a pass.
+UNSCORED = {'outcome': 'evaluator_error', 'functional': 'unassessable', 'security': 'unassessable'}
 
 
 def check_develop(store, step, *, retry):
@@ -113,8 +115,7 @@ def evaluate(store, step, *, rerun, evaluator):
               'role': 'primary' if number == 1 else 'rerun', 'binding_sha256': binding['manifest_sha256'],
               'provenance': binding, 'developer_result_sha256': digest(checkpoint.directory / 'result.json'),
               'snapshot': str(snapshot), 'snapshot_manifest_sha256': digest(snapshot.with_suffix('.json')),
-              'outcome': 'evaluator_error', 'functional': 'unassessable', 'security': 'unassessable',
-              'evaluation': {}, 'cleanup_pending': True}
+              **UNSCORED, 'evaluation': {}, 'cleanup_pending': True}
     output = store.allocate_assessment(dict(result, evidence=None))
     result['evidence'] = str(output / 'restricted/assessment.json')
     launched = False
@@ -139,29 +140,27 @@ def evaluate(store, step, *, rerun, evaluator):
         result['coverage'] = evaluator.coverage(step)
         result['evaluation']['runtime_elapsed_seconds'] = observed.get('elapsed_seconds')
     except (OSError, ValueError, TypeError, KeyError, KeyboardInterrupt) as error:
-        result.update(outcome='evaluator_error', functional='unassessable', security='unassessable',
-                      error=str(error) or 'controller interrupted')
+        result.update(UNSCORED, error=str(error) or 'controller interrupted')
     finally:
-        _record_cleanup(result, output / 'restricted/runtime-allocation.json', launched)
+        _record_cleanup(store, result, output / 'restricted/runtime-allocation.json', launched)
         try:
             validate(snapshot, runtime_image=manifest['runtime_image'])
             if digest(checkpoint.directory / 'result.json') != result['developer_result_sha256']:
                 raise ValueError('development result changed during evaluation')
             result['snapshot_unchanged'] = True
         except (OSError, ValueError) as error:
-            result.update(snapshot_unchanged=False, outcome='evaluator_error', functional='unassessable',
-                          security='unassessable', error=str(error))
+            result.update(UNSCORED, snapshot_unchanged=False, error=str(error))
         store.save_assessment(output, result)
     return result
 
 
-def _record_cleanup(result, allocation_path, launched):
+def _record_cleanup(store, result, allocation_path, launched):
     """An assessment whose containers may remain is never scored."""
     result['runtime_launch_attempted'] = launched
     result['cleanup_pending'] = launched
     try:
-        if allocation_path.is_file():
-            allocation = json.loads(allocation_path.read_text())
+        allocation = store.runtime_allocation(allocation_path)
+        if allocation is not None:
             result.update(runtime_allocation=str(allocation_path), containers=allocation.get('containers'),
                           cleanup_argv=allocation.get('cleanup_argv'),
                           cleanup_pending=allocation.get('resources_removed') is not True)
@@ -170,5 +169,5 @@ def _record_cleanup(result, allocation_path, launched):
     if result.get('evaluation', {}).get('termination', {}).get('forced'):
         result['cleanup_pending'] = True
     if result['cleanup_pending']:
-        result.update(outcome='evaluator_error', functional='unassessable', security='unassessable')
+        result.update(UNSCORED)
         result.setdefault('error', 'runtime cleanup remains unresolved')
