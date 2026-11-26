@@ -2,8 +2,6 @@
   "id": "document-portal",
   "version": "v3-draft1",
   "steps": 10,
-  "owner_review": "approved_first_three",
-  "qualification_status": "qualified_first_three",
   "qualified_through": 3,
   "authoring_principles": "approved-2026-11-15",
   "aligned_requests": [

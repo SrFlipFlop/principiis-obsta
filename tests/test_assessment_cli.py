@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-from support import temporary_directory
+from support import FIXTURE_CONTRACT, NODE_ORACLE, temporary_directory
 import fixture_runtime
 import unittest
 
@@ -60,8 +60,7 @@ class QualifiedAssessmentCLI(unittest.TestCase):
         (self.bundle / 'dependencies.json').write_text(json.dumps({'complete': True, 'images': {
             self.image: {'packages': [{'name': 'python', 'version': '3.12'}], 'preparation_evidence': ['preparation.json']},
             self.checker_image: {'packages': [{'name': 'playwright', 'version': '1.56.1'}], 'preparation_evidence': ['preparation.json']}}}))
-        self.declaration = {'version': 'engineering-1', 'complete': True, 'qualification_status': 'qualified',
-            'owner_review': 'approved', 'requests': {'requests/01.txt': self.digest(self.root / 'requests/01.txt')},
+        self.declaration = {'version': 'engineering-1', 'complete': True, 'requests': {'requests/01.txt': self.digest(self.root / 'requests/01.txt')},
             'runtime_image': self.image, 'evaluator_images': {'step-01': self.checker_image},
             'seccomp': 'seccomp.json', 'dependency_manifest': 'dependencies.json',
             'steps': {'step-01': {'contract': 'contract.json', 'app_command': ['python', '/workspace/app.py']}},
@@ -78,8 +77,7 @@ class QualifiedAssessmentCLI(unittest.TestCase):
         self.path = self.bundle / 'bundle.json'
         self.path.write_text(json.dumps(self.declaration))
         (self.package / 'package.json').write_text(json.dumps({'id': 'document-portal', 'version': 'fixture',
-            'qualification_status': 'qualified', 'owner_review': 'approved',
-            'private_bundle_sha256': self.digest(self.path), 'files': {'requests/01.txt': self.digest(self.package / 'requests/01.txt')}}))
+            'steps': 1, 'qualified_through': 1, 'private_bundle_sha256': self.digest(self.path), 'files': {'requests/01.txt': self.digest(self.package / 'requests/01.txt')}}))
 
     def cli(self, *arguments):
         return subprocess.run([sys.executable, '-m', 'principiis.assessment', *arguments,
@@ -96,7 +94,7 @@ class QualifiedAssessmentCLI(unittest.TestCase):
             self.assertEqual(path.read_bytes(), contents)
         self.assertFalse((self.root / 'development').exists())
 
-    def test_first_three_release_can_bind_without_qualifying_all_ten(self):
+    def test_release_binds_only_within_its_qualified_steps(self):
         sequence = json.loads((self.root / 'sequence.json').read_text())
         for number in (2, 3):
             name = f'requests/{number:02}.txt'
@@ -111,25 +109,43 @@ class QualifiedAssessmentCLI(unittest.TestCase):
         self.configuration['frozen_files'] = {name:self.digest(self.root / name)
             for name in ('runtime.json','sequence.json','requests/01.txt','requests/02.txt','requests/03.txt')}
         (self.root / 'configuration.json').write_text(json.dumps(self.configuration))
-        self.declaration.update(qualification_status='qualified_first_three',owner_review='approved_first_three')
         self.path.write_text(json.dumps(self.declaration))
         package = json.loads((self.package / 'package.json').read_text())
-        package.update(qualification_status='qualified_first_three',owner_review='approved_first_three',
-                       qualified_through=3,private_bundle_sha256=self.digest(self.path))
+        package.update(steps=10, qualified_through=3, private_bundle_sha256=self.digest(self.path))
         package['files'].update({name:self.digest(self.package / name)
                                  for name in ('requests/02.txt','requests/03.txt')})
         (self.package / 'package.json').write_text(json.dumps(package))
         accepted = self.cli('bind','--declaration',str(self.path))
         self.assertEqual(accepted.returncode,0,accepted.stderr)
         self.assertTrue((self.root/'evaluator-binding.json').exists())
-        from principiis.qualification import load_qualified_package
-        with self.assertRaisesRegex(ValueError,'ten-step'):
-            load_qualified_package(self.package,expected_steps=10)
         (self.root/'evaluator-binding.json').unlink()
         package['qualified_through'] = 2
         (self.package/'package.json').write_text(json.dumps(package))
         rejected = self.cli('bind','--declaration',str(self.path))
         self.assertNotEqual(rejected.returncode,0)
+        self.assertIn('qualified through step 2', rejected.stderr)
+
+    def evaluated_command(self):
+        self.generate_checkpoint()
+        self.assertEqual(self.cli('bind', '--declaration', str(self.path)).returncode, 0)
+        assessed = self.cli('evaluate', '--step', 'step-01')
+        self.assertEqual(assessed.returncode, 0, assessed.stderr)
+        record = json.loads((self.root / 'development/evaluations/step-01/1/result.json').read_text())
+        return json.loads(Path(record['evidence']).read_text())['evaluator_command']
+
+    def test_declared_evaluator_command_runs_in_the_evaluator_image(self):
+        self.declaration['evaluator_command'] = ['python3', '/checks/run.py']
+        self.publish()
+        self.assertEqual(self.evaluated_command(), ['python3', '/checks/run.py'])
+
+    def test_declaration_predating_evaluator_command_keeps_node_oracle_and_binds_unchanged(self):
+        # Declarations frozen before #68 also carried owner-review fields; they bind as before.
+        self.declaration.update(qualification_status='qualified_first_three', owner_review='approved_first_three')
+        self.publish()
+        self.assertEqual(self.evaluated_command(), ['node', '/oracle/check.cjs'])
+        binding = json.loads((self.root / 'evaluator-binding.json').read_text())
+        self.assertEqual(binding['manifest_sha256'], self.digest(self.path))
+        self.assertEqual(binding['declaration'], self.declaration)
 
     def test_bound_assessment_rejects_changed_dependency_before_allocating(self):
         self.assertEqual(self.cli('bind', '--declaration', str(self.path)).returncode, 0)
@@ -151,7 +167,8 @@ class QualifiedAssessmentCLI(unittest.TestCase):
         output = self.base / 'assessment'
         process = subprocess.run([sys.executable, '-m', 'principiis.evaluation', '--snapshot', str(snapshot),
             '--output', str(output), '--app-image', self.image, '--evaluator-image', self.checker_image,
-            '--app-command', json.dumps(['/workspace/python', '/workspace/app.py']), '--docker', '/nonexistent/docker'],
+            '--app-command', json.dumps(['/workspace/python', '/workspace/app.py']), '--docker', '/nonexistent/docker',
+            *FIXTURE_CONTRACT, *NODE_ORACLE],
             cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(process.returncode, 0, process.stderr)
         result = json.loads((output / 'assessment.json').read_text())
@@ -305,7 +322,7 @@ else: print('engineering Docker boundary fixture')
             output = self.base / mode
             process = subprocess.run([sys.executable, '-m', 'principiis.evaluation', '--snapshot', str(snapshot),
                 '--output', str(output), '--app-image', self.image, '--evaluator-image', self.checker_image,
-                '--check-contract', str(self.bundle / 'contract.json'), '--docker', str(docker)],
+                '--check-contract', str(self.bundle / 'contract.json'), *NODE_ORACLE, '--docker', str(docker)],
                 cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(process.returncode, 0, process.stderr)
             result = json.loads((output / 'assessment.json').read_text())
@@ -342,7 +359,7 @@ else: print('{}')
         output = self.base / 'permissions-assessment'
         process = subprocess.run([sys.executable, '-m', 'principiis.evaluation', '--snapshot', str(snapshot),
             '--output', str(output), '--app-image', self.image, '--evaluator-image', self.checker_image,
-            '--docker', str(docker), '--app-command', '["python", "app.py"]'],
+            '--docker', str(docker), '--app-command', '["python", "app.py"]', *FIXTURE_CONTRACT, *NODE_ORACLE],
             cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(process.returncode, 0, process.stderr)
         result = json.loads((output / 'assessment.json').read_text())

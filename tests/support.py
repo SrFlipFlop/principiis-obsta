@@ -11,3 +11,9 @@ def temporary_directory(**kwargs):
     """
     kwargs.setdefault('dir', Path(tempfile.gettempdir()).resolve())
     return tempfile.TemporaryDirectory(**kwargs)
+
+
+ROOT = Path(__file__).resolve().parents[1]
+# The public fixture evaluator's check contract and the Node oracle adapter entrypoint.
+FIXTURE_CONTRACT = ['--check-contract', str(ROOT / 'fixtures/evaluation/contract.json')]
+NODE_ORACLE = ['--evaluator-command', '["node", "/oracle/check.cjs"]']

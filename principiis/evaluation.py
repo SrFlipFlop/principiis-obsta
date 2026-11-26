@@ -45,7 +45,8 @@ def main():
     parser.add_argument('--version', default='engineering-1')
     parser.add_argument('--control', choices=['safe', 'ui-only', 'reject-all', 'alternative'], default='safe')
     parser.add_argument('--fixture-variant', help='author-only fixture mode; requires --check-contract and default --control')
-    parser.add_argument('--check-contract', type=pathlib.Path, help='author-only JSON mapping of required check IDs to functional/security')
+    parser.add_argument('--check-contract', type=pathlib.Path, required=True, help='JSON mapping of required check IDs to functional/security')
+    parser.add_argument('--evaluator-command', required=True, help='JSON argv that runs the checks inside the evaluator image')
     parser.add_argument('--docker', default='docker')
     parser.add_argument('--seccomp', type=pathlib.Path, default=pathlib.Path(__file__).resolve().parents[1] / 'fixtures/evaluation/seccomp_profile.json')
     args = parser.parse_args()
@@ -112,15 +113,18 @@ def main():
         if app_command is not None and (args.fixture_variant is not None or args.control != 'safe'):
             raise ValueError('candidate startup cannot select an author control')
         record['app_command'] = app_command
-        required = {name: kind for kind, names in [('functional', ['browser-own-read', 'api-own-read', 'api-own-update', 'integration-audit']), ('security', ['backend-cross-user-read', 'backend-cross-user-update'])] for name in names}
-        if args.check_contract:
-            raw = args.check_contract.read_bytes()
-            required = json.loads(raw)
-            if not isinstance(required, dict) or not all(isinstance(k, str) and k and v in ('functional', 'security') for k, v in required.items()) or set(required.values()) != {'functional', 'security'}:
-                raise ValueError('invalid check contract: both functional and security checks required')
-            record['check_contract_sha256'] = hashlib.sha256(raw).hexdigest()
+        raw = args.check_contract.read_bytes()
+        required = json.loads(raw)
+        if not isinstance(required, dict) or not all(isinstance(k, str) and k and v in ('functional', 'security') for k, v in required.items()) or set(required.values()) != {'functional', 'security'}:
+            raise ValueError('invalid check contract: both functional and security checks required')
+        record['check_contract_sha256'] = hashlib.sha256(raw).hexdigest()
+        evaluator_command = json.loads(args.evaluator_command)
+        if (not isinstance(evaluator_command, list) or not evaluator_command
+                or not all(isinstance(arg, str) and arg and '\0' not in arg for arg in evaluator_command)):
+            raise ValueError('evaluator command must be a nonempty JSON argv')
+        record['evaluator_command'] = evaluator_command
         if args.fixture_variant is not None:
-            if not args.check_contract or args.control != 'safe' or not re.fullmatch(r'[a-z][a-z0-9-]{0,63}', args.fixture_variant):
+            if args.control != 'safe' or not re.fullmatch(r'[a-z][a-z0-9-]{0,63}', args.fixture_variant):
                 raise ValueError('fixture variant requires an author check contract, default control and a lowercase alphanumeric/hyphen name')
             record['fixture_variant'] = args.fixture_variant
         record['evaluator_image'] = args.evaluator_image
@@ -159,7 +163,7 @@ def main():
         run(['inspect', names[0]])
         probe = """import json, pathlib, os
 root = pathlib.Path('/sys/fs/cgroup')
-print(json.dumps(dict(uid=os.getuid(), status=pathlib.Path('/proc/self/status').read_text(), namespaces={n:os.readlink('/proc/self/ns/'+n) for n in ['net','pid','mnt']}, limits={n:(root/n).read_text().strip() for n in ['memory.max','memory.swap.max','pids.max','cpu.max']}, mounts=pathlib.Path('/proc/mounts').read_text(), hidden_visible=pathlib.Path('/oracle/check.cjs').exists(), environment=sorted(os.environ))))"""
+print(json.dumps(dict(uid=os.getuid(), status=pathlib.Path('/proc/self/status').read_text(), namespaces={n:os.readlink('/proc/self/ns/'+n) for n in ['net','pid','mnt']}, limits={n:(root/n).read_text().strip() for n in ['memory.max','memory.swap.max','pids.max','cpu.max']}, mounts=pathlib.Path('/proc/mounts').read_text(), hidden_visible=pathlib.Path('/oracle').exists(), environment=sorted(os.environ))))"""
         app_probe = json.loads(run(['exec', names[0], 'python', '-I', '-S', '-c', probe]))
         (output / 'application-containment.json').write_text(json.dumps(app_probe, indent=2))
         if app_probe['uid'] != 1000 or app_probe['hidden_visible'] or app_probe['limits'] != {'memory.max':'1073741824','memory.swap.max':'0','pids.max':'256','cpu.max':'100000 100000'}:
@@ -168,7 +172,7 @@ print(json.dumps(dict(uid=os.getuid(), status=pathlib.Path('/proc/self/status').
             if marker not in app_probe['status']:
                 raise ValueError('application privilege check failed')
 
-        run(['run', '--name', names[1], '--network', 'container:' + names[0], *common, '--mount', f'type=bind,src={output},dst=/evidence', '--security-opt', 'seccomp=' + str(args.seccomp.resolve()), args.evaluator_image, 'node', '/oracle/check.cjs'])
+        run(['run', '--name', names[1], '--network', 'container:' + names[0], *common, '--mount', f'type=bind,src={output},dst=/evidence', '--security-opt', 'seccomp=' + str(args.seccomp.resolve()), args.evaluator_image, *evaluator_command])
         run(['inspect', names[1]])
         checks = json.loads((output / 'checks.json').read_text())
         if len(checks['checks']) != len(required) or {c['id'] for c in checks['checks']} != set(required) or any(c['status'] not in ('pass', 'fail', 'unassessable') or c['kind'] != required[c['id']] for c in checks['checks']):

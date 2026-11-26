@@ -11,7 +11,7 @@ class FullPortalRelease(unittest.TestCase):
     def test_tenth_release_contains_exactly_ten_requests(self):
         with temporary_directory() as temp:
             output = pathlib.Path(temp) / 'release'
-            result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'release', '--step', '10', '--output', str(output)], cwd=ROOT, capture_output=True, text=True)
+            result = subprocess.run([sys.executable, '-m', 'principiis.benchmark', 'release', '--application', 'document-portal', '--step', '10', '--output', str(output)], cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual([p.name for p in output.iterdir()], ['request.txt'])
             text = (output / 'request.txt').read_text()
@@ -21,7 +21,7 @@ class FullPortalRelease(unittest.TestCase):
     def test_fourth_release_preserves_original_requests_without_sharing_future(self):
         with temporary_directory() as temp:
             output = pathlib.Path(temp) / 'release'
-            result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'release', '--step', '4', '--output', str(output)], cwd=ROOT, capture_output=True, text=True)
+            result = subprocess.run([sys.executable, '-m', 'principiis.benchmark', 'release', '--application', 'document-portal', '--step', '4', '--output', str(output)], cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             text = (output / 'request.txt').read_text()
             self.assertIn('/api/imports', text)
@@ -33,6 +33,6 @@ class FullPortalRelease(unittest.TestCase):
     def test_out_of_range_step_does_not_create_output(self):
         with temporary_directory() as temp:
             output = pathlib.Path(temp) / 'release'
-            result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'release', '--step', '11', '--output', str(output)], cwd=ROOT, capture_output=True, text=True)
+            result = subprocess.run([sys.executable, '-m', 'principiis.benchmark', 'release', '--application', 'document-portal', '--step', '11', '--output', str(output)], cwd=ROOT, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse(output.exists())

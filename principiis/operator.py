@@ -82,27 +82,20 @@ def initialize(args):
     load_config(runtime_path)  # Validate configuration without starting Docker or allocating an attempt.
     condition_path, condition = load_condition(getattr(args, 'condition', 'baseline'))
     root = run_directory(args)
-    package = REPOSITORY / 'benchmarks' / args.application
-    metadata = json.loads((package / 'package.json').read_text())
-    count = getattr(args, 'steps', 3)
-    if count == 10:
-        from .qualification import load_qualified_package
-        metadata = load_qualified_package(package, expected_steps=10)
-        if not args.evaluator_manifest:
-            raise ValueError('ten-step run requires --evaluator-manifest during init')
-    elif (metadata.get('id') != args.application
-          or metadata.get('qualification_status') not in ('qualified_first_three', 'qualified')
-          or metadata.get('owner_review') not in ('approved_first_three', 'approved')):
-        raise ValueError('three-step rehearsal requires a qualified and owner-reviewed application package')
-    steps, requests = [], {}
-    for number in range(1, count + 1):
-        relative = f'requests/{number:02}.txt'
-        source = package / relative
-        if digest(source) != metadata['files'][relative]:
-            raise ValueError('released request differs from package hash')
-        requests[relative] = source.read_bytes()
-        steps.append({'id': f'step-{number:02}', 'version': metadata['version'],
-                      'sequence_version': metadata['version'], 'request': relative})
+    from . import benchmark
+    metadata = benchmark.load(args.application)
+    limit = benchmark.qualified_through(metadata)
+    count = limit if getattr(args, 'steps', None) is None else args.steps
+    if not 1 <= count <= limit:
+        raise ValueError(f'{args.application} evaluator is qualified through step {limit}; '
+                         f'choose --steps 1 to {limit}')
+    full_sequence = count == metadata['steps']
+    if full_sequence and not args.evaluator_manifest:
+        raise ValueError('a full-sequence run requires --evaluator-manifest during init')
+    requests = dict(benchmark.requests(args.application, metadata, count))
+    steps = [{'id': benchmark.step_id(number), 'version': metadata['version'],
+              'sequence_version': metadata['version'], 'request': benchmark.request_name(number)}
+             for number in range(1, count + 1)]
     sequence = {'id': args.application, 'version': metadata['version'],
                 'condition': {'id': condition['id'], 'version': condition['version']}, 'steps': steps}
     root.mkdir(parents=True, exist_ok=False)
@@ -117,9 +110,10 @@ def initialize(args):
     configuration = {
         'schema_version': 1, 'run_name': args.run, 'application': args.application,
         'condition': sequence['condition'],
-        'run_mode': 'qualification' if count == 10 else 'development-rehearsal', 'evaluator_binding': 'unbound',
+        'run_mode': 'qualification' if full_sequence else 'development-rehearsal', 'evaluator_binding': 'unbound',
         'investigation': getattr(args, 'investigation', 'final'),
-        'package_version': metadata['version'], 'package_sha256': digest(package / 'package.json'),
+        'package_version': metadata['version'],
+        'package_sha256': digest(benchmark.directory(args.application) / 'package.json'),
         'frozen_files': {name: digest(root / name) for name in ('runtime.json', 'condition.json', 'sequence.json', *requests)},
         'qualification': 'pending runtime review and scoped live acceptance; no primary scores',
     }
@@ -180,7 +174,9 @@ def derive_evaluation(args):
     if not source_run_id or [entry['allocation']['id'] for entry in records if entry['result'] and entry['result'].get('completed')] != ids:
         raise ValueError('every source checkpoint must have one completed development result')
     source_files = imported_development_files(source)
-    metadata = json.loads((REPOSITORY / 'benchmarks' / original['application'] / 'package.json').read_text())
+    from . import benchmark
+    package_json = benchmark.directory(original['application']) / 'package.json'
+    metadata = json.loads(package_json.read_text())
     if metadata.get('version') != original.get('package_version'):
         raise ValueError('current package version differs from source development; use a compatible release')
     target.mkdir(parents=True, exist_ok=False)
@@ -207,7 +203,7 @@ def derive_evaluation(args):
         configuration = dict(original, run_name=args.run, run_mode='evaluation-derived',
                              evaluator_binding='unbound', investigation='none',
                              package_version=metadata['version'],
-                             package_sha256=digest(REPOSITORY / 'benchmarks' / original['application'] / 'package.json'),
+                             package_sha256=digest(package_json),
                              qualification='evaluation-only import of completed retained development; no model launch',
                              source_run={'run_name': original['run_name'], 'root': str(source), 'run_id': source_run_id},
                              lineage_sha256=digest(target / 'lineage.json'))
@@ -252,11 +248,11 @@ def load_run(args):
 
 
 def step_identity(selection):
-    choices = {str(number): f'step-{number:02}' for number in range(1, 11)}
-    choices.update({value: value for value in choices.values()})
-    if selection not in choices:
-        raise ValueError('select request 1 through 10')
-    return choices[selection]
+    from .benchmark import step_id
+    match = re.fullmatch(r'(?:step-)?0*([1-9][0-9]*)', selection or '')
+    if not match or (selection.startswith('step-') and step_id(int(match[1])) != selection):
+        raise ValueError('select a request number such as 1 or step-01')
+    return step_id(int(match[1]))
 
 
 def selected_step(root, selection):
@@ -384,7 +380,7 @@ def build_status(root, configuration):
                                               'retry this step with --retry; the original attempt stays saved.')
     if configuration['run_mode'] == 'qualification' and not assessment_binding:
         next_action = {'action': 'new-run-required', 'step': None, 'retry': False,
-                       'explanation': 'A ten-step run needs its qualified evaluator bound during init; create a new run.'}
+                       'explanation': 'A full-sequence run needs its qualified evaluator bound during init; create a new run.'}
     elif assessment_binding:
         pending = next((checkpoint for checkpoint in checkpoints
                         if checkpoint['completed'] and not checkpoint['primary_assessment']), None)
@@ -501,7 +497,7 @@ def develop(args):
         step = selected_step(root, args.step)
         if configuration['run_mode'] == 'qualification':
             if not status['assessment_binding']:
-                raise ValueError('ten-step qualification requires a qualified evaluator binding before development')
+                raise ValueError('full-sequence qualification requires a qualified evaluator binding before development')
             if any(checkpoint['completed'] and not checkpoint['primary_assessment'] for checkpoint in status['checkpoints']):
                 raise ValueError('separately evaluate the previous completed checkpoint before further qualification development')
         # Validate runtime before allocating launch or development records.
@@ -937,14 +933,13 @@ def main():
         command.add_argument('--runs-root', default=os.environ.get('PRINCIPIIS_RUNS_ROOT', str(Path.home() / '.local/share/principiis/runs')))
         command.add_argument('--format', choices=('markdown', 'json', 'csv') if name == 'report' else ('markdown', 'json'), default='markdown')
         command.add_argument('--verbose', action='store_true')
-    commands['init'].add_argument('--application', choices=(
-        'document-portal', 'customer-support-desk', 'team-expense-manager',
-        'workflow-dashboard', 'online-marketplace'), required=True)
+    from .benchmark import applications
+    commands['init'].add_argument('--application', choices=applications(), required=True)
     commands['init'].add_argument('--runtime-config', required=True)
-    commands['init'].add_argument('--evaluator-manifest', help='qualified hidden evaluator release; required for ten steps')
+    commands['init'].add_argument('--evaluator-manifest', help='qualified hidden evaluator release; required for a full-sequence run')
     commands['init'].add_argument('--condition', default='baseline')
     commands['init'].add_argument('--investigation', choices=('none', 'final', 'each-step'), default='final')
-    commands['init'].add_argument('--steps', type=int, choices=(3, 10), default=3)
+    commands['init'].add_argument('--steps', type=int, help='steps to freeze; default: every qualified step')
     commands['derive-evaluation'].add_argument('--source-run', required=True, help='completed original run in the same runs root')
     commands['derive-evaluation'].add_argument('--evaluator-manifest', required=True, help='qualified replacement evaluator release')
     commands['develop'].add_argument('--step', required=True)

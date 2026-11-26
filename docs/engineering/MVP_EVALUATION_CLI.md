@@ -55,9 +55,9 @@ ledger. Reports mark imported development measurements as copied evidence; they 
 not additional model usage. Comparing source and derived reports must not sum their
 development tokens as independent sessions. A new release still needs its own control tests
 ([ADR 0002](../adr/0002-control-tests-qualify-evaluator-versions.md)); this import does not qualify it.
-For a three-step run, the public `qualified_first_three` / `approved_first_three`
-declaration and private manifest must match all three frozen requests. The ten-step
-initialization gate still requires a separately qualified full package from #9 and its evaluator manifest.
+A run binds only when its frozen steps are a prefix of the package requests no longer
+than the package's `qualified_through`, and the private manifest matches every frozen
+request. A full-sequence run additionally needs its evaluator manifest at `init`.
 
 Dependency preparation remains an explicit prerequisite: the operator command does
 not guess dependencies, create a lockfile or adapt an incompatible historical bundle.
@@ -67,8 +67,8 @@ restricted evaluator in a disposable copy; evaluation never launches development
 repairs the candidate. Keep hidden tests and results outside
 development contexts and public Git.
 
-The declaration includes `version`, `complete`, `qualification_status`, `owner_review`,
-`requests` (released path/hash pairs), `files` (private dependency path/hash pairs),
+The declaration includes `version`, `complete`, an optional `evaluator_command` argv
+(default `["node", "/oracle/check.cjs"]`), `requests` (released path/hash pairs), `files` (private dependency path/hash pairs),
 `runtime_image`, `evaluator_images` keyed by frozen checkpoint ID, and `steps` mapping
 each checkpoint to its `contract` and `app_command`. `seccomp` and
 `dependency_manifest` name hashed dependencies. The dependency inventory maps exact
@@ -159,9 +159,9 @@ Missing checks, unavailable runtimes and evaluator errors remain explicit outcom
 Saved reports are derived exports and can be regenerated without changing source
 evidence. All three formats remain operator artifacts containing hidden results.
 
-For a new ten-step qualification run, use `init --steps 10`. This requires #9's
-qualified package and freezes all ten request contracts before allocation; the
-default three-step rehearsal remains available. Bind the qualified evaluator before
+For a full-sequence qualification run, use `init --steps 10` once the package's
+`qualified_through` reaches 10 (for the portal this needs #9). It freezes every request
+contract before allocation; shorter runs within `qualified_through` remain available. Bind the qualified evaluator before
 the first development session. Each further development step requires a separately
 retained primary assessment of the previous completed checkpoint. Candidate failure,
 unassessable results and evaluator errors remain part of the record and permit the

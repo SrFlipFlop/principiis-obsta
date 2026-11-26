@@ -33,6 +33,10 @@ Follow the [baseline command sequence](README.md#baseline-command-sequence): `in
 
 Hidden checks, evaluator bundles, release manifests and private evidence live in the git-ignored `private/` directory of the operator's checkout. Runs are stored under `$PRINCIPIIS_RUNS_ROOT`, outside the checkout. Public `benchmarks/` packages contain only the developer-visible requests and design notes. Keep the research checkout, and any directory with `AGENTS.md` or researcher config in its ancestors, out of development workspaces.
 
+## Benchmark packages
+
+An application is data, not code: `benchmarks/<app>/package.json` lists `id`, `version`, `steps`, `qualified_through`, `private_bundle_sha256` and a `files` map of SHA-256 digests covering `requests/01.txt`…. `qualified_through` is the last step whose evaluator passed its controls ([ADR 0002](docs/adr/0002-control-tests-qualify-evaluator-versions.md)); `init --steps` accepts 1 to that number and defaults to it. The private evaluator declaration, whose digest the package pins, names each step's contract and app command, the evaluator images and `evaluator_command` (declarations without it run the Node oracle, `node /oracle/check.cjs`). `principiis/benchmark.py` is the only loader; `python3 -m principiis.benchmark release --application APP --step N --output DIR` writes the cumulative request text a developer sees at step N.
+
 ## Out of scope right now
 
 - Security interventions (guidance, skills, review/repair hooks, threat models). The planned first one is the [plan–implement–verify skill](docs/DEVELOPMENT_SKILL_CONDITION.md).

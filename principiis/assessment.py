@@ -14,17 +14,23 @@ from .manual import _journal_attempts
 from .snapshot import validate
 from .candidate_dependencies import inventory as candidate_dependency_inventory
 
-from . import resource
+from . import benchmark, resource
 from .jsonio import write_json
 
-BENCHMARKS = Path(__file__).resolve().parents[1] / 'benchmarks'
+# Declarations bound before the field existed ran the Node oracle adapter's entrypoint.
+NODE_ORACLE_COMMAND = ['node', '/oracle/check.cjs']
 
 
 def package_for(configuration):
-    application = configuration.get('application')
-    if not isinstance(application, str) or not re.fullmatch(r'[a-z][a-z0-9-]*', application):
-        raise ValueError('invalid application identity')
-    return BENCHMARKS / application
+    return benchmark.directory(configuration.get('application'))
+
+
+def evaluator_command(manifest):
+    command = manifest.get('evaluator_command', NODE_ORACLE_COMMAND)
+    if (not isinstance(command, list) or not command
+            or not all(isinstance(arg, str) and arg and '\0' not in arg for arg in command)):
+        raise ValueError('evaluator command must be a nonempty argv')
+    return command
 
 
 def sha(path):
@@ -57,27 +63,17 @@ def load_declaration(root, configuration, declaration_path, *, frozen_release=No
     package = package_for(configuration)
     metadata_path = Path(frozen_release) if frozen_release else package / 'package.json'
     metadata = json.loads(metadata_path.read_text())
-    scoped = False
-    if (metadata.get('qualification_status') == 'qualified_first_three'
-            and metadata.get('owner_review') == 'approved_first_three'
-            and metadata.get('qualified_through') == 3
-            and (root / 'sequence.json').is_file()):
-        sequence = json.loads((root / 'sequence.json').read_text())
-        scoped = ([step.get('id') for step in sequence['steps']] == ['step-01','step-02','step-03']
-                  and [step.get('request') for step in sequence['steps']]
-                  == ['requests/01.txt','requests/02.txt','requests/03.txt'])
-    full = (metadata.get('qualification_status') == 'qualified'
-            and metadata.get('owner_review') == 'approved')
-    if (not (scoped or full) or not metadata.get('private_bundle_sha256')):
-        raise ValueError('a qualified, owner-approved application release with a bound evaluator is required')
+    if not (root / 'sequence.json').is_file():
+        raise ValueError('a frozen run sequence is required before binding a qualified evaluator')
+    sequence = json.loads((root / 'sequence.json').read_text())
+    benchmark.check_sequence(metadata, sequence)
     if sha(path) != metadata['private_bundle_sha256']:
         raise ValueError('evaluator declaration differs from the qualified public release')
     manifest = json.loads(path.read_text())
     if (not isinstance(manifest, dict) or not isinstance(manifest.get('version'), str)
-            or not manifest['version'].strip() or manifest.get('complete') is not True
-            or manifest.get('qualification_status') != metadata.get('qualification_status')
-            or manifest.get('owner_review') != metadata.get('owner_review')):
-        raise ValueError('complete qualified and approved evaluator declaration required')
+            or not manifest['version'].strip() or manifest.get('complete') is not True):
+        raise ValueError('complete qualified evaluator declaration required')
+    evaluator_command(manifest)
     if metadata.get('id') != configuration.get('application'):
         raise ValueError('evaluator application differs from the frozen run')
     if metadata.get('version') != configuration.get('package_version'):
@@ -85,7 +81,6 @@ def load_declaration(root, configuration, declaration_path, *, frozen_release=No
     for name, expected in configuration['frozen_files'].items():
         if sha(_relative(root, name)) != expected:
             raise ValueError('frozen development configuration changed; use a new run')
-    sequence = json.loads((root / 'sequence.json').read_text())
     expected_requests = {step['request']: sha(_relative(root, step['request'])) for step in sequence['steps']}
     if manifest.get('requests') != expected_requests:
         raise ValueError('evaluator requests differ from the frozen development requests')
@@ -312,6 +307,7 @@ def evaluate(root, configuration, step, *, rerun=False, authorization=None):
                    '--output', str(output / 'restricted'), '--app-image', manifest['runtime_image'],
                    '--evaluator-image', manifest['evaluator_images'][step], '--version', binding['version'],
                    '--check-contract', str(declaration / settings['contract']),
+                   '--evaluator-command', json.dumps(evaluator_command(manifest)),
                    '--seccomp', str(declaration / manifest['seccomp']),
                    '--app-command', json.dumps(settings['app_command']), '--docker', runtime.get('docker', 'docker')]
         result['python_executable'] = {'path': sys.executable, 'sha256': sha(sys.executable), 'version': sys.version}

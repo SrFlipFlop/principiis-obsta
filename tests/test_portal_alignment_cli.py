@@ -13,7 +13,7 @@ class AlignedPortalRelease(unittest.TestCase):
     def test_one_package_default_releases_tenth_step(self):
         with temporary_directory() as temp:
             out = Path(temp) / 'released'
-            result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'release',
+            result = subprocess.run([sys.executable, '-m', 'principiis.benchmark', 'release', '--application', 'document-portal',
                                      '--step', '10', '--output', str(out)],
                                     cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -26,7 +26,7 @@ class AlignedPortalRelease(unittest.TestCase):
     def test_short_request_retains_product_roles_without_security_instructions(self):
         with temporary_directory() as temp:
             out = Path(temp) / 'released'
-            result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'release',
+            result = subprocess.run([sys.executable, '-m', 'principiis.benchmark', 'release', '--application', 'document-portal',
                                      '--step', '2', '--output', str(out)],
                                     cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -41,7 +41,5 @@ class AlignedPortalRelease(unittest.TestCase):
             self.assertIn('requirements.txt', text)
             metadata = json.loads((ROOT / 'benchmarks/document-portal/package.json').read_text())
             self.assertEqual(metadata['version'], 'v3-draft1')
-            self.assertEqual(metadata['qualification_status'], 'qualified_first_three')
-            self.assertEqual(metadata['owner_review'], 'approved_first_three')
             self.assertEqual(metadata['qualified_through'], 3)
             self.assertRegex(metadata['private_bundle_sha256'], r'^[0-9a-f]{64}$')

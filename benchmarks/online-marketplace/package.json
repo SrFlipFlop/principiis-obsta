@@ -2,8 +2,7 @@
   "id": "online-marketplace",
   "version": "v1-draft1",
   "steps": 10,
-  "owner_review": "pending",
-  "qualification_status": "not_started",
+  "qualified_through": 0,
   "files": {
     "README.md": "0d99816ddedaf122a08a4d4220c31d82df4070ae68647bfe3796171fdb7a3e53",
     "BENCHMARK_DESIGN.md": "e70abe81b52caa2665389b66d7a28c199a654614dab6395a8e5f5c73252f5eb4",
