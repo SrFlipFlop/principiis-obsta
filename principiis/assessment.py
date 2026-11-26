@@ -15,7 +15,7 @@ from .snapshot import validate
 from .candidate_dependencies import inventory as candidate_dependency_inventory
 
 from . import resource
-from .resume import write_json
+from .jsonio import write_json
 
 BENCHMARKS = Path(__file__).resolve().parents[1] / 'benchmarks'
 

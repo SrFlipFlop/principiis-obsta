@@ -12,7 +12,7 @@ import uuid
 
 from .development_runtime import IMAGE_ID, docker_command, docker_environment, inspect_image, local_path, restrictions
 from .codex import redact
-from .resume import write_json
+from .jsonio import write_json
 from .snapshot import validate
 
 

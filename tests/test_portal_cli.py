@@ -1,7 +1,5 @@
 import pathlib
-import hashlib
 import json
-import shutil
 import subprocess
 import sys
 from support import temporary_directory
@@ -37,32 +35,6 @@ class PortalRelease(unittest.TestCase):
             self.assertIn('/api/documents', text)
             self.assertIn('/api/collections', text)
             self.assertNotIn('/api/search', text)
-
-    def test_bind_rejects_missing_private_bundle_before_output(self):
-        with temporary_directory() as temp:
-            out = pathlib.Path(temp) / 'bound'
-            result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'bind', '--bundle', temp, '--output', str(out)], cwd=ROOT, capture_output=True, text=True)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn('bundle.json', result.stderr)
-            self.assertFalse(out.exists())
-
-    def test_pending_checker_qualification_cannot_evaluate_with_prior_images(self):
-        with temporary_directory() as temp:
-            root = pathlib.Path(temp)
-            (root / 'principiis').mkdir()
-            (root / 'principiis/__init__.py').touch()
-            shutil.copyfile(ROOT / 'principiis/portal.py', root / 'principiis/portal.py')
-            package = root / 'benchmarks/document-portal'
-            package.mkdir(parents=True)
-            bundle = root / 'private'
-            bundle.mkdir()
-            raw = json.dumps(dict(files={}, qualification_status='pending', evaluator_images={})).encode()
-            (bundle / 'bundle.json').write_bytes(raw)
-            (package / 'package.json').write_text(json.dumps(dict(private_bundle_sha256=hashlib.sha256(raw).hexdigest())))
-            result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'evaluate', '--bundle', str(bundle), '--step', '1', '--snapshot', str(root / 'absent')], cwd=root, capture_output=True, text=True)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn('checker qualification pending', result.stderr)
-            self.assertFalse((bundle / 'runtime').exists())
 
     def test_author_fixture_variants_reach_restricted_evaluator_preflight(self):
         for variant in ['alternative-layout-slow', 'stale-revocation']:

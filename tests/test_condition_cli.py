@@ -22,6 +22,14 @@ class ConditionCLI(unittest.TestCase):
         self.assertNotIn('assess-final', result.stdout)
         self.assertNotIn('bind-evaluator', result.stdout)
 
+    def test_removed_legacy_run_commands_are_rejected(self):
+        for command in ('run', 'sequence'):
+            with self.subTest(command=command):
+                result = subprocess.run([sys.executable, str(ROOT / 'bin/principiis'), command, '--help'],
+                                        cwd=ROOT, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('invalid choice', result.stderr)
+
     def test_init_freezes_baseline_condition_and_investigation_choice(self):
         with temporary_directory() as directory:
             base = Path(directory)

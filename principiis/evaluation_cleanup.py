@@ -8,7 +8,7 @@ import time
 import uuid
 
 from .development_runtime import docker_command, docker_environment
-from .resume import write_json
+from .jsonio import write_json
 
 
 def _allocation(root, assessment):

@@ -1,7 +1,0 @@
-{
-  "id": "engineering-greeting",
-  "version": "1",
-  "condition": {"id": "ordinary", "version": "1"},
-  "request": "request.txt",
-  "check": ["python3", "check.py"]
-}

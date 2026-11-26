@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 from support import temporary_directory
+import fixture_runtime
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -162,12 +163,9 @@ class QualifiedAssessmentCLI(unittest.TestCase):
 
     def generate_checkpoint(self, command=None):
         command = command or "from pathlib import Path; Path('app.py').write_text('print(42)')"
-        process = subprocess.run([sys.executable, '-m', 'principiis.manual', 'develop',
-            '--sequence', str(self.root / 'sequence.json'), '--output', str(self.root / 'development'),
-            '--step', 'step-01', '--development-only', '--executor',
-            json.dumps([sys.executable, '-c', command])],
-            cwd=self.source, capture_output=True, text=True)
-        self.assertEqual(process.returncode, 0, process.stderr)
+        runtime = self.base / 'fixture-runtime.json'
+        runtime.write_text(json.dumps({'argv': [sys.executable, '-c', command]}))
+        fixture_runtime.develop(self.root / 'sequence.json', self.root / 'development', 'step-01', runtime)
 
     def test_real_restricted_runner_failure_is_retained_and_rerun_is_explicit(self):
         # The actual restricted runner executes; image inspection fails at the
