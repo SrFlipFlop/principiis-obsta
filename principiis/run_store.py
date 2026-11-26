@@ -339,6 +339,12 @@ class RunStore:
     def assessments_for(self, step):
         return [assessment for assessment in self.assessments if assessment['checkpoint'] == step]
 
+    def frozen(self, name):
+        """A frozen JSON input such as `runtime.json`, verified when the store opened."""
+        if name not in self.configuration['frozen_files']:
+            raise ValueError('not a frozen run input: ' + name)
+        return json.loads((self.root / name).read_text())
+
     def request_text(self, through):
         """The cumulative request text a developer sees at step index `through` (0-based)."""
         return '\n\n'.join((self.root / step['request']).read_text() for step in self.sequence['steps'][:through + 1])
