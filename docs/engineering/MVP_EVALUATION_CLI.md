@@ -88,7 +88,7 @@ runtime/checker images. The controller does not install candidate dependencies o
 infer them from a requirements file; an incompatible or missing runtime dependency
 remains an evaluator error. A candidate using dependencies outside the image and
 retained virtual environments needs separate preparation and qualification before
-assessment. Live generated-candidate acceptance remains required for #43.
+assessment. Live generated-candidate acceptance was completed under #43 and #44.
 The current retained Document Portal snapshots have no virtual environment; the
 first-three release inventories their pinned runtime and checker images and records
 their requirements-file hashes. A different candidate environment needs its own

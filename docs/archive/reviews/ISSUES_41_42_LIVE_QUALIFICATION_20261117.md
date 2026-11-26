@@ -219,23 +219,23 @@ archive preserves each run separately and excludes the subscription credential c
 the earlier #40 archive is unchanged. Archives are evidence copies, not additional
 active runs. Each source file's hash is retained in the archive index.
 
-- [Archive index](../../artifacts/live/mvp1-41-42-20261117/summary.json)
-- [Continuation readable report](../../artifacts/live/mvp1-41-42-20261117/continuation/run/reports/development.md),
-  [JSON](../../artifacts/live/mvp1-41-42-20261117/continuation/run/reports/development.json),
-  [CSV](../../artifacts/live/mvp1-41-42-20261117/continuation/run/reports/development.csv)
-- [Continuation reconciliation](../../artifacts/live/mvp1-41-42-20261117/continuation/launch/reconciliation.json)
-  and [session/boundary/snapshot audit](../../artifacts/live/mvp1-41-42-20261117/continuation/launch/continuation-audit-final.json)
-- [Request-2 browser/API observations](../../artifacts/live/mvp1-41-42-20261117/continuation/launch/browser-step2/browser-smoke.json)
-  and [collection/member screenshot](../../artifacts/live/mvp1-41-42-20261117/continuation/launch/browser-step2/collection.png)
-- [Request-3 browser/API observations](../../artifacts/live/mvp1-41-42-20261117/continuation/launch/browser-step3/browser-smoke.json),
-  [search screenshot](../../artifacts/live/mvp1-41-42-20261117/continuation/launch/browser-step3/search.png),
-  [archive screenshot](../../artifacts/live/mvp1-41-42-20261117/continuation/launch/browser-step3/archive.png)
-  and [actual duplicate-filename/browser ZIP verification](../../artifacts/live/mvp1-41-42-20261117/continuation/launch/browser-export/export-verification.json)
-- [Recovery readable report](../../artifacts/live/mvp1-41-42-20261117/recovery/run/reports/development.md),
-  [JSON](../../artifacts/live/mvp1-41-42-20261117/recovery/run/reports/development.json),
-  [CSV](../../artifacts/live/mvp1-41-42-20261117/recovery/run/reports/development.csv)
-- [Planned actual interruption](../../artifacts/live/mvp1-41-42-20261117/recovery/launch/planned-interruption.json),
-  [exact retry-start restore](../../artifacts/live/mvp1-41-42-20261117/recovery/launch/retry-start-observation.json),
-  [recovery qualification audit](../../artifacts/live/mvp1-41-42-20261117/recovery/launch/qualification-result.json)
-  and [reconciliation](../../artifacts/live/mvp1-41-42-20261117/recovery/launch/reconciliation.json)
-- [Controller regression log](../../artifacts/live/mvp1-41-42-20261117/recovery/launch/controller-regressions.log)
+- [Archive index](../../../artifacts/live/mvp1-41-42-20261117/summary.json)
+- [Continuation readable report](../../../artifacts/live/mvp1-41-42-20261117/continuation/run/reports/development.md),
+  [JSON](../../../artifacts/live/mvp1-41-42-20261117/continuation/run/reports/development.json),
+  [CSV](../../../artifacts/live/mvp1-41-42-20261117/continuation/run/reports/development.csv)
+- [Continuation reconciliation](../../../artifacts/live/mvp1-41-42-20261117/continuation/launch/reconciliation.json)
+  and [session/boundary/snapshot audit](../../../artifacts/live/mvp1-41-42-20261117/continuation/launch/continuation-audit-final.json)
+- [Request-2 browser/API observations](../../../artifacts/live/mvp1-41-42-20261117/continuation/launch/browser-step2/browser-smoke.json)
+  and [collection/member screenshot](../../../artifacts/live/mvp1-41-42-20261117/continuation/launch/browser-step2/collection.png)
+- [Request-3 browser/API observations](../../../artifacts/live/mvp1-41-42-20261117/continuation/launch/browser-step3/browser-smoke.json),
+  [search screenshot](../../../artifacts/live/mvp1-41-42-20261117/continuation/launch/browser-step3/search.png),
+  [archive screenshot](../../../artifacts/live/mvp1-41-42-20261117/continuation/launch/browser-step3/archive.png)
+  and [actual duplicate-filename/browser ZIP verification](../../../artifacts/live/mvp1-41-42-20261117/continuation/launch/browser-export/export-verification.json)
+- [Recovery readable report](../../../artifacts/live/mvp1-41-42-20261117/recovery/run/reports/development.md),
+  [JSON](../../../artifacts/live/mvp1-41-42-20261117/recovery/run/reports/development.json),
+  [CSV](../../../artifacts/live/mvp1-41-42-20261117/recovery/run/reports/development.csv)
+- [Planned actual interruption](../../../artifacts/live/mvp1-41-42-20261117/recovery/launch/planned-interruption.json),
+  [exact retry-start restore](../../../artifacts/live/mvp1-41-42-20261117/recovery/launch/retry-start-observation.json),
+  [recovery qualification audit](../../../artifacts/live/mvp1-41-42-20261117/recovery/launch/qualification-result.json)
+  and [reconciliation](../../../artifacts/live/mvp1-41-42-20261117/recovery/launch/reconciliation.json)
+- [Controller regression log](../../../artifacts/live/mvp1-41-42-20261117/recovery/launch/controller-regressions.log)

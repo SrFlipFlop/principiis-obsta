@@ -32,8 +32,8 @@ portal acceptance or publication was performed during implementation.
   network and loopback URL. Cleanup covers all previews of a selected checkpoint.
   Reports retain each attempt and preserve unknown token/memory/spending values.
 
-The [operator contract](../engineering/MVP_DEVELOPMENT_CLI.md) and [runtime
-contract](../engineering/DEVELOPMENT_RUNTIME.md) describe commands, file semantics,
+The [operator contract](../../engineering/MVP_DEVELOPMENT_CLI.md) and [runtime
+contract](../../engineering/DEVELOPMENT_RUNTIME.md) describe commands, file semantics,
 measurement scopes and limitations.
 
 ## Verification and failures

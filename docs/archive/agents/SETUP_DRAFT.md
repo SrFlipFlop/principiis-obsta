@@ -1,4 +1,4 @@
-> Historical applied setup from 2026-11-14. Current instructions are [domain documentation](domain.md) and the [development workflow](workflow.md); the snippets below preserve the former `CONTEXT.md` convention.
+> Historical applied setup from 2026-11-14. Current instructions are [domain documentation](../../agents/domain.md) and the [development workflow](workflow.md); the snippets below preserve the former `CONTEXT.md` convention.
 
 # Matt Pocock repository setup — applied draft
 

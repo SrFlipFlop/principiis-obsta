@@ -1,6 +1,6 @@
 # Research synthesis and alignment gate
 
-2026-11-14. Status: research complete for this setup pass; objectives, architecture and experimental scope remain unapproved. Evidence is in the four [research reports](README.md); local provenance is in [repository audit](../REPOSITORY_AUDIT.md).
+2026-11-14. Status: research complete for this setup pass; objectives, architecture and experimental scope remain unapproved. Evidence is in the four [research reports](README.md); local provenance is in [repository audit](../archive/REPOSITORY_AUDIT.md).
 
 ## What the evidence changes
 

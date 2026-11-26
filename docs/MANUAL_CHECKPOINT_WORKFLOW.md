@@ -1,13 +1,12 @@
 # Manual checkpoint operation
 
-For an operator walkthrough with per-stage checklists and a findings template, start with
-[HITL issue #38](https://github.com/SrFlipFlop/principiis-obsta/issues/38). It distinguishes
-the runnable fixture rehearsal from the currently blocked portal evaluator setup.
+The current operator path is the [baseline command sequence](../README.md#baseline-command-sequence).
+[HITL issue #38](https://github.com/SrFlipFlop/principiis-obsta/issues/38) (closed) holds the
+earlier walkthrough findings.
 
 The owner's 2026-11-15 settings select ordinary subscription Codex, harness defaults,
 no model-stage timeout, and at most three explicit additional development attempts.
-Qualification and separate launch approval are still required. Commands below are
-operator instructions; they are not baseline developer prompt additions.
+Commands below are legacy operator instructions; they are not baseline developer prompt additions.
 
 `python3 -m principiis.manual develop` runs exactly one selected next checkpoint.
 Each attempt starts a fresh session from the last completed developer snapshot,

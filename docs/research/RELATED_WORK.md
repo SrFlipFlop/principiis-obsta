@@ -1,6 +1,6 @@
 # Literature and tools to verify and build upon
 
-**Status:** starting map refreshed by four independent research tracks on 2026-11-14. See [verified literature report](research/01_LITERATURE_NOVELTY.md), [reuse report](research/02_BENCHMARK_REUSE.md) and [synthesis](research/05_SYNTHESIS.md). This remains a targeted review, not a systematic review or novelty guarantee.
+**Status:** starting map refreshed by four independent research tracks on 2026-11-14. See [verified literature report](01_LITERATURE_NOVELTY.md), [reuse report](02_BENCHMARK_REUSE.md) and [synthesis](05_SYNTHESIS.md). This remains a targeted review, not a systematic review or novelty guarantee.
 
 ## Primary scientific benchmarks
 
@@ -25,7 +25,7 @@ For each paper/project, answer with source locations: (a) task/unit, (b) agent/m
 
 ## Corrections and direct intervention precedents
 
-The initial map understated prior intervention comparisons. BaxBench tests generic/oracle reminders; SusVibes tests risk selection/oracle hints; RealSec-bench tests retrieval/guidelines. See the [literature evidence table](research/01_LITERATURE_NOVELTY.md) for primary-source locations. Additional close work includes governed security requirements at generation time, secure-code evaluation reanalysis, prompt/repair studies, SecureVibe and history-assisted TRACER repair. The report distinguishes peer-reviewed work, preprints and abstract-only leads. Broad prevention or joint-scoring novelty is unsupported.
+The initial map understated prior intervention comparisons. BaxBench tests generic/oracle reminders; SusVibes tests risk selection/oracle hints; RealSec-bench tests retrieval/guidelines. See the [literature evidence table](01_LITERATURE_NOVELTY.md) for primary-source locations. Additional close work includes governed security requirements at generation time, secure-code evaluation reanalysis, prompt/repair studies, SecureVibe and history-assisted TRACER repair. The report distinguishes peer-reviewed work, preprints and abstract-only leads. Broad prevention or joint-scoring novelty is unsupported.
 
 Reuse licenses: BaxBench and SusVibes repository software is MIT, with per-task/data/image provenance still requiring audit. DualGauge permission remains unverified. SusVibes aggregate `sec_pass` already includes functionality. Do not compare metrics across versions without fixing task sets and evaluators.
 
