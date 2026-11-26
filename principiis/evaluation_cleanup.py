@@ -1,6 +1,4 @@
 """Explicit cleanup receipts without rewriting retained primary assessments."""
-import hashlib
-import json
 from pathlib import Path
 import re
 import subprocess
@@ -8,15 +6,15 @@ import time
 import uuid
 
 from .development_runtime import docker_command, docker_environment
-from .jsonio import write_json
+from .jsonio import digest, write_json
 
 
-def _allocation(root, assessment):
+def _allocation(store, assessment):
     path = Path(assessment['artifact']).parent / 'restricted/runtime-allocation.json'
-    expected = root / 'development/evaluations' / assessment['checkpoint'] / str(assessment['attempt']) / 'restricted/runtime-allocation.json'
+    expected = store.development / 'evaluations' / assessment['checkpoint'] / str(assessment['attempt']) / 'restricted/runtime-allocation.json'
     if path != expected or path.resolve() != path:
         raise ValueError('evaluation runtime allocation must remain in canonical controller evidence')
-    allocation = json.loads(path.read_text())
+    allocation = store.record(path)
     if not isinstance(allocation, dict):
         raise ValueError('invalid evaluation runtime allocation')
     names = allocation.get('containers')
@@ -24,58 +22,43 @@ def _allocation(root, assessment):
             or not re.fullmatch(r'po-app-[0-9a-f]{32}', names['application'])
             or not re.fullmatch(r'po-eval-[0-9a-f]{32}', names['evaluator'])):
         raise ValueError('retained evaluation container identities are unavailable')
-    return path, hashlib.sha256(path.read_bytes()).hexdigest(), names
+    return path, digest(path), names
 
 
-def pending(root, assessments):
-    root = Path(root).resolve()
-    index = root / 'evaluation-cleanups/index.json'
-    receipts = []
-    if index.exists():
-        if index.is_symlink():
-            raise ValueError('evaluation cleanup index cannot be a symlink')
-        for relative in json.loads(index.read_text()):
-            path = root / relative
-            if path.resolve() != path or path.parent != root / 'evaluation-cleanups':
-                raise ValueError('evaluation cleanup receipt must remain in controller evidence')
-            if path.is_file():
-                receipts.append(json.loads(path.read_text()))
+def pending(store):
+    """Assessments whose evaluation containers may remain, without a matching removal receipt."""
+    receipts = store.records('evaluation-cleanups')
     unresolved = []
-    for assessment in assessments:
+    for assessment in store.assessments:
         if assessment.get('cleanup_pending') is not True:
             continue
         entry = {key: assessment[key] for key in ('artifact', 'checkpoint', 'attempt', 'session_id')}
         try:
-            path, digest, containers = _allocation(root, assessment)
+            path, allocation_sha256, containers = _allocation(store, assessment)
             if any(receipt.get('outcome') == 'removed'
                    and receipt.get('session_id') == assessment['session_id']
-                   and receipt.get('runtime_allocation_sha256') == digest for receipt in receipts):
+                   and receipt.get('runtime_allocation_sha256') == allocation_sha256 for receipt in receipts):
                 continue
-            entry.update(runtime_allocation=str(path), runtime_allocation_sha256=digest, containers=containers)
+            entry.update(runtime_allocation=str(path), runtime_allocation_sha256=allocation_sha256, containers=containers)
         except (OSError, ValueError, TypeError, KeyError) as error:
             entry['error'] = str(error)
         unresolved.append(entry)
     return unresolved
 
 
-def cleanup(root, assessments, step):
-    root = Path(root).resolve()
-    selected = [entry for entry in pending(root, assessments) if entry['checkpoint'] == step]
+def cleanup(store, step):
+    selected = [entry for entry in pending(store) if entry['checkpoint'] == step]
     if not selected:
         raise ValueError('no unresolved evaluation runtime cleanup for selected checkpoint')
     if any('error' in entry for entry in selected):
         raise ValueError('evaluation container identities unavailable; inspect retained runtime evidence before cleanup')
-    docker = json.loads((root / 'runtime.json').read_text())['docker']
-    directory = root / 'evaluation-cleanups'
-    directory.mkdir(exist_ok=True)
-    index = directory / 'index.json'
-    ledger = json.loads(index.read_text()) if index.exists() else []
+    docker = store.frozen('runtime.json')['docker']
     records = []
     for entry in selected:
-        path = directory / (uuid.uuid4().hex + '.json')
+        relative = f'evaluation-cleanups/{uuid.uuid4().hex}.json'
+        path = store.root / relative
         record = dict(entry, outcome='interrupted_cleanup', commands=[], started_at=time.time())
-        ledger.append(str(path.relative_to(root)))
-        write_json(index, ledger)
+        store.add_record('evaluation-cleanups', relative)
         write_json(path, record)
         started = time.monotonic()
         errors = []

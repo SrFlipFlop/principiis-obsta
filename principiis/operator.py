@@ -109,9 +109,8 @@ def derive_evaluation(args):
         raise
 
 
-def develop(args):
+def develop(store, args):
     from .development_runtime import DevelopmentRuntime, load_config
-    store = open_run(args)
     with store.lock('development'):
         require_no_cleanup(status.build(store), 'development')
         step = selected_step(store, args.step)
@@ -122,9 +121,8 @@ def develop(args):
     return status.build(store)
 
 
-def evaluate(args):
+def evaluate(store, args):
     from .assessment import RestrictedEvaluator
-    store = open_run(args)
     with store.lock('independent evaluation'):
         require_no_cleanup(status.build(store), 'evaluation')
         if store.binding is None:
@@ -135,9 +133,8 @@ def evaluate(args):
     return status.build(store)
 
 
-def investigate(args):
+def investigate(store, args):
     from .investigation import review_checkpoint
-    store = open_run(args)
     with store.lock('security investigation'):
         mode = store.configuration.get('investigation', 'none')
         if mode == 'none' or (mode == 'final' and not args.final) or (mode == 'each-step' and args.final):
@@ -151,6 +148,15 @@ def investigate(args):
     return status.build(store)
 
 
+# Container cleanup command -> (receipt record kind, label, status key, runtime config of a pending entry).
+CONTAINER_CLEANUPS = {
+    'cleanup': ('runtime-cleanups', 'development', 'runtime_cleanup_required',
+                lambda store, entry: store.root / 'runtime.json'),
+    'cleanup-investigation': ('investigation-cleanups', 'investigation', 'investigation_cleanup_required',
+                              lambda store, entry: Path(entry['allocation']).parent / 'reviewer-runtime.json'),
+}
+
+
 def cleanup(args):
     """Remove a retained development, evaluation or reviewer container for one step."""
     from .development_runtime import cleanup_runtime
@@ -159,20 +165,16 @@ def cleanup(args):
     step = selected_step(store, args.step)
     with store.lock(args.command.replace('-', ' ')):
         if args.command == 'cleanup-evaluation':
-            cleanup_evaluation(store.root, store.assessments, step)
+            cleanup_evaluation(store, step)
             return status.build(store)
-        kind, label = (('runtime-cleanups', 'development') if args.command == 'cleanup'
-                       else ('investigation-cleanups', 'investigation'))
-        key = 'runtime_cleanup_required' if args.command == 'cleanup' else 'investigation_cleanup_required'
+        kind, label, key, runtime_config = CONTAINER_CLEANUPS[args.command]
         pending = [entry for entry in status.build(store)[key] if entry['step'] == step]
         if not pending:
             raise ValueError(f'no unresolved {label} runtime allocation for selected checkpoint')
         for entry in pending:
             relative = f'{kind}/{uuid.uuid4()}'
             store.add_record(kind, relative + '/cleanup.json')
-            config = (store.root / 'runtime.json' if args.command == 'cleanup'
-                      else Path(entry['allocation']).parent / 'reviewer-runtime.json')
-            cleanup_runtime(entry['allocation'], config, store.root / relative)
+            cleanup_runtime(entry['allocation'], runtime_config(store, entry), store.root / relative)
     return status.build(store)
 
 
@@ -304,7 +306,7 @@ def run_command(args):
         progress = Progress(store.root, 'ai-review' if review else args.command, step, verbose=args.verbose,
                             interval=10 if args.verbose else 30)
         with progress:
-            report = develop(args) if args.command == 'develop' else investigate(args) if review else evaluate(args)
+            report = (develop if args.command == 'develop' else investigate if review else evaluate)(store, args)
             progress.result_details = reporting.outcome_details(report, args.command, step, ai_review=review)
         return report, step
     handlers = {'init': initialize, 'derive-evaluation': derive_evaluation, 'preview': preview, 'cleanup': cleanup,

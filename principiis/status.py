@@ -102,7 +102,7 @@ def _pending_cleanups(store, allocations, receipts):
     """Runtime allocations neither removed nor reconciled by a cleanup receipt."""
     pending = []
     for step, path in allocations:
-        allocation = store.runtime_allocation(path)
+        allocation = store.record(path)
         if allocation is None or allocation.get('state') == 'removed':
             continue
         if any(receipt.get('outcome') == 'removed' and receipt.get('allocation') == str(path)
@@ -129,7 +129,7 @@ def build(store):
                             'stages': {'development': {}, 'evaluation': dict(a['evaluation'], tokens=None)}}
                            for a in assessments]
     resources = resource.summarize(ordered + evaluation_attempts)
-    evaluation_cleanup = evaluation_pending(store.root, assessments) if store.binding else []
+    evaluation_cleanup = evaluation_pending(store) if store.binding else []
     cleanups = store.records('runtime-cleanups')
     runtime_cleanup = _pending_cleanups(store, [(a.step, a.directory / 'runtime.json') for a in store.attempts], cleanups)
     investigations = store.investigations()

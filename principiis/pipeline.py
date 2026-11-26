@@ -159,7 +159,7 @@ def _record_cleanup(store, result, allocation_path, launched):
     result['runtime_launch_attempted'] = launched
     result['cleanup_pending'] = launched
     try:
-        allocation = store.runtime_allocation(allocation_path)
+        allocation = store.record(allocation_path)
         if allocation is not None:
             result.update(runtime_allocation=str(allocation_path), containers=allocation.get('containers'),
                           cleanup_argv=allocation.get('cleanup_argv'),

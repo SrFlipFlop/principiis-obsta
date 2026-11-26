@@ -10,6 +10,7 @@ from pathlib import Path
 import shlex
 
 from . import resource
+from .run_store import RunStore
 
 
 def display(value):
@@ -140,6 +141,7 @@ def csv_report(report):
     writer = csv.DictWriter(stream, fieldnames=CSV_FIELDS)
     writer.writeheader()
     assessments = {entry['artifact']: entry for entry in report.get('assessments', [])}
+    store = RunStore(report['root'])
     for attempt in report['resources']['attempts']:
         stage = 'evaluation' if attempt['stages']['evaluation'] and not attempt['stages']['development'] else 'development'
         evidence = attempt['stages'][stage]
@@ -148,7 +150,7 @@ def csv_report(report):
         directory = Path(attempt['artifact']).parent
         result = assessments.get(attempt['artifact'])
         if result is None:
-            result = json.loads(Path(attempt['artifact']).read_text()) if Path(attempt['artifact']).is_file() else {}
+            result = store.record(attempt['artifact']) or {}
         row = {key: attempt.get(key) for key in ('run_id', 'checkpoint', 'attempt', 'session_id', 'outcome', 'artifact')}
         provenance = result.get('provenance') or {}
         row.update(run_name=report['run_name'], source_run=(report.get('source_run') or {}).get('run_name'),

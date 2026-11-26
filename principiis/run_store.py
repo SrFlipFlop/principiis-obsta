@@ -12,7 +12,7 @@ JSON themselves. Layout under `$PRINCIPIIS_RUNS_ROOT/<run>/`:
     development/steps/<step>/, development/attempts/<step>/<n>/   attempt evidence
     development/evaluations/<step>/allocations.json, <n>/     assessment ledger
     investigation-binding.json, investigations/<step>/<n>/   AI review attempts
-    previews/, runtime-cleanups/, investigation-cleanups/
+    previews/, runtime-cleanups/, evaluation-cleanups/, investigation-cleanups/
 
 `RunStore.open` verifies the freeze manifest, lineage, evaluator binding, journal,
 retained snapshots and assessment ledgers once. Writes through the store keep
@@ -40,7 +40,7 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 MAX_ATTEMPTS = 4  # One attempt plus the three explicit retries.
 
 
-def _name(value):
+def _nonblank_text(value):
     return isinstance(value, str) and bool(value.strip()) and '\0' not in value
 
 
@@ -236,14 +236,14 @@ class RunStore:
                 raise ValueError('development directory exists without its allocation journal')
             return None, []
         state = json.loads(journal.read_text())
-        if not isinstance(state, dict) or not _name(state.get('run_id')) or not isinstance(state.get('attempts'), list):
+        if not isinstance(state, dict) or not _nonblank_text(state.get('run_id')) or not isinstance(state.get('attempts'), list):
             raise ValueError('invalid manual journal')
         counts, completed, sessions, attempts, prior = {}, set(), set(), [], None
         for record in state['attempts']:
             if not isinstance(record, dict):
                 raise ValueError('invalid manual journal attempt')
             step, number = record.get('id'), record.get('attempt')
-            if (not _name(step) or not isinstance(number, int) or isinstance(number, bool)
+            if (not _nonblank_text(step) or not isinstance(number, int) or isinstance(number, bool)
                     or number != counts.get(step, 0) + 1 or not 1 <= number <= MAX_ATTEMPTS):
                 raise ValueError('invalid manual journal attempt identity/order')
             if step not in self.step_ids:
@@ -268,7 +268,7 @@ class RunStore:
             else:
                 if (not isinstance(result, dict) or result.get('run_id') != state['run_id']
                         or result.get('checkpoint') != step or result.get('attempt') != number
-                        or not _name(result.get('session_id')) or result['session_id'] in sessions):
+                        or not _nonblank_text(result.get('session_id')) or result['session_id'] in sessions):
                     raise ValueError('result identity disagrees with manual journal')
                 sessions.add(result['session_id'])
                 if record.get('completed') is True and result.get('completed') is not True:
@@ -369,6 +369,8 @@ class RunStore:
     def records(self, kind):
         """Indexed auxiliary records: previews, runtime and investigation cleanups."""
         index = self.root / kind / 'index.json'
+        if index.is_symlink():
+            raise ValueError(f'{kind} index cannot be a symlink')
         if not index.is_file():
             return []
         entries = []
@@ -401,11 +403,12 @@ class RunStore:
                 found.append(dict(record, checkpoint=step, artifact=str(path)))
         return found
 
-    def runtime_allocation(self, path):
-        """A retained container allocation record next to attempt evidence, or None."""
+    def record(self, path):
+        """A retained controller JSON record inside this run, such as an attempt result or a
+        container allocation next to its evidence; None when it was never written."""
         path = Path(path)
-        if path.is_symlink():
-            raise ValueError('runtime allocation cannot be a symlink')
+        if path.is_symlink() or not path.resolve().is_relative_to(self.root):
+            raise ValueError('run record must be a regular file inside the run')
         return json.loads(path.read_text()) if path.is_file() else None
 
     # ---- writes -----------------------------------------------------------

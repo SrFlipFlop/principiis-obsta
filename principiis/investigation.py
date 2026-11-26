@@ -128,7 +128,7 @@ def review_checkpoint(store, checkpoint, *, mode, config, prompt, prompt_version
     result = investigate(SimpleNamespace(snapshot=checkpoint['source'], primary=primary['artifact'],
                                          config=str(config_path), prompt=str(prompt_path),
                                          prompt_version=prompt_version, output=str(output)))
-    allocation = store.runtime_allocation(output / 'runtime.json')
+    allocation = store.record(output / 'runtime.json')
     if result['status'] == 'evaluator_error' and allocation and allocation.get('state') != 'removed':
         raise ValueError('reviewer container cleanup unresolved; inspect retained runtime allocation')
     return result
