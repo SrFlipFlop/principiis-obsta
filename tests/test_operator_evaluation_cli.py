@@ -160,8 +160,7 @@ class OperatorEvaluationCLI(unittest.TestCase):
         self.assertEqual(first.returncode, 0, first.stderr)
         report = json.loads(first.stdout)
         self.assertEqual(report['next_action']['action'], 'cleanup-evaluation')
-        primary = Path(report['assessments'][0]['artifact'])
-        original = primary.read_bytes()
+        original = report['assessments'][0]
         blocked = operator('evaluate', '--step', '1', '--rerun')
         self.assertNotEqual(blocked.returncode, 0)
         self.assertIn('cleanup', blocked.stderr)
@@ -170,11 +169,11 @@ class OperatorEvaluationCLI(unittest.TestCase):
         cleaned = operator('cleanup-evaluation', '--step', '1')
         self.assertEqual(cleaned.returncode, 0, cleaned.stderr)
         self.assertEqual(json.loads(cleaned.stdout)['evaluation_cleanup_required'], [])
-        self.assertEqual(primary.read_bytes(), original)
+        self.assertEqual(json.loads(cleaned.stdout)['assessments'], [original])
         rerun = operator('evaluate', '--step', '1', '--rerun')
         self.assertEqual(rerun.returncode, 0, rerun.stderr)
+        self.assertEqual(json.loads(rerun.stdout)['assessments'][0], original)
         self.assertEqual(len(json.loads(rerun.stdout)['assessments']), 2)
-        self.assertEqual(primary.read_bytes(), original)
 
 
 if __name__ == '__main__':

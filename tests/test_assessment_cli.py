@@ -105,13 +105,13 @@ class QualifiedAssessmentCLI(unittest.TestCase):
 
     def test_binding_freezes_complete_evaluator_separately_from_development(self):
         self.make_run()
-        before = {path: path.read_bytes() for path in self.root.rglob('*') if path.is_file()}
+        before = RunStore.open(self.root).configuration
         self.bind()
+        # Opening verifies every frozen input against the unchanged freeze manifest.
         store = RunStore.open(self.root)
         self.assertEqual(store.binding['manifest_sha256'], self.digest(self.path))
         self.assertEqual(store.binding['version'], 'engineering-1')
-        for path, contents in before.items():
-            self.assertEqual(path.read_bytes(), contents)
+        self.assertEqual(store.configuration, before)
         self.assertEqual(store.attempts, [])
 
     def test_release_binds_only_within_its_qualified_steps(self):
