@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
+from support import temporary_directory
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class SuiteCLI(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
+        self.temporary = temporary_directory()
         self.addCleanup(self.temporary.cleanup)
         self.base = Path(self.temporary.name)
         self.output = self.base / 'output'

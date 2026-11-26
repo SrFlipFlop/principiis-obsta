@@ -4,21 +4,21 @@ import json
 import shutil
 import subprocess
 import sys
-import tempfile
+from support import temporary_directory
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 class PortalRelease(unittest.TestCase):
     def test_removed_synthetic_edition_is_not_releasable(self):
-        with tempfile.TemporaryDirectory() as temp:
+        with temporary_directory() as temp:
             out = pathlib.Path(temp) / 'released'
             result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'release', '--edition', 'original', '--step', '1', '--output', str(out)], cwd=ROOT, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse(out.exists())
 
     def test_first_release_contains_only_initial_contract(self):
-        with tempfile.TemporaryDirectory() as temp:
+        with temporary_directory() as temp:
             out = pathlib.Path(temp) / 'released'
             result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'release', '--step', '1', '--output', str(out)], cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -29,7 +29,7 @@ class PortalRelease(unittest.TestCase):
             self.assertNotIn('/api/search', text)
 
     def test_later_release_keeps_prior_requests_without_future_search(self):
-        with tempfile.TemporaryDirectory() as temp:
+        with temporary_directory() as temp:
             out = pathlib.Path(temp) / 'released'
             result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'release', '--step', '2', '--output', str(out)], cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -39,7 +39,7 @@ class PortalRelease(unittest.TestCase):
             self.assertNotIn('/api/search', text)
 
     def test_bind_rejects_missing_private_bundle_before_output(self):
-        with tempfile.TemporaryDirectory() as temp:
+        with temporary_directory() as temp:
             out = pathlib.Path(temp) / 'bound'
             result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'bind', '--bundle', temp, '--output', str(out)], cwd=ROOT, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
@@ -47,7 +47,7 @@ class PortalRelease(unittest.TestCase):
             self.assertFalse(out.exists())
 
     def test_pending_checker_qualification_cannot_evaluate_with_prior_images(self):
-        with tempfile.TemporaryDirectory() as temp:
+        with temporary_directory() as temp:
             root = pathlib.Path(temp)
             (root / 'principiis').mkdir()
             (root / 'principiis/__init__.py').touch()
@@ -66,7 +66,7 @@ class PortalRelease(unittest.TestCase):
 
     def test_author_fixture_variants_reach_restricted_evaluator_preflight(self):
         for variant in ['alternative-layout-slow', 'stale-revocation']:
-            with self.subTest(variant=variant), tempfile.TemporaryDirectory() as temp:
+            with self.subTest(variant=variant), temporary_directory() as temp:
                 root = pathlib.Path(temp)
                 contract = root / 'contract.json'
                 contract.write_text(json.dumps({'browser': 'functional', 'backend': 'security'}))
@@ -84,7 +84,7 @@ class PortalRelease(unittest.TestCase):
 
     def test_fixture_variant_requires_valid_author_contract_and_unambiguous_mode(self):
         for flags in [[], ['--check-contract', 'contract', '--control', 'alternative'], ['--check-contract', 'contract', '--fixture-variant', '../outside']]:
-            with self.subTest(flags=flags), tempfile.TemporaryDirectory() as temp:
+            with self.subTest(flags=flags), temporary_directory() as temp:
                 root = pathlib.Path(temp)
                 contract = root / 'contract.json'
                 contract.write_text(json.dumps({'browser': 'functional', 'backend': 'security'}))

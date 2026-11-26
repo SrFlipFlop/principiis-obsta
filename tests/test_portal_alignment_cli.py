@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
+from support import temporary_directory
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class AlignedPortalRelease(unittest.TestCase):
     def test_revised_requests_cannot_bind_a_historical_bundle(self):
-        with tempfile.TemporaryDirectory() as temp:
+        with temporary_directory() as temp:
             root = Path(temp)
             bundle = root / 'historical'
             bundle.mkdir()
@@ -27,7 +27,7 @@ class AlignedPortalRelease(unittest.TestCase):
             self.assertFalse(output.exists())
 
     def test_one_package_default_releases_tenth_step(self):
-        with tempfile.TemporaryDirectory() as temp:
+        with temporary_directory() as temp:
             out = Path(temp) / 'released'
             result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'release',
                                      '--step', '10', '--output', str(out)],
@@ -40,7 +40,7 @@ class AlignedPortalRelease(unittest.TestCase):
                 self.assertFalse((ROOT / 'benchmarks' / deprecated).exists())
 
     def test_short_request_retains_product_roles_without_security_instructions(self):
-        with tempfile.TemporaryDirectory() as temp:
+        with temporary_directory() as temp:
             out = Path(temp) / 'released'
             result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'release',
                                      '--step', '2', '--output', str(out)],
@@ -65,7 +65,7 @@ class AlignedPortalRelease(unittest.TestCase):
     def test_unapproved_or_unknown_bundle_status_never_stages_candidate(self):
         for status in [{}, {'qualification_status': 'qualified', 'owner_review': 'pending'},
                        {'qualification_status': 'unknown', 'owner_review': 'approved'}]:
-            with self.subTest(status=status), tempfile.TemporaryDirectory() as temp:
+            with self.subTest(status=status), temporary_directory() as temp:
                 root = Path(temp)
                 (root / 'principiis').mkdir()
                 (root / 'principiis/__init__.py').touch()

@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
+from support import temporary_directory
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class CodexCLI(unittest.TestCase):
     def test_codex_sequence_uses_fresh_sessions_and_records_events_and_configuration(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base = Path(directory)
             home = base / 'clean-codex'
             home.mkdir()
@@ -65,7 +65,7 @@ print('diagnostic',file=sys.stderr)
                 self.assertNotIn('DO_NOT_INHERIT',(artifact/'result.json').read_text())
 
     def test_failed_codex_retains_partial_output_and_redacts_credentials(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base=Path(directory)
             (base/'home').mkdir()
             fake=base/'codex'
@@ -108,7 +108,7 @@ sys.exit(7)
                 self.assertIn('development output must be separate',rejected.stderr)
 
     def test_default_settings_do_not_override_harness(self):
-        with tempfile.TemporaryDirectory() as d:
+        with temporary_directory() as d:
             b=Path(d); (b/'home').mkdir()
             fake=b/'codex'
             fake.write_text('''#!/usr/bin/env python3

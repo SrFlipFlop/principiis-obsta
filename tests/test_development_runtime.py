@@ -1,12 +1,12 @@
 import io
 import json
 from pathlib import Path
-import tempfile
+from support import temporary_directory
 import unittest
 from unittest.mock import patch
 import subprocess
 
-from principiis.development_runtime import DevelopmentRuntime, cleanup_runtime, docker_command, load_config, preflight_run, configuration_args, workspace_permission_settings, restrictions
+from principiis.development_runtime import SANDBOX_PROBE, DevelopmentRuntime, cleanup_runtime, docker_command, load_config, preflight_run, configuration_args, workspace_permission_settings, restrictions
 
 
 IMAGE = 'sha256:' + 'a' * 64
@@ -57,6 +57,11 @@ if args[:2] == ['network','inspect']:
 
 
 class DevelopmentRuntimeTests(unittest.TestCase):
+    def test_sandbox_probe_checks_this_checkout_is_invisible_without_host_specific_paths(self):
+        checkout_instructions = Path(__file__).resolve().parents[1] / 'AGENTS.md'
+        self.assertIn(repr(str(checkout_instructions)), SANDBOX_PROBE)
+        self.assertNotIn('/home/srflipflop', SANDBOX_PROBE)
+
     def test_temporary_tool_execution_is_enabled_only_for_development(self):
         for development in (False, True):
             args = restrictions(nested_sandbox=development)
@@ -77,7 +82,7 @@ class DevelopmentRuntimeTests(unittest.TestCase):
         return path, config
 
     def test_isolated_attempt_delivers_only_workspace_and_auth_and_retains_usage(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base = Path(directory)
             config_path, config = self.configuration(base)
             source = base / 'tasks'; source.mkdir()
@@ -112,7 +117,7 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             self.assertIn('Docker client', evidence['memory']['scope'])
 
     def test_sandbox_failure_is_detected_without_auth_mount_or_attempt_allocation(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base=Path(directory)
             path,config=self.configuration(base)
             docker=Path(config['docker'])
@@ -127,7 +132,7 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             self.assertFalse((base/'run').exists())
 
     def test_invisible_workspace_bind_fails_before_auth_or_model(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base = Path(directory)
             path, config = self.configuration(base)
             docker = Path(config['docker'])
@@ -147,7 +152,7 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             self.assertFalse((output/'runtime.json').exists())
 
     def test_sandbox_policy_and_runtime_interpreters_enter_provenance(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base=Path(directory)
             path,config=self.configuration(base)
             runtime=DevelopmentRuntime(path,base/'run',base/'tasks')
@@ -161,7 +166,7 @@ class DevelopmentRuntimeTests(unittest.TestCase):
                 self.assertNotIn('--cap-add',command)
 
     def test_successful_preflight_rejects_malformed_runtime_attestation(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base=Path(directory)
             path,config=self.configuration(base)
             docker=Path(config['docker']); original=docker.read_text()
@@ -188,7 +193,7 @@ class DevelopmentRuntimeTests(unittest.TestCase):
         self.assertEqual(calls[-1],docker_command('/docker',['rm','-f',name]))
 
     def test_invalid_configuration_never_contacts_docker_or_allocates_attempt(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base = Path(directory)
             path, config = self.configuration(base)
             for changes in ({'image':'latest'}, {'model':'some-other-model'}, {'auth_file':str(base)},
@@ -200,7 +205,7 @@ class DevelopmentRuntimeTests(unittest.TestCase):
                 self.assertFalse((base/'run').exists())
 
     def test_preflight_rejects_image_credentials(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base = Path(directory)
             path, config = self.configuration(base)
             executable = Path(config['docker'])
@@ -210,7 +215,7 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             self.assertFalse((base/'run').exists())
 
     def test_diagnostic_timeout_is_a_clear_preallocation_error(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base=Path(directory)
             path, config=self.configuration(base)
             with patch('principiis.development_runtime.subprocess.run',side_effect=subprocess.TimeoutExpired(['docker'],20)):
@@ -219,7 +224,7 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             self.assertFalse((base/'run').exists())
 
     def test_unsupported_mount_path_is_rejected_before_preflight(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base=Path(directory)
             path, config=self.configuration(base)
             with self.assertRaisesRegex(ValueError,'commas'):
@@ -227,7 +232,7 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             self.assertFalse((base/'commands.jsonl').exists())
 
     def test_failed_container_preserves_partial_application_and_original_exit(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base=Path(directory)
             path, config=self.configuration(base)
             docker=Path(config['docker'])
@@ -244,7 +249,7 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             self.assertTrue(any(c[:2]==['rm','-f'] for c in commands))
 
     def test_cleanup_failure_does_not_erase_execution_status_and_retains_cleanup_identity(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base=Path(directory)
             path,config=self.configuration(base)
             docker=Path(config['docker'])
@@ -269,7 +274,7 @@ class DevelopmentRuntimeTests(unittest.TestCase):
         return allocation
 
     def test_explicit_cleanup_keeps_original_evidence_and_does_not_need_auth_file(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base=Path(directory)
             path,config=self.configuration(base)
             allocation=self.cleanup_allocation(base,config)
@@ -288,7 +293,7 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             self.assertEqual(commands,[['rm','-f','po-development-'+'b'*32]])
 
     def test_explicit_cleanup_only_accepts_saved_canonical_container_command(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base=Path(directory)
             path,config=self.configuration(base)
             allocation=self.cleanup_allocation(base,config)
@@ -302,7 +307,7 @@ class DevelopmentRuntimeTests(unittest.TestCase):
                 self.assertFalse((base/'cleanup').exists())
 
     def test_explicit_cleanup_retains_daemon_failure_and_accepts_only_exact_missing_container(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base=Path(directory)
             path,config=self.configuration(base)
             allocation=self.cleanup_allocation(base,config)

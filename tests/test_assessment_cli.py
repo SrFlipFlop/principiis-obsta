@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
+from support import temporary_directory
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class AssessmentCLI(unittest.TestCase):
     def test_unqualified_release_cannot_bind_or_allocate_an_assessment(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with temporary_directory() as temporary:
             root = Path(temporary)
             (root / 'configuration.json').write_text(json.dumps({'application': 'document-portal'}))
             declaration = root / 'declaration.json'
@@ -29,7 +29,7 @@ class AssessmentCLI(unittest.TestCase):
 class QualifiedAssessmentCLI(unittest.TestCase):
     def setUp(self):
         import shutil
-        self.temporary = tempfile.TemporaryDirectory()
+        self.temporary = temporary_directory()
         self.addCleanup(self.temporary.cleanup)
         self.base = Path(self.temporary.name)
         self.source = self.base / 'source'

@@ -5,14 +5,14 @@ import shutil
 import pathlib
 import subprocess
 import sys
-import tempfile
+from support import temporary_directory
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 class FullPortalRelease(unittest.TestCase):
     def test_tenth_release_contains_exactly_ten_requests(self):
-        with tempfile.TemporaryDirectory() as temp:
+        with temporary_directory() as temp:
             output = pathlib.Path(temp) / 'release'
             result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'release', '--step', '10', '--output', str(output)], cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -22,7 +22,7 @@ class FullPortalRelease(unittest.TestCase):
             self.assertIn('/api/collections/{id}/transfer', text)
 
     def test_fourth_release_preserves_original_requests_without_sharing_future(self):
-        with tempfile.TemporaryDirectory() as temp:
+        with temporary_directory() as temp:
             output = pathlib.Path(temp) / 'release'
             result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'release', '--step', '4', '--output', str(output)], cwd=ROOT, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -34,14 +34,14 @@ class FullPortalRelease(unittest.TestCase):
             self.assertEqual(text.count('Request '), 4)
 
     def test_out_of_range_step_does_not_create_output(self):
-        with tempfile.TemporaryDirectory() as temp:
+        with temporary_directory() as temp:
             output = pathlib.Path(temp) / 'release'
             result = subprocess.run([sys.executable, '-m', 'principiis.portal', 'release', '--step', '11', '--output', str(output)], cwd=ROOT, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse(output.exists())
 
     def test_controller_binds_ten_steps_and_pending_evaluation_never_stages(self):
-        with tempfile.TemporaryDirectory() as temp:
+        with temporary_directory() as temp:
             root = pathlib.Path(temp)
             (root / 'principiis').mkdir()
             (root / 'principiis/__init__.py').touch()

@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-import tempfile
+from support import temporary_directory
 import unittest
 from unittest.mock import patch
 
@@ -11,7 +11,7 @@ from test_development_runtime import IMAGE, docker_fixture
 
 class PreviewTests(unittest.TestCase):
     def test_runtime_bound_snapshot_rejects_different_preview_image_before_docker(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base = Path(directory)
             source = base / 'source'; source.mkdir()
             (source / 'python').symlink_to('/usr/local/bin/python3.12')
@@ -30,7 +30,7 @@ class PreviewTests(unittest.TestCase):
             self.assertFalse((base / 'commands.jsonl').exists())
 
     def test_restricted_preview_uses_copy_loopback_and_explicit_cleanup(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base = Path(directory)
             with patch('principiis.preview.http.client.HTTPConnection') as connection:
                 connection.return_value.getresponse.return_value.status = 200
@@ -79,7 +79,7 @@ class PreviewTests(unittest.TestCase):
                 self.assertEqual([c[-1] for c in removals],[record['relay_container'],record['container']])
 
     def test_tampered_snapshot_rejected_without_allocating_preview(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base = Path(directory)
             source = base/'source'; source.mkdir(); (source/'app.py').write_text('original')
             snapshot = base/'snapshot'; preserve(source,snapshot)
@@ -94,7 +94,7 @@ class PreviewTests(unittest.TestCase):
             self.assertFalse((base/'commands.jsonl').exists())
 
     def test_failed_start_retains_evidence_and_cleans_resources(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base=Path(directory)
             docker=docker_fixture(base)
             docker.write_text(docker.read_text().replace("'Running':True", "'Running':False"))
@@ -114,7 +114,7 @@ class PreviewTests(unittest.TestCase):
             validate(snapshot)
 
     def test_null_relay_binding_is_a_retained_error_and_cleans_both_containers(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base=Path(directory)
             docker=docker_fixture(base)
             docker.write_text(docker.read_text().replace("'Ports':ports", "'Ports':{'8123/tcp':None}"))
@@ -133,7 +133,7 @@ class PreviewTests(unittest.TestCase):
             validate(snapshot)
 
     def test_plain_internal_network_is_rejected_before_candidate_start(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base=Path(directory)
             docker=docker_fixture(base)
             docker.write_text(docker.read_text().replace("gateway_mode_ipv4':'isolated'", "gateway_mode_ipv4':'nat'"))

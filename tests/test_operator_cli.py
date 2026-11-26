@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
+from support import temporary_directory
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class OperatorCLI(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory()
+        self.directory = temporary_directory()
         self.addCleanup(self.directory.cleanup)
         self.base = Path(self.directory.name)
         self.runs = self.base / 'runs'
