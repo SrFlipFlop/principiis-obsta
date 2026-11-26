@@ -391,9 +391,10 @@ class RunStore:
             parent = self.root / 'investigations' / step
             if not parent.is_dir():
                 continue
-            for directory in sorted(parent.iterdir()):
-                if not directory.name.isdigit() or directory.is_symlink() or not directory.is_dir():
-                    raise ValueError('invalid investigation allocation directory')
+            directories = list(parent.iterdir())
+            if any(not d.name.isdigit() or d.is_symlink() or not d.is_dir() for d in directories):
+                raise ValueError('invalid investigation allocation directory')
+            for directory in sorted(directories, key=lambda d: int(d.name)):
                 path = directory / 'investigation.json'
                 if path.is_symlink() or not path.resolve().is_relative_to(self.root / 'investigations'):
                     raise ValueError('investigation evidence must stay inside run artifacts')

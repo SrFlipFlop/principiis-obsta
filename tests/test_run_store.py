@@ -147,6 +147,15 @@ class RunStoreTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'completed development'):
             RunStore.open(self.root)
 
+    def test_investigations_are_listed_in_numeric_attempt_order(self):
+        store = create(self.root)
+        for number in range(1, 12):
+            directory = self.root / 'investigations/step-01' / str(number)
+            directory.mkdir(parents=True)
+            (directory / 'investigation.json').write_text(json.dumps({'status': f'attempt-{number}'}))
+        self.assertEqual([entry['status'] for entry in store.investigations()],
+                         [f'attempt-{number}' for number in range(1, 12)])
+
 
 if __name__ == '__main__':
     unittest.main()
