@@ -103,3 +103,12 @@ def development_files(root):
     """The run store's digest inventory of development evidence, for immutability checks."""
     from principiis.run_store import RunStore
     return RunStore.open(root).development_files()
+
+
+def attempt_files(root):
+    """The development inventory limited to attempt evidence; the journal grows with every attempt."""
+    from principiis.run_store import RunStore
+    store = RunStore.open(root)
+    directories = [attempt.directory for attempt in store.attempts]
+    return {name: entry for name, entry in store.development_files().items()
+            if any((store.root / name).is_relative_to(directory) for directory in directories)}
