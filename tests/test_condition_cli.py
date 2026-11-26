@@ -4,7 +4,7 @@ import hashlib
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
+from support import temporary_directory
 import unittest
 
 
@@ -23,7 +23,7 @@ class ConditionCLI(unittest.TestCase):
         self.assertNotIn('bind-evaluator', result.stdout)
 
     def test_init_freezes_baseline_condition_and_investigation_choice(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base = Path(directory)
             auth = base / 'auth.json'
             auth.write_text('separately provisioned test file')
@@ -58,7 +58,7 @@ class ConditionCLI(unittest.TestCase):
         package = json.loads((ROOT / 'benchmarks/document-portal/package.json').read_text())
         if not manifest.is_file() or hashlib.sha256(manifest.read_bytes()).hexdigest() != package.get('private_bundle_sha256'):
             self.skipTest('qualified local evaluator release is unavailable')
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base = Path(directory)
             auth = base / 'auth.json'
             auth.write_text('configuration check only; no live model')
@@ -83,7 +83,7 @@ class ConditionCLI(unittest.TestCase):
             self.assertFalse((base / 'runs/good/development').exists())
 
     def test_final_review_selects_last_checkpoint_and_requires_primary(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base = Path(directory)
             auth = base / 'auth.json'
             auth.write_text('test')
@@ -114,7 +114,7 @@ class ConditionCLI(unittest.TestCase):
 
     def test_final_step_selects_three_and_ten_step_sequences(self):
         from principiis.operator import final_step
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             root = Path(directory)
             for count in (3, 10):
                 (root / 'sequence.json').write_text(json.dumps({
@@ -134,7 +134,7 @@ class ConditionCLI(unittest.TestCase):
         self.assertIn('reviewer options require --ai-review', misplaced.stderr)
 
     def test_status_shows_incomplete_investigation_allocation(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base = Path(directory)
             auth = base / 'auth.json'
             auth.write_text('test')
@@ -157,7 +157,7 @@ class ConditionCLI(unittest.TestCase):
             self.assertEqual(json.loads(status.stdout)['investigations'][0]['status'], 'interrupted_allocation')
 
     def test_unimplemented_condition_does_not_allocate_run(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base = Path(directory)
             auth = base / 'auth.json'
             auth.write_text('test')
@@ -176,7 +176,7 @@ class ConditionCLI(unittest.TestCase):
             self.assertFalse((base / 'runs/first').exists())
 
     def test_draft_application_cannot_allocate_scored_run(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             base = Path(directory)
             auth = base / 'auth.json'
             auth.write_text('test')

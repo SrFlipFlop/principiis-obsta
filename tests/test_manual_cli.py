@@ -4,14 +4,14 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-import tempfile
+from support import temporary_directory
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 
 class ManualCLI(unittest.TestCase):
     def test_develop_then_explicit_versioned_evaluation_and_next(self):
-        with tempfile.TemporaryDirectory() as d:
+        with temporary_directory() as d:
             b=Path(d)
             (b/'one.txt').write_text('first')
             (b/'two.txt').write_text('second')
@@ -72,7 +72,7 @@ class ManualCLI(unittest.TestCase):
 
     def test_interrupted_attempt_retains_usage_and_explicit_retries_stop_at_three(self):
         import time
-        with tempfile.TemporaryDirectory() as d:
+        with temporary_directory() as d:
             b=Path(d)
             (b/'request').write_text('visible')
             (b/'agent.py').write_text("import pathlib,time; pathlib.Path('partial').write_text('keep'); print('{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":7,\"output_tokens\":1}}',flush=True); time.sleep(60)")
@@ -102,7 +102,7 @@ class ManualCLI(unittest.TestCase):
             self.assertEqual(len(json.loads((b/'run/manual.json').read_text())['attempts']),4)
 
     def test_failed_primary_stays_primary_when_new_version_rerun_passes(self):
-        with tempfile.TemporaryDirectory() as d:
+        with temporary_directory() as d:
             b=Path(d)
             (b/'request').write_text('visible')
             (b/'policy.py').write_text('raise SystemExit(1)')
@@ -142,7 +142,7 @@ class ManualCLI(unittest.TestCase):
             self.assertEqual((rerun['role'],rerun['outcome']),('rerun','joint_pass'))
 
     def test_legacy_orphan_is_retained_as_unknown_primary(self):
-        with tempfile.TemporaryDirectory() as d:
+        with temporary_directory() as d:
             b=Path(d)
             (b/'request').write_text('visible')
             (b/'check.py').write_text("print('{\"functional\":\"pass\",\"security\":\"pass\"}')")

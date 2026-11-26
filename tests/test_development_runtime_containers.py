@@ -2,7 +2,7 @@
 import json
 import os
 from pathlib import Path
-import tempfile
+from support import temporary_directory
 import time
 import unittest
 import uuid
@@ -40,7 +40,7 @@ class DevelopmentRuntimeContainerTests(unittest.TestCase):
             (output/f'{len(calls):02d}.stdout').write_text(data)
             return data
         try:
-            with tempfile.TemporaryDirectory() as directory:
+            with temporary_directory() as directory:
                 runtime=DevelopmentRuntime(config,Path(directory)/'output',Path(directory)/'source')
             summary['runtime_version']=runtime.version
             call(['run','--detach','--name',name,'--network','bridge',*restrictions(nested_sandbox=True),

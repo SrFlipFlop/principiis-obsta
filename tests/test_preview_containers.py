@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 import shutil
-import tempfile
+from support import temporary_directory
 import unittest
 import uuid
 
@@ -113,7 +113,7 @@ class VirtualEnvironmentPreviewQualification(unittest.TestCase):
                    'image': image, 'outcome': 'error', 'evidence': str(base)}
         output = base / 'preview'
         try:
-            with tempfile.TemporaryDirectory(prefix='po-venv-preflight-') as temporary:
+            with temporary_directory(prefix='po-venv-preflight-') as temporary:
                 runtime = DevelopmentRuntime(runtime_config, Path(temporary) / 'output', Path(temporary) / 'tasks')
             summary['runtime_version'] = runtime.version
             preparation_name = 'po-venv-preparation-' + uuid.uuid4().hex

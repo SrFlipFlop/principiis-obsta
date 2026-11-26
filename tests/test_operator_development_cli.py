@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
+from support import temporary_directory
 import textwrap
 import unittest
 
@@ -16,7 +16,7 @@ IMAGE = 'sha256:' + 'b' * 64
 
 class OperatorDevelopmentCLI(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
+        self.temporary = temporary_directory()
         self.addCleanup(self.temporary.cleanup)
         self.base = Path(self.temporary.name)
         self.runs = self.base / 'runs'
