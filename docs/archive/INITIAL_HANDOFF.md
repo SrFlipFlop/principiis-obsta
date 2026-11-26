@@ -1,6 +1,6 @@
-> Historical handoff and alignment record, retained on 2026-11-15. For current instructions use [START_HERE](../START_HERE.md) and the [development workflow](../agents/workflow.md). References to `CONTEXT.md` describe the former glossary name; current terminology is in [GLOSSARY.md](../../GLOSSARY.md).
+> Historical handoff and alignment record, retained on 2026-11-15. For current instructions use [START_HERE](START_HERE.md) and the [development workflow](agents/workflow.md). References to `CONTEXT.md` describe the former glossary name; current terminology is in [GLOSSARY.md](../../GLOSSARY.md).
 
-> Current status: the owner completed `/grill-with-docs` and approved [baseline pilot specification](../BASELINE_PILOT_SPEC.md) on 2026-11-14. Proceed to baseline implementation planning under that scope. Earlier setup/alignment instructions below are historical. No pilot has been executed; model/settings and run limits remain deferred.
+> Current status: the owner completed `/grill-with-docs` and approved [baseline pilot specification](BASELINE_PILOT_SPEC.md) on 2026-11-14. Proceed to baseline implementation planning under that scope. Earlier setup/alignment instructions below are historical. No pilot has been executed; model/settings and run limits remain deferred.
 
 # Codex handoff — read first
 
@@ -50,7 +50,7 @@ If an existing Git repo is present, do not overwrite uncommitted work or reset h
 
 ## Completed research refresh — 2026-11-14
 
-Read [research index](../research/README.md), all four reports, [synthesis](../research/05_SYNTHESIS.md), and [repository audit](../REPOSITORY_AUDIT.md) before the next alignment session. These qualify the starter assumptions; none is an approved experimental specification. Owner README was preserved; starter README is archived as `STARTER_README.md`. The existing repository license is MIT. Follow the installed-skill compatibility notes in `MATT_POCOCK_WORKFLOW.md`.
+Read [research index](../research/README.md), all four reports, [synthesis](../research/05_SYNTHESIS.md), and [repository audit](REPOSITORY_AUDIT.md) before the next alignment session. These qualify the starter assumptions; none is an approved experimental specification. Owner README was preserved; starter README is archived as `STARTER_README.md`. The existing repository license is MIT. Follow the installed-skill compatibility notes in `MATT_POCOCK_WORKFLOW.md`.
 
 ## Application scope agreed during alignment
 
@@ -58,8 +58,8 @@ The five full-stack themes are recorded in [benchmark application catalog](../BE
 
 ## Alignment consolidation
 
-[Approved baseline pilot specification](../BASELINE_PILOT_SPEC.md) consolidates the owner's decisions and supersedes earlier multi-arm pilot/shared-stack/offline-development proposals. Owner approved this scope; implementation tickets are next, while actual pilot execution awaits deferred settings/limits.
+[Approved baseline pilot specification](BASELINE_PILOT_SPEC.md) consolidates the owner's decisions and supersedes earlier multi-arm pilot/shared-stack/offline-development proposals. Owner approved this scope; implementation tickets are next, while actual pilot execution awaits deferred settings/limits.
 
 ## Published implementation plan
 
-The owner-approved [19-issue breakdown](../planning/BASELINE_ISSUE_BREAKDOWN.md) is published on GitHub. Start with [issue #1](https://github.com/SrFlipFlop/principiis-obsta/issues/1); respect blockers and HITL reviews. No benchmark implementation or pilot run occurred during issue publication.
+The owner-approved [19-issue breakdown](planning/BASELINE_ISSUE_BREAKDOWN.md) is published on GitHub. Start with [issue #1](https://github.com/SrFlipFlop/principiis-obsta/issues/1); respect blockers and HITL reviews. No benchmark implementation or pilot run occurred during issue publication.

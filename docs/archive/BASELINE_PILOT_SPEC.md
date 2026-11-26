@@ -1,6 +1,6 @@
 # Baseline pilot specification — approved
 
-Status: reviewed and approved by the owner on 2026-11-14 after `/grill-with-docs`. Baseline scaffolding, benchmark authoring and independent evaluation are approved in scope. Actual pilot execution still requires qualified machinery and separate launch approval; execution settings were subsequently selected on 2026-11-15 below. Paid API experiments remain unauthorized. Routine engineering choices below are proposals, not experimental conclusions. This document takes precedence over superseded pilot recommendations in the research notes; terminology is in [GLOSSARY.md](../GLOSSARY.md).
+Status: reviewed and approved by the owner on 2026-11-14 after `/grill-with-docs`. Baseline scaffolding, benchmark authoring and independent evaluation are approved in scope. Actual pilot execution still requires qualified machinery and separate launch approval; execution settings were subsequently selected on 2026-11-15 below. Paid API experiments remain unauthorized. Routine engineering choices below are proposals, not experimental conclusions. This document takes precedence over superseded pilot recommendations in the research notes; terminology is in [GLOSSARY.md](../../GLOSSARY.md).
 
 ## Purpose and scope
 
@@ -64,7 +64,7 @@ Implementation plan: the owner-approved breakdown is published as GitHub issues 
 
 ## Owner clarification — 2026-11-15
 
-Issue #8 alignment clarified the existing baseline boundary: requests vary in detail and technical prescription, retain ordinary business policy and omit researcher-added secure-development guidance. Hidden security properties can apply even when absent from requests; absence is a visibility label, not an exemption from security evaluation. Compatible third-party dependencies remain the evaluated agent's choice. Minimal integration contracts must accommodate legitimate implementations. These principles supersede the early Fieldwork authoring choices that restricted dependencies and mapped primary security exclusively to supplied rules. See [ADR 0001](adr/0001-separate-baseline-requests-from-security-expectations.md). Concrete revised request/rubric intent was subsequently approved as recorded below; oracle qualification remains pending. No pilot launch or paid run is authorized.
+Issue #8 alignment clarified the existing baseline boundary: requests vary in detail and technical prescription, retain ordinary business policy and omit researcher-added secure-development guidance. Hidden security properties can apply even when absent from requests; absence is a visibility label, not an exemption from security evaluation. Compatible third-party dependencies remain the evaluated agent's choice. Minimal integration contracts must accommodate legitimate implementations. These principles supersede the early Fieldwork authoring choices that restricted dependencies and mapped primary security exclusively to supplied rules. See [ADR 0001](../adr/0001-separate-baseline-requests-from-security-expectations.md). Concrete revised request/rubric intent was subsequently approved as recorded below; oracle qualification remains pending. No pilot launch or paid run is authorized.
 
 ## Owner execution decisions — 2026-11-15
 

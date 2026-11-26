@@ -99,15 +99,15 @@ The live preview is **http://127.0.0.1:32768**. It remains running for owner ins
 development and browser-check containers were removed. Register a new test account
 through the portal to try its UI.
 
-- [Retained summary](../../artifacts/live/portal-40-20261117-8b873374/summary.json)
-- [Generated source](../../artifacts/live/portal-40-20261117-8b873374/run/development/attempts/step-01/2/snapshot/app.py)
-- [Generated startup documentation](../../artifacts/live/portal-40-20261117-8b873374/run/development/attempts/step-01/2/snapshot/README.md)
-- [Development report](../../artifacts/live/portal-40-20261117-8b873374/run/reports/development.md)
-- [JSON](../../artifacts/live/portal-40-20261117-8b873374/run/reports/development.json) and
-  [CSV](../../artifacts/live/portal-40-20261117-8b873374/run/reports/development.csv) exports
-- [Browser/API observations](../../artifacts/live/portal-40-20261117-8b873374/launch/browser/browser-smoke.json)
-- [Library screenshot](../../artifacts/live/portal-40-20261117-8b873374/launch/browser/library.png) and
-  [login screenshot](../../artifacts/live/portal-40-20261117-8b873374/launch/browser/landing.png)
+- [Retained summary](../../../artifacts/live/portal-40-20261117-8b873374/summary.json)
+- [Generated source](../../../artifacts/live/portal-40-20261117-8b873374/run/development/attempts/step-01/2/snapshot/app.py)
+- [Generated startup documentation](../../../artifacts/live/portal-40-20261117-8b873374/run/development/attempts/step-01/2/snapshot/README.md)
+- [Development report](../../../artifacts/live/portal-40-20261117-8b873374/run/reports/development.md)
+- [JSON](../../../artifacts/live/portal-40-20261117-8b873374/run/reports/development.json) and
+  [CSV](../../../artifacts/live/portal-40-20261117-8b873374/run/reports/development.csv) exports
+- [Browser/API observations](../../../artifacts/live/portal-40-20261117-8b873374/launch/browser/browser-smoke.json)
+- [Library screenshot](../../../artifacts/live/portal-40-20261117-8b873374/launch/browser/library.png) and
+  [login screenshot](../../../artifacts/live/portal-40-20261117-8b873374/launch/browser/landing.png)
 
 Raw artifacts are ignored local evidence, not published repository assets. The archive
 excludes subscription authentication. Current operable controller artifacts remain at

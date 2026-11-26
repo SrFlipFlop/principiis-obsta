@@ -122,7 +122,7 @@ in JSON/CSV/Markdown reports; interrupted allocations retain unknown measurement
 The evaluator supports attested interpreter links, immutable input validation and a
 disposable writable application copy. Provenance includes image/dependency declarations,
 check/request hashes, controller source hashes and the actual Python executable.
-These contracts are documented in the [evaluation CLI](../engineering/MVP_EVALUATION_CLI.md).
+These contracts are documented in the [evaluation CLI](../../engineering/MVP_EVALUATION_CLI.md).
 
 Review and real controls exposed and corrected these integration defects:
 
@@ -162,8 +162,8 @@ unchanged original snapshot and container removal. This is a small engineering
 control, not a generated portal result or qualification of #8/#9's checks.
 
 Final evidence:
-[runtime control summary](../../artifacts/mvp2-runtime-controls-20261117-final/runtime-control-0cc0398e90094b69886b0ebc2de24f01/summary.json)
-and [assessment/log/trace directory](../../artifacts/mvp2-runtime-controls-20261117-final/runtime-control-0cc0398e90094b69886b0ebc2de24f01/assessment).
+[runtime control summary](../../../artifacts/mvp2-runtime-controls-20261117-final/runtime-control-0cc0398e90094b69886b0ebc2de24f01/summary.json)
+and [assessment/log/trace directory](../../../artifacts/mvp2-runtime-controls-20261117-final/runtime-control-0cc0398e90094b69886b0ebc2de24f01/assessment).
 Earlier retained controls include the initial missing-startup-option failure, the
 Snap Docker-invisible worktree seccomp path failure, the UID write failure and the
 first passing runtime control. Their evidence remains under
@@ -175,7 +175,7 @@ The existing seven-assessment engineering browser/backend matrix passed in
 and the same checker. Outcomes were joint pass, candidate failure, candidate failure,
 joint pass, joint pass, candidate failure and joint pass for safe, UI-only, reject-all,
 alternative, safe, UI-only and versioned safe-rescore controls respectively.
-The [retained matrix summary](../../artifacts/mvp2-engineering-matrix-20261117/qualification-c448b49539584b6f962f58bd512af37c/summary.json)
+The [retained matrix summary](../../../artifacts/mvp2-engineering-matrix-20261117/qualification-c448b49539584b6f962f58bd512af37c/summary.json)
 labels these controls separately from candidate results.
 
 Integrated public CLI preflight against the retained generated run rejected binding

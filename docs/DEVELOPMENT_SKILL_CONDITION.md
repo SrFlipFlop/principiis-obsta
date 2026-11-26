@@ -1,6 +1,6 @@
 # Planned development-workflow skill condition
 
-**Status:** owner-selected research direction from the 2026-11-20 discussion; proposed intervention design for [issue #52](https://github.com/SrFlipFlop/principiis-obsta/issues/52). This does not amend the [approved baseline pilot](BASELINE_PILOT_SPEC.md), approve a comparative run, or authorize paid calls. The [source survey](research/07_DEVELOPMENT_SKILLS.md) records candidate skills, pinned upstream revisions, licenses, compatibility questions and uncertainty.
+**Status:** owner-selected research direction from the 2026-11-20 discussion; proposed intervention design for [issue #52](https://github.com/SrFlipFlop/principiis-obsta/issues/52). It does not change the baseline in [PROJECT.md](../PROJECT.md); interventions are out of scope right now. The [source survey](research/07_DEVELOPMENT_SKILLS.md) records candidate skills, pinned upstream revisions, licenses, compatibility questions and uncertainty.
 
 ## Question and hypothesis
 
@@ -38,4 +38,4 @@ Before proposing a comparative run, use a disposable **non-benchmark** fixture w
 - Draft and review the exact custom skill and separate invocation text, with hashes and source attribution.
 - Confirm a supported delivery path and audit events in the pinned runtime; implement only after the baseline path and oracles qualify.
 - Decide the comparison's task sample, repeat count, analysis and meaningful effect threshold before execution. A broader efficacy claim needs independent repeats and uncertainty analysis.
-- Obtain separate owner approval for comparative execution. This design does not authorize a pilot launch, intervention run or paid API use.
+- Agree the comparative run's timing with the owner; live runs follow the hard rules in [AGENTS.md](../AGENTS.md).

@@ -1,10 +1,10 @@
 # Issue #8 authoring alignment — 2026-11-15
 
-The owner completed the focused `grill-with-docs` session and confirmed the authoring principles in [ADR 0001](../adr/0001-separate-baseline-requests-from-security-expectations.md). This report records a request/mapping revision, not completion of #8 or a qualified baseline.
+The owner completed the focused `grill-with-docs` session and confirmed the authoring principles in [ADR 0001](../../adr/0001-separate-baseline-requests-from-security-expectations.md). This report records a request/mapping revision, not completion of #8 or a qualified baseline.
 
 ## Changes
 
-- Consolidated Fieldwork into [one ten-step package](../../benchmarks/document-portal/BENCHMARK_DESIGN.md). Checkpoints 1–3 form the #8 milestone. Removed the duplicated three-step directory and edition selection; historical task bytes and private evidence retain their original versions.
+- Consolidated Fieldwork into [one ten-step package](../../../benchmarks/document-portal/BENCHMARK_DESIGN.md). Checkpoints 1–3 form the #8 milestone. Removed the duplicated three-step directory and edition selection; historical task bytes and private evidence retain their original versions.
 - Rewrote requests 1–3 with varying detail, ordinary product/business policy, compatible dependency choice and fewer technical prescriptions. Removed fixed browser labels and researcher-added secure-development elaboration. The baseline developer receives cumulative requests only.
 - Recorded a new private authoring mapping with visibility, rationale, source attribution, implementation status and evidence status. Properties can be justified despite being absent from requests. The new bundle deliberately contains no claimed executable v2 checks or transferred runtime results.
 - Strengthened the release boundary: evaluation requires both qualified checks and approved artifact review before candidate access/staging. The pending authoring revision cannot execute candidates.
