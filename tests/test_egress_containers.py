@@ -49,7 +49,8 @@ sock.sendall(b'GET http://pypi.org/secret-path-sentinel?q=query-sentinel HTTP/1.
              b'X-Header-Sentinel: header-value-sentinel\r\nConnection: close\r\n\r\n')
 print(sock.recv(4096).split(b'\r\n')[0].decode())
 '''
-LOG_KEYS = {'method', 'host', 'port', 'decision', 'time', 'event', 'mode', 'allowlist', 'error'}
+LOG_KEYS = {'method', 'host', 'port', 'decision', 'time', 'event', 'mode', 'allowlist', 'error',
+            'credential', 'reason', 'model_domains', 'model_token'}
 
 
 @unittest.skipUnless(os.environ.get('PO_RUNTIME_IMAGE') and os.environ.get('PO_RUNTIME_ROOT')
