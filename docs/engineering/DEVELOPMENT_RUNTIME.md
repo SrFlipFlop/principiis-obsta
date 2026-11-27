@@ -59,8 +59,8 @@ Refresh the private auth file before an explicit `--retry`; preserve the failed 
 Each attempt uses a fresh container/home, `codex exec --ephemeral`, an empty user
 configuration and no external conversations, skills, rules or memory. The adapter
 omits model/reasoning overrides and records effective values as unknown. It uses
-ordinary workspace-write permissions with network access and live documentation
-search. The agent sees cumulative request text on stdin and its retained project;
+ordinary workspace-write permissions. Web search is disabled and command network
+access goes through the egress proxy (see [Network limits](#network-limits-75)). The agent sees cumulative request text on stdin and its retained project;
 future requests, controller records and evaluation artifacts are not mounted. The
 container runs as a nonroot UID matching the host operator (UID 1000 when the
 controller runs as root), with a read-only root, temporary home/tmp, dropped
@@ -75,11 +75,64 @@ after SIGKILL or power loss; the sidecar makes any orphan discoverable. Keep all
 original partial workspace/log evidence.
 
 For the installed CLI, the adapter selects a `development` permissions profile that
-extends built-in `:workspace` and sets `network.enabled=true`, using
+extends built-in `:workspace` and sets `network.enabled=true` (the container itself reaches only the egress proxy), using
 `default_permissions="development"`. Execution and sandbox controls share the exact
 same settings. An explicit `:workspace` diagnostic ignores the legacy
 `sandbox_workspace_write.network_access` override; the retained controls exposed that
 mismatch. Model and reasoning remain at harness defaults.
+
+## Network limits (#75)
+
+The repository is public, so the evaluated coding agent must not reach later requests
+or published evaluator material ([ADR 0003](../adr/0003-evaluator-material-is-published-and-the-agent-is-network-limited.md)).
+
+- **Web search is disabled** (`web_search = "disabled"`). Hosted search ignores every
+  network limit below.
+- **The development container joins only an internal Docker network**
+  (`--internal`, IPv6 off), created per attempt. It has no route out.
+- **A trusted egress proxy is the only way out.** It runs the standard-library program
+  [`principiis/egress_proxy.py`](../../principiis/egress_proxy.py) (`python -I -S`) from
+  the same pinned image, with no mounts, no credentials and the usual container
+  restrictions. It sits on the internal network and the ordinary bridge. The development
+  container gets `HTTPS_PROXY`/`HTTP_PROXY` (and lower-case forms) pointing at it.
+  Tools that ignore the proxy variables, and direct DNS/TCP/UDP, fail closed.
+- **`allowlist` mode** (every development run) forwards only the domains in
+  [`fixtures/development/network_allowlist.json`](../../fixtures/development/network_allowlist.json)
+  on ports 80 and 443. `*.example.org` matches subdomains only. HTTPS is tunnelled with
+  CONNECT, so the proxy sees the domain, never the path; a package host that also serves
+  arbitrary repositories (for example GitHub) cannot be allowed safely.
+- **`log` mode** forwards every destination and records it. It exists only for the
+  measurement below.
+- Every decision is one JSON line in `egress.jsonl` beside the workspace. Execution
+  evidence keeps the mode, allowlist and proxy digests, and the allowed and refused hosts.
+- The mode, allowlist digest and proxy digest are part of `runtime_version`, together
+  with `web_search`, so an existing run cannot continue under a different network policy.
+- `runtime.json` (the allocation sidecar) also records the proxy container and network.
+  `principiis cleanup` removes them after the development container.
+
+**The allowlist is provisional.** It lists the ChatGPT/OpenAI endpoints and the five
+package registries, but has not been measured. Build it from a logging-only run on the
+disposable fixture request
+[`fixtures/development/network_measurement_request.txt`](../../fixtures/development/network_measurement_request.txt),
+never a benchmark run:
+
+```bash
+python3 -m principiis.network_measurement --config RUNTIME_JSON --output NEW_DIR_OUTSIDE_CHECKOUT
+```
+
+It prints the hosts reached and keeps `measurement.json`, `egress.jsonl` and the Codex
+logs. It is a live subscription run, so it needs the owner's approval (AGENTS.md hard
+rule 3). Review the hosts, replace `domains`, drop the `status` note, and report the
+list and method in the paper.
+
+**Runs made before this change** had full network access through the ordinary Docker
+bridge and live web search. Their results show it: execution evidence has
+`runtime.network` = `bridge; ordinary development network access`, adapter
+`docker-development-v2`, and `codex.settings.web_search` = `live`. Report them as such.
+
+Workspaces already start without research-side Git history: step 1 starts empty, later
+steps start from the agent's own previous snapshot, and only the workspace and the
+login file are mounted.
 
 Development `/tmp` and the fresh home tmpfs explicitly allow executable files so
 ordinary temporary build tools and user-local executables can run. Both retain

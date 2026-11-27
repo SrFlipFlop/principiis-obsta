@@ -1,0 +1,8 @@
+This is a throwaway project used only to check which network destinations ordinary development needs. Work in the current directory.
+
+1. Create a small Python web service with Flask and pytest in a virtual environment, install its dependencies with pip, and run its tests.
+2. Create a small Node.js web service with Express and a test runner, install its dependencies with npm, and run its tests.
+3. If PHP and Composer, .NET, or Go are available, create a minimal project for each, add one third-party package with its usual package manager, and build it. If a toolchain is missing, say so and move on.
+4. Look up the documentation you would normally consult for these libraries.
+
+Finish with a short list of what worked and what failed.
