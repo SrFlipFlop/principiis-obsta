@@ -1,0 +1,7 @@
+{
+  "accounts-and-session": "functional",
+  "notes-and-files": "functional",
+  "private-backend": "security",
+  "browser-library": "functional",
+  "browser-untrusted-text": "security"
+}
