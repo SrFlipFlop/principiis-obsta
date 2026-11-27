@@ -20,6 +20,17 @@ def write_measurement(path, hosts):
     return path
 
 
+class MeasurementRequest(unittest.TestCase):
+    def test_request_asks_for_one_pinned_dependency_per_ecosystem_a_docs_page_and_notes(self):
+        text = network_measurement.REQUEST.read_text()
+        for needle in ('Flask', 'pytest', 'six==1.16.0', 'Express', 'left-pad@1.3.0', 'psr/log:3.0.2',
+                       'Newtonsoft.Json --version 13.0.3', 'github.com/google/uuid@v1.6.0',
+                       'https://docs.python.org/3/library/json.html', 'NOTES.md'):
+            self.assertIn(needle, text)
+        self.assertIn('toolchain is missing', text)
+        self.assertNotIn('curl', text)
+
+
 class DraftAllowlist(unittest.TestCase):
     def test_draft_keeps_measured_hosts_and_is_rejected_until_the_owner_edits_it(self):
         with temporary_directory() as directory:

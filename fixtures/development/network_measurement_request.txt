@@ -1,8 +1,11 @@
-This is a throwaway project used only to check which network destinations ordinary development needs. Work in the current directory.
+This is a throwaway project used only to check which network destinations ordinary development needs. Work in the current directory. Keep every piece tiny; do not polish. Run each command yourself so that it really uses the network, and use only the exact package versions named here.
 
-1. Create a small Python web service with Flask and pytest in a virtual environment, install its dependencies with pip, and run its tests.
-2. Create a small Node.js web service with Express and a test runner, install its dependencies with npm, and run its tests.
-3. If PHP and Composer, .NET, or Go are available, create a minimal project for each, add one third-party package with its usual package manager, and build it. If a toolchain is missing, say so and move on.
-4. Look up the documentation you would normally consult for these libraries.
+1. Python: create a small Flask web service with a pytest test in a virtual environment. Install its dependencies with pip, plus `six==1.16.0`, and run the test.
+2. Node.js: create a small Express web service with a test using the built-in `node --test` runner. Install its dependencies with npm, plus `left-pad@1.3.0`, and run the test.
+3. PHP (Packagist): if Composer is available, create a minimal project and run `composer require psr/log:3.0.2`.
+4. .NET (NuGet): if `dotnet` is available, create a minimal console project, run `dotnet add package Newtonsoft.Json --version 13.0.3` and build it.
+5. Go: if `go` is available, run `go mod init example.test/smoke` and `go get github.com/google/uuid@v1.6.0`, then build a program that imports it.
+6. Documentation: look up the page you would normally consult for these libraries, including https://docs.python.org/3/library/json.html, and save its title to `docs-title.txt`.
+7. Write `NOTES.md` with one line per step above: the command you ran and whether it succeeded or failed. If a toolchain is missing, say so and move on. If a command cannot reach the network, record the failure and its error message. Do not install system packages, change the proxy or network settings, or use other hosts to get around a failure.
 
 Finish with a short list of what worked and what failed.
