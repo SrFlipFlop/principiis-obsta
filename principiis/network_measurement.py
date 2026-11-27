@@ -9,9 +9,16 @@ output keeps the workspace, Codex logs, `egress.jsonl` and `measurement.json`, w
 needs the owner's approval (AGENTS.md hard rule 3) and never uses a benchmark request.
 """
 import argparse
+import hashlib
+import json
+import os
 from pathlib import Path
+import re
+import sys
+import uuid
 
-from .development_runtime import CHECKOUT, DevelopmentRuntime
+from .development_runtime import (CHECKOUT, DevelopmentRuntime, docker_run, inspect_image, load_config,
+                                  preflight_run, restrictions)
 from .jsonio import write_json
 
 REQUEST = CHECKOUT / 'fixtures/development/network_measurement_request.txt'
@@ -32,7 +39,113 @@ def measure(config, output, request=REQUEST):
     return record
 
 
+# Hosts the draft never contains: they serve arbitrary public repositories (the
+# reason #78 excludes them) or bypass the domain check. Each needs an owner decision.
+EXCLUDED = (
+    ('github.com', 'code hosting serves the public research repository'),
+    ('githubusercontent.com', 'code hosting serves the public research repository'),
+    ('gitlab.com', 'code hosting'),
+    ('bitbucket.org', 'code hosting'),
+    ('golang.org', 'proxy.golang.org serves any public GitHub repository as a Go module'),
+)
+
+
+def exclusion(host):
+    if re.fullmatch(r'[0-9.]+|.*:.*', host):
+        return 'IP literal: the allowlist is by domain name'
+    for suffix, reason in EXCLUDED:
+        if host == suffix or host.endswith('.' + suffix):
+            return reason
+
+
+def draft_allowlist(measurement, output):
+    """Write a DRAFT allowlist from measured hosts. It carries TODO markers, so the loader refuses it."""
+    measurement, output = Path(measurement), Path(output)
+    if output.exists():
+        raise ValueError(f'refusing to overwrite {output}')
+    raw = measurement.read_bytes()
+    document = json.loads(raw)
+    hosts = document.get('connected_hosts') if isinstance(document, dict) else None
+    if not isinstance(hosts, list) or any(not isinstance(v, str) for v in hosts):
+        raise ValueError('measurement has no connected_hosts list')
+    kept = sorted({v for v in hosts if not exclusion(v)})
+    excluded = {v: exclusion(v) for v in sorted(set(hosts)) if exclusion(v)}
+    draft = {'version': '1',
+             'status': 'TODO-OWNER: DRAFT from a measurement (sha256 %s). Review each host, then replace this '
+                       'status with the approval note. The runtime refuses this file while any marker remains.'
+                       % hashlib.sha256(raw).hexdigest(),
+             'measured_from': 'TODO-OWNER: describe the measurement run (request fixture, date, who approved)',
+             'domains': kept}
+    output.write_text(json.dumps(draft, indent=2) + '\n')
+    return {'draft': str(output), 'hosts': kept, 'excluded': excluded}
+
+
+def check(report, name, function):
+    try:
+        report.append({'check': name, 'status': 'PASS', 'detail': function() or ''})
+        return True
+    except (OSError, ValueError, KeyError) as error:
+        report.append({'check': name, 'status': 'FAIL', 'detail': str(error)})
+        return False
+
+
+def dedicated_login(path):
+    """Stat only: the file is never opened."""
+    path = Path(path)
+    if path.is_symlink() or not path.is_file():
+        raise ValueError('login file must be a regular file, not a symlink')
+    default = Path(os.path.expanduser('~/.codex/auth.json'))
+    if default.exists() and os.path.samefile(path, default):
+        raise ValueError('login file is the default ~/.codex/auth.json; use a dedicated login for this runtime')
+    if '.codex' in path.resolve().parts[:-1]:
+        raise ValueError('login file lives under a .codex directory; use a dedicated login file elsewhere')
+    return 'content not read'
+
+
+def visible_to_daemon(config, directory, label):
+    """A no-network, no-credential container must see a marker the controller just wrote."""
+    marker = directory / ('.po-visible-' + uuid.uuid4().hex)
+    marker.write_text('x')
+    try:
+        preflight_run(config['docker'], ['--network', 'none', *restrictions(),
+                      '--mount', f'type=bind,src={directory},dst=/probe,readonly', '--entrypoint', '/bin/sh',
+                      config['image'], '-eu', '-c', f'test -f /probe/{marker.name}'])
+    except ValueError as error:
+        raise ValueError(f'Docker daemon cannot see {label} {directory}: {error}') from error
+    finally:
+        marker.unlink()
+    return str(directory)
+
+
+def preflight(runtime_config, runs_root):
+    """Ordered PASS/FAIL checks before the owner-approved measurement. No model, no network, no login read."""
+    report, state = [], {}
+
+    def load():
+        state['config'] = load_config(runtime_config)
+        return 'image ' + state['config']['image']
+
+    if not check(report, 'runtime config valid and placeholders replaced', load):
+        return report
+    config = state['config']
+    check(report, 'login file is a dedicated regular file, not ~/.codex/auth.json', lambda: dedicated_login(config['auth_file']))
+    if not check(report, 'docker daemon reachable',
+                 lambda: 'server ' + docker_run(config['docker'], ['version', '--format', '{{.Server.Version}}']).strip()):
+        return report
+    check(report, 'image id matches the configured pin', lambda: inspect_image(config['docker'], config['image'])['id'])
+    check(report, 'runs-root is visible to the docker daemon',
+          lambda: visible_to_daemon(config, Path(runs_root).resolve(), 'the runs-root'))
+    # The proxy program is passed as an argument, not mounted, so only the image must run it.
+    check(report, 'proxy imports work under python -I -S in the image',
+          lambda: preflight_run(config['docker'], ['--network', 'none', *restrictions(), '--entrypoint', 'python',
+                                config['image'], '-I', '-S', '-c', 'import json, re, socket, sys, threading, time']) and '')
+    return report
+
+
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv and argv[0] in ('preflight', 'draft-allowlist'):
+        return helper(argv)
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     parser.add_argument('--config', required=True, help='development runtime JSON')
     parser.add_argument('--output', required=True, help='new directory outside the checkout')
@@ -40,6 +153,34 @@ def main(argv=None):
     args = parser.parse_args(argv)
     record = measure(args.config, args.output, args.request)
     print('\n'.join(record['connected_hosts']))
+
+
+def helper(argv):
+    parser = argparse.ArgumentParser(prog='python3 -m principiis.network_measurement')
+    commands = parser.add_subparsers(dest='command', required=True)
+    pre = commands.add_parser('preflight', help='check the setup before the live measurement; calls no model')
+    pre.add_argument('--config', required=True)
+    pre.add_argument('--runs-root', required=True)
+    draft = commands.add_parser('draft-allowlist', help='write a draft allowlist from measurement.json')
+    draft.add_argument('--measurement', required=True)
+    draft.add_argument('--output', required=True)
+    args = parser.parse_args(argv)
+    if args.command == 'preflight':
+        report = preflight(args.config, args.runs_root)
+        for item in report:
+            print(f"{item['status']}  {item['check']}" + (f": {item['detail']}" if item['detail'] else ''))
+        failed = [item for item in report if item['status'] != 'PASS']
+        print('PREFLIGHT ' + ('FAILED: do not start the run' if failed else 'OK'))
+        if failed:
+            sys.exit(1)
+        return
+    try:
+        summary = draft_allowlist(args.measurement, args.output)
+    except (OSError, ValueError) as error:
+        sys.exit(f'error: {error}')
+    print(f"Draft written to {summary['draft']} ({len(summary['hosts'])} hosts). It is REJECTED until you edit it.")
+    for host, reason in summary['excluded'].items():
+        print(f'NOT drafted, decide consciously: {host} ({reason})')
 
 
 if __name__ == '__main__':

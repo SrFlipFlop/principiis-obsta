@@ -125,3 +125,31 @@ def validate(snapshot, *, runtime_image=_UNSPECIFIED):
             raise ValueError('content differs from retained manifest')
     except (OSError, ValueError, RuntimeError) as error:
         raise ValueError(f'snapshot integrity validation failed: {snapshot}: {error}') from error
+
+
+def forbid_foreign_git(root):
+    """Reject Git metadata that points outside the workspace (issue #75 item 1).
+
+    A development workspace starts empty and only receives the agent's own prior
+    checkpoint. A self-contained repository the agent created is its own work and is
+    allowed. A gitfile, symlinked `.git`, `commondir` or object alternates would let
+    the agent read research-side history by path, so they fail before the stage.
+    """
+    root = Path(os.path.abspath(root))
+    problems = []
+    for directory, folders, files in os.walk(root, followlinks=False):
+        for name in folders + files:
+            if name != '.git':
+                continue
+            path = Path(directory) / name
+            where = str(path.relative_to(root))
+            if path.is_symlink():
+                problems.append(f'{where} is a symlink')
+            elif path.is_file():
+                problems.append(f'{where} is a gitfile pointing elsewhere')
+            else:
+                for extra in ('commondir', 'objects/info/alternates'):
+                    if (path / extra).exists() or (path / extra).is_symlink():
+                        problems.append(f'{where}/{extra} references another repository')
+    if problems:
+        raise ValueError('workspace contains research-side Git references: ' + '; '.join(problems))
