@@ -11,7 +11,7 @@ Completed 2026-11-14. All four independent, read-only research tracks returned b
 5. [Synthesis and recommended alignment agenda](05_SYNTHESIS.md)
 6. [SlopCodeBench authoring notes](06_SLOPCODEBENCH_AUTHORING.md)
 7. [Development-skills source survey (issue #52; checked 2026-11-19)](07_DEVELOPMENT_SKILLS.md)
-8. [Storing, sharing and publishing hidden evaluator material (issue #72; checked 2026-11-27)](08_PRIVATE_MATERIAL_STORAGE.md)
+8. [Sharing and publishing evaluator material (issues #72, #73; checked 2026-11-27)](08_PRIVATE_MATERIAL_STORAGE.md)
 
 Also here: [research charter](RESEARCH_CHARTER.md), [experiment protocol](EXPERIMENT_PROTOCOL.md) and [related work](RELATED_WORK.md).
 
