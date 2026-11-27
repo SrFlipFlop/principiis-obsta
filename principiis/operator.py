@@ -128,7 +128,8 @@ def evaluate(store, args):
         if store.binding is None:
             raise ValueError('evaluator is unbound; bind a qualified package before evaluation')
         step = selected_step(store, args.step)
-        evaluator = RestrictedEvaluator(store.binding, store.frozen('runtime.json').get('docker', 'docker'))
+        evaluator = RestrictedEvaluator(store.binding, store.frozen('runtime.json').get('docker', 'docker'),
+                                    root=store.root, search_roots=args.evaluator_root)
         pipeline.evaluate(store, step, rerun=args.rerun, evaluator=evaluator)
     return status.build(store)
 
@@ -282,6 +283,8 @@ def parser():
     target.add_argument('--final', action='store_true', help='review the final frozen checkpoint')
     commands['evaluate'].add_argument('--ai-review', action='store_true', help='run the separate Codex security review instead of hidden checks')
     commands['evaluate'].add_argument('--rerun', action='store_true')
+    commands['evaluate'].add_argument('--evaluator-root', type=Path, action='append', default=[],
+                                      help='extra directory searched by SHA-256 for evaluator files of runs recorded with a host path')
     commands['evaluate'].add_argument('--config', help='separate reviewer configuration; required with --ai-review')
     commands['evaluate'].add_argument('--prompt', help='reviewer prompt; required with --ai-review')
     commands['evaluate'].add_argument('--prompt-version', help='reviewer prompt version; required with --ai-review')
