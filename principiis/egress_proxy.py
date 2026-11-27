@@ -1,17 +1,25 @@
 """The development container's only way out: a logging HTTP(S) forward proxy.
 
 This file is also the program the trusted egress container runs, as
-`python -I -S -c <this source> MODE ALLOWLIST_JSON PORT [BIND]`, so it imports only the
-standard library. `log` mode forwards every well-formed destination and records it
-(the measurement that builds the allowlist); `allowlist` mode forwards only listed
-domains on web ports. Every decision is printed as one JSON line on stdout.
+`python -I -S -c <this source> MODE POLICY_JSON PORT [BIND]`, so it imports only the
+standard library. POLICY_JSON is `{"domains": [...], "model_domains": [...]}`.
+`log` mode forwards every well-formed destination and records it (the measurement
+that builds the allowlist); `allowlist` mode forwards `domains` on web ports, and
+`model_domains` only for requests carrying the per-run model credential
+(`Proxy-Authorization: Basic base64("model:<token>")`, token from the environment
+variable named by MODEL_TOKEN_VARIABLE). Only the Codex process holds that token;
+the commands it runs get the token-less proxy. Every decision is printed as one JSON
+line on stdout; the token and the header are never printed or forwarded.
 
 HTTPS is tunnelled with CONNECT, so the proxy sees the domain, never the path. In
 `allowlist` mode a tunnel is forwarded only if the client's TLS ClientHello names the
 same server (SNI) as the CONNECT line, and a plain-HTTP request only if its `Host`
 header names the request-line host; this stops domain fronting by SNI or Host.
 """
+import base64
+import hmac
 import json
+import os
 import re
 import socket
 import sys
@@ -19,6 +27,8 @@ import threading
 import time
 
 WEB_PORTS = (80, 443)
+MODEL_TOKEN_VARIABLE = 'PO_MODEL_TOKEN'
+MODEL_USER = 'model'
 HOST = re.compile(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\Z')
 
 # Hosts that are never allowed, whatever the allowlist says (the loader refuses such an
@@ -68,16 +78,9 @@ def normalise_host(host):
     return host if HOST.match(host) else None
 
 
-def allowed(host, port, mode, allowlist):
-    """Whether the proxy may open a connection to `host:port`."""
-    host = normalise_host(host)
-    if host is None or not isinstance(port, int) or not 0 < port < 65536:
-        return False
-    if mode == 'log':
-        return True
-    if mode != 'allowlist' or port not in WEB_PORTS or never_allowed(host):
-        return False
-    for entry in allowlist:
+def listed(host, domains):
+    """Whether `host` matches a usable entry; entries `unsafe_entry` refuses never match."""
+    for entry in domains:
         if unsafe_entry(entry):
             continue
         if entry.startswith('*.'):
@@ -86,6 +89,41 @@ def allowed(host, port, mode, allowlist):
         elif host == entry:
             return True
     return False
+
+
+def allowed(host, port, mode, allowlist, model_domains=(), credential=False):
+    """Whether the proxy may open a connection to `host:port`.
+
+    A model host needs the model credential even if it is also in `allowlist`.
+    """
+    host = normalise_host(host)
+    if host is None or not isinstance(port, int) or not 0 < port < 65536:
+        return False
+    if mode == 'log':
+        return True
+    if mode != 'allowlist' or port not in WEB_PORTS or never_allowed(host):
+        return False
+    if listed(host, model_domains):
+        return credential is True
+    return listed(host, allowlist)
+
+
+def credential(lines, token):
+    """'valid', 'invalid' or 'absent': the request's model credential. Never returns the value."""
+    values = [line.split(':', 1)[1].strip() for line in lines
+              if line.split(':', 1)[0].strip().lower() == 'proxy-authorization' and ':' in line]
+    if not values:
+        return 'absent'
+    scheme, _, encoded = values[0].partition(' ')
+    try:
+        user, _, password = base64.b64decode(encoded.strip(), validate=True).decode().partition(':')
+    except ValueError:
+        return 'invalid'
+    expected = (MODEL_USER + ':' + token).encode()
+    given = (user + ':' + password).encode()
+    ok = (len(values) == 1 and scheme.lower() == 'basic' and bool(token)
+          and hmac.compare_digest(given, expected))
+    return 'valid' if ok else 'invalid'
 
 
 def log(**event):
@@ -255,7 +293,7 @@ def discard(source, target):
         pass
 
 
-def handle(client, mode, allowlist):
+def handle(client, mode, policy, token=''):
     upstream = None
     answered = False
     try:
@@ -265,13 +303,18 @@ def handle(client, mode, allowlist):
         method, target, version = lines[0].split(' ')
         host, port, path = destination(method, target)
         name = normalise_host(host)
-        decision = allowed(host, port, mode, allowlist)
+        presented = credential(lines[1:], token)
+        model = listed(name or '', policy.get('model_domains', ()))
+        decision = allowed(host, port, mode, policy.get('domains', ()), policy.get('model_domains', ()),
+                           credential=presented == 'valid')
         reason = None
+        if not decision and model and presented != 'valid':
+            reason = 'model host without the model credential'
         if decision and mode == 'allowlist' and method != 'CONNECT':
             reason = plain_refusal(name, port, lines[1:])
             decision = reason is None
         log(method=method, host=name or host, port=port, decision='allowed' if decision else 'refused',
-            **({'reason': reason} if reason else {}))
+            credential=presented, **({'reason': reason} if reason else {}))
         if not decision:
             answered = True
             client.sendall(b'HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
@@ -288,7 +331,8 @@ def handle(client, mode, allowlist):
             data, hello = read_client_hello(client, 30 if mode == 'allowlist' else 5, rest)
             sni = hello and hello['sni']
             if mode == 'allowlist' and (refusal := tunnel_refusal(name, hello)):
-                log(method=method, host=name, port=port, decision='refused', reason=refusal, sni=sni)
+                log(method=method, host=name, port=port, decision='refused', reason=refusal, sni=sni,
+                    credential=presented)
                 return
             log(event='tls', method=method, host=name, port=port, sni=sni)
             upstream.sendall(data)
@@ -328,16 +372,18 @@ def handle(client, mode, allowlist):
                 end.close()
 
 
-def serve(mode, allowlist, port, bind='0.0.0.0'):
+def serve(mode, policy, port, token='', bind='0.0.0.0'):
     # `own-address`: the container's address on the only network it has at start, the
     # internal development network. Networks joined later (the way out) cannot reach it.
     address = socket.gethostbyname(socket.gethostname()) if bind == 'own-address' else bind
     listener = socket.create_server((address, port))
-    log(event='listening', mode=mode, address=address, port=port, allowlist=allowlist)
+    log(event='listening', mode=mode, address=address, port=port, allowlist=policy.get('domains'),
+        model_domains=policy.get('model_domains'), model_token='set' if token else 'missing')
     while True:
         client, _ = listener.accept()
-        threading.Thread(target=handle, args=(client, mode, allowlist), daemon=True).start()
+        threading.Thread(target=handle, args=(client, mode, policy, token), daemon=True).start()
 
 
 if __name__ == '__main__':
-    serve(sys.argv[1], json.loads(sys.argv[2]), int(sys.argv[3]), *sys.argv[4:5])
+    serve(sys.argv[1], json.loads(sys.argv[2]), int(sys.argv[3]), os.environ.pop(MODEL_TOKEN_VARIABLE, ''),
+          *sys.argv[4:5])

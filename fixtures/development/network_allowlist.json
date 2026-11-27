@@ -1,10 +1,12 @@
 {
   "version": "1",
-  "status": "provisional: not yet measured. Replace with the domains a logging-only run on a disposable fixture actually reached (#75). proxy.golang.org is deliberately absent: it serves any public GitHub repository as a Go module.",
-  "domains": [
+  "status": "provisional: not yet measured. Replace with the domains a logging-only run on a disposable fixture actually reached (#75). proxy.golang.org is deliberately absent: it serves any public GitHub repository as a Go module. model_domains are reachable only by the Codex process, which alone holds the per-run proxy token; commands get 403 there (otherwise a command could call the model API with hosted web search).",
+  "model_domains": [
     "api.openai.com",
     "auth.openai.com",
-    "chatgpt.com",
+    "chatgpt.com"
+  ],
+  "domains": [
     "pypi.org",
     "files.pythonhosted.org",
     "registry.npmjs.org",

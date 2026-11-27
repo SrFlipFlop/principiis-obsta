@@ -43,6 +43,7 @@ class DraftAllowlist(unittest.TestCase):
             document = json.loads(draft.read_text())
             self.assertEqual(document['version'], '1')
             self.assertEqual(document['domains'], summary['hosts'])
+            self.assertEqual(document['model_domains'], development_runtime.load_allowlist()['model_domains'])
             self.assertIn('TODO', draft.read_text())
             with self.assertRaisesRegex(ValueError, 'TODO'):
                 development_runtime.load_allowlist(draft)
@@ -50,7 +51,18 @@ class DraftAllowlist(unittest.TestCase):
             document['status'] = 'approved by the owner after reviewing the measurement'
             document.pop('measured_from', None)
             draft.write_text(json.dumps(document))
-            self.assertEqual(development_runtime.load_allowlist(draft), summary['hosts'])
+            self.assertEqual(development_runtime.load_allowlist(draft)['domains'], summary['hosts'])
+
+    def test_measured_model_hosts_stay_out_of_the_ordinary_domains(self):
+        with temporary_directory() as directory:
+            base = Path(directory)
+            measurement = write_measurement(base / 'm.json', ['pypi.org', 'chatgpt.com', 'api.openai.com', 'ab.chatgpt.com'])
+            summary = network_measurement.draft_allowlist(measurement, base / 'draft.json')
+            document = json.loads((base / 'draft.json').read_text())
+            self.assertEqual(document['domains'], ['pypi.org'])
+            self.assertEqual(summary['model_hosts'], ['ab.chatgpt.com', 'api.openai.com', 'chatgpt.com'])
+            # A measured model host that is not yet a model domain is for the owner to decide.
+            self.assertIn('ab.chatgpt.com', document['model_domains_measured'])
 
     def test_code_hosting_and_ip_literals_are_never_drafted(self):
         with temporary_directory() as directory:
@@ -86,8 +98,31 @@ class DraftAllowlist(unittest.TestCase):
                 network_measurement.draft_allowlist(base / 'bad.json', base / 'new.json')
 
     def test_the_committed_allowlist_has_no_markers(self):
-        self.assertIn('pypi.org', development_runtime.load_allowlist())
-        self.assertIn('files.pythonhosted.org', development_runtime.load_allowlist())
+        self.assertIn('pypi.org', development_runtime.load_allowlist()['domains'])
+        self.assertIn('files.pythonhosted.org', development_runtime.load_allowlist()['domains'])
+
+    def test_the_committed_allowlist_keeps_model_hosts_apart(self):
+        allowlist = development_runtime.load_allowlist()
+        self.assertEqual(sorted(allowlist['model_domains']), ['api.openai.com', 'auth.openai.com', 'chatgpt.com'])
+        self.assertFalse(set(allowlist['model_domains']) & set(allowlist['domains']))
+
+
+class AllowlistLoader(unittest.TestCase):
+    def load(self, document):
+        with temporary_directory() as directory:
+            path = Path(directory) / 'allowlist.json'
+            path.write_text(json.dumps(document))
+            return development_runtime.load_allowlist(path)
+
+    def test_both_lists_are_required_and_validated(self):
+        good = {'version': '1', 'domains': ['pypi.org'], 'model_domains': ['chatgpt.com']}
+        self.assertEqual(self.load(good), {'domains': ['pypi.org'], 'model_domains': ['chatgpt.com']})
+        for changes in ({'model_domains': None}, {'model_domains': []}, {'model_domains': ['ChatGPT.com']},
+                        {'model_domains': 'chatgpt.com'}, {'domains': ['chatgpt.com', 'pypi.org']},
+                        {'domains': ['*.chatgpt.com']}, {'model_domains': ['*.openai.com']}):
+            document = {k: v for k, v in dict(good, **changes).items() if v is not None}
+            with self.subTest(changes), self.assertRaises(ValueError):
+                self.load(document)
 
 
 def fake_docker(base, *, image=IMAGE, invisible=()):

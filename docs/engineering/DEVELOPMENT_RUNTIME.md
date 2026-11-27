@@ -92,50 +92,91 @@ or published evaluator material ([ADR 0003](../adr/0003-evaluator-material-is-pu
   (`--internal`, IPv6 off), created per attempt. It has no route out.
 - **A trusted egress proxy is the only way out.** It runs the standard-library program
   [`principiis/egress_proxy.py`](../../principiis/egress_proxy.py) (`python -I -S`) from
-  the same pinned image, with no mounts, no credentials and the usual container
-  restrictions. It starts on the internal network alone, listens only on its address
+  the same pinned image, with no mounts, no login, only the per-attempt model token
+  (below) and the usual container restrictions. It starts on the internal network alone, listens only on its address
   there (the controller checks the `listening` log line against Docker's view), and then
   joins its own per-run outside network `po-development-out-<token>` (IPv6 off). It never
   joins the default bridge, so other containers cannot reach it. The development
   container gets `HTTPS_PROXY`/`HTTP_PROXY` (and lower-case forms) pointing at it.
   Tools that ignore the proxy variables, and direct DNS/TCP/UDP, fail closed.
-- **`allowlist` mode** (every development run) forwards only the domains in
+- **`allowlist` mode** (every development run) forwards only the `domains` in
   [`fixtures/development/network_allowlist.json`](../../fixtures/development/network_allowlist.json)
-  on ports 80 and 443. `*.example.org` matches subdomains only. HTTPS is tunnelled with
-  CONNECT, so the proxy sees the domain, never the path; a package host that also serves
-  arbitrary repositories (for example GitHub) cannot be allowed safely.
-  - **SNI must match.** After `200` to a CONNECT, the proxy reads the client's TLS
-    ClientHello and forwards it only if its server name equals the CONNECT host. No SNI,
-    another SNI, Encrypted Client Hello and non-TLS bytes are refused (`reason`
-    `no-sni`, `sni-mismatch`, `ech`, `not-tls`), on any port.
-  - **Plain HTTP** is forwarded only with exactly one `Host` header naming the
-    request-line host and port, no `Transfer-Encoding`, and one request per connection
-    (`Connection: close`; anything after the body is dropped). Otherwise `403`
-    (`host-mismatch`, `unsupported-body`).
+  on ports 80 and 443, and its `model_domains` only to the Codex process (below).
+  `*.example.org` matches subdomains only. HTTPS is tunnelled with CONNECT, so the proxy
+  sees the domain, never the path; a package host that also serves arbitrary
+  repositories (for example GitHub) cannot be allowed safely.
   - **Never-allow list.** `NEVER_ALLOW` in `egress_proxy.py` names GitHub (github.com,
     githubusercontent.com, github.io, githubassets.com, ghcr.io, githubapp.com, github.dev,
     …) and services that mirror arbitrary public repositories (Go module proxies, jsDelivr,
     githack, statically, esm.sh, Gitpod, Sourcegraph, GitLab, Bitbucket, Codeberg, Gitee,
-    archive.org, Software Heritage). `load_allowlist` refuses any entry that names one of
-    them or a wildcard that covers one, bare `*`, wildcards with fewer than two labels
-    after `*.` (`*.com`), and IP literals. The proxy refuses the same hosts and ignores
-    unsafe entries even if the file was edited. `network_measurement draft-allowlist`
-    never drafts them.
-- **`log` mode** forwards every destination and records it, with the SNI it saw. It
-  exists only for the measurement below.
-- Every decision is one JSON line in `egress.jsonl` beside the workspace. Execution
-  evidence keeps the mode, allowlist and proxy digests, and the allowed and refused hosts.
-- The mode, allowlist digest and proxy digest are part of `runtime_version`, together
-  with `web_search` and the adapter (`docker-development-v4` since the outside network),
-  so an existing run cannot continue under a different network policy.
+    archive.org, Software Heritage). `load_allowlist` refuses any entry of `domains` or
+    `model_domains` that names one of them or a wildcard that covers one, bare `*`,
+    wildcards with fewer than two labels after `*.` (`*.com`), and IP literals. The proxy
+    refuses the same hosts, with or without the model credential, and ignores unsafe
+    entries in either list even if the file was edited. `network_measurement
+    draft-allowlist` never drafts them.
+  - **SNI must match.** After `200` to a CONNECT, the proxy reads the client's TLS
+    ClientHello and forwards it only if its server name equals the CONNECT host. No SNI,
+    another SNI, Encrypted Client Hello and non-TLS bytes are refused (`reason`
+    `no-sni`, `sni-mismatch`, `ech`, `not-tls`), on any port. This applies to the model
+    hosts too: the credential is checked on the CONNECT, the SNI after it, so the Codex
+    process cannot front another host through a model domain either.
+  - **Plain HTTP** is forwarded only with exactly one `Host` header naming the
+    request-line host and port, no `Transfer-Encoding`, and one request per connection
+    (`Connection: close`; anything after the body is dropped). Otherwise `403`
+    (`host-mismatch`, `unsupported-body`). `Proxy-*` headers are never forwarded.
+- **Only the Codex process reaches the model hosts.** The allowlist's `model_domains`
+  (`api.openai.com`, `auth.openai.com`, `chatgpt.com`) are forwarded only for requests
+  with `Proxy-Authorization: Basic base64("model:<token>")` (compared with
+  `hmac.compare_digest`), where the token is drawn with `secrets` for each attempt.
+  Without it the proxy answers `403` and logs
+  `"reason": "model host without the model credential"`. This stops a command from
+  calling the model API itself with hosted web search turned on. `load_allowlist`
+  requires a non-empty `model_domains` list of exact names and refuses a `domains` entry
+  that equals or covers one of them.
+  - The controller hands the token to the proxy and the development container by name
+    (`--env PO_MODEL_TOKEN`; Docker reads the value from the controller's subprocess
+    environment), so it is on no command line, log, evidence or `runtime.json`. The proxy
+    removes it from its environment, never logs it and strips `Proxy-*` headers upstream.
+  - The boot script builds `HTTPS_PROXY=http://model:<token>@<proxy>:3128` (and the
+    other three proxy variables) for the Codex process only, and unsets `PO_MODEL_TOKEN`
+    before `exec`.
+  - The commands Codex runs get the token-less proxy:
+    `shell_environment_policy.set={HTTPS_PROXY="http://<proxy>:3128",...}` and
+    `shell_environment_policy.exclude=["PO_MODEL_TOKEN"]`.
+  - The `development` profile denies reads of the Codex home:
+    `permissions.development.filesystem={"/home/developer/.codex"="none"}`. It holds
+    the login and Codex's shell snapshots, which capture the Codex process's environment.
+  - Codex 0.169.0 runs each command under bubblewrap with `--unshare-pid` and a fresh
+    `/proc`, so commands see only the sandbox helper and themselves, not the Codex
+    process or the container's init.
+  - The model-free preflight proves this on every run. It passes a stand-in token
+    exactly as `execute` does, and its probe, run as a command, requires no
+    `PO_MODEL_TOKEN`, no credential in any proxy variable, no `://model:` or token
+    variable in any visible `/proc/*/environ`, and `PermissionError` for the Codex home
+    and its `auth.json`.
+- **`log` mode** forwards every destination and records it, with the SNI it saw and
+  whether a model credential came. It exists only for the measurement below.
+- Every decision is one JSON line in `egress.jsonl` beside the workspace, with
+  `credential` = `valid`, `invalid` or `absent` (never the value) and, for refusals, a
+  `reason`. Execution evidence keeps the mode, allowlist and proxy digests, the allowed,
+  refused and connected hosts, and `credentialed_hosts` (hosts requested with this
+  attempt's token, so by the Codex process itself).
+- The mode, allowlist digest, proxy digest and `model_credential` scheme
+  (`per-run-token-v1: ...`, never the token) are part of `runtime_version`, together with
+  `web_search`, the command environment policy (`command_environment`), the permission
+  settings and the adapter, so an existing run cannot continue under a different network
+  policy. The adapter is `docker-development-v5`: the first with both the SNI/Host
+  checks and outside network and the model credential. Two parallel branches each used
+  `docker-development-v4` for one half; no run on `main` carries v4.
 - `runtime.json` (the allocation sidecar) also records the proxy container, the internal
   network and the outside network (`egress.outside_network`). `principiis cleanup`
   removes the development container, then the proxy, then both networks. Allocations
   made before the outside network existed have no `outside_network` and are still
   accepted.
 
-**The allowlist is provisional.** It lists the ChatGPT/OpenAI endpoints and the five
-package registries, but has not been measured. Build it from a logging-only run on the
+**The allowlist is provisional.** It lists the ChatGPT/OpenAI endpoints (as
+`model_domains`) and the package registries, but has not been measured. Build it from a logging-only run on the
 disposable fixture request
 [`fixtures/development/network_measurement_request.txt`](../../fixtures/development/network_measurement_request.txt)
 (one pinned dependency from each ecosystem, one docs page, and a `NOTES.md` that records
@@ -185,10 +226,80 @@ PO_EGRESS_CONTROL=1 python3 -m unittest discover -s tests -p test_egress_contain
 `unix:///var/run/docker.sock`; on Docker Desktop without that socket, point `PO_DOCKER`
 at a wrapper that swaps in the Desktop socket.
 
-**Not verified:** whether Codex 0.169.0 sends its own model and authentication traffic
-through `HTTPS_PROXY`, and whether commands inside its nested sandbox inherit the
-variables; Composer, .NET and Go installs (the image has no such toolchains yet); the
-allowlist itself (still a guess until measured).
+Verified, model-free, on 2026-11-27 by the opt-in control
+`tests/test_model_token_containers.py`. It ran against a local image
+`sha256:eeaa4f1963909dd8383fc09d2f0af693557a040ae1d733787175f697f033542b`, built from
+`fixtures/development/Dockerfile` without the Composer/Go/.NET layers on
+`python@sha256:191083cdf6c7bda8c76158983163ead5d5cf7b77cf3033e805bb0f5296f51b4b`
+(Codex 0.169.0, linux/arm64), on Docker Desktop 29.9.3. Nothing could reach OpenAI:
+- every proxy was cut from its outside network right after starting;
+- the `codex exec` controls used a FAKE login with dummy tokens;
+- the only answering model was a loopback stand-in inside the container.
+
+Results:
+
+- A command inside `codex sandbox --permission-profile development` gets `403` for
+  `chatgpt.com`, `api.openai.com` and `auth.openai.com`. The log shows
+  `refused`/`absent` with the reason.
+- The same CONNECTs with the Codex process's credentialed proxy are `allowed`/`valid`
+  (then `502`, since that proxy had no way out).
+- From a command, `HTTPS_PROXY` has no credential and only PIDs 1 (the sandbox helper)
+  and 2 are visible. No environment, `/proc/*/environ` or readable file under `/home`,
+  `/tmp`, `/run`, `/workspace` or `/etc` contains the token. `auth.json` raises
+  `PermissionError`.
+- Real `codex exec`, with the fake login and a proxy that refused everything, sent its
+  `chatgpt.com` traffic through `HTTPS_PROXY` with a valid model credential (its stderr
+  shows the models refresh and an MCP request failing).
+- Real `codex exec` with the loopback model ran one command through `exec_command`. That
+  command got the token-less proxy, `403` for all three model hosts, no visible token
+  and an unreadable `auth.json`. Codex exited 0.
+- The existing egress and sandbox controls also passed on that image with the new proxy
+  and probe.
+
+Before the fix, the same stand-in-model control showed the command inheriting the
+credentialed proxy URL and Codex's shell snapshot under
+`$CODEX_HOME/shell_snapshots/` containing it.
+
+Run it with `PO_RUNTIME_IMAGE=sha256:... PO_RUNTIME_ROOT=<dir the daemon can mount>
+PO_EGRESS_CONTROL=1 python3 -m unittest discover -s tests -p test_model_token_containers.py`.
+On Docker Desktop, also set:
+- `PO_DIAGNOSTIC_UNMASK_PROC=1`: bubblewrap cannot mount its fresh `/proc` under Docker
+  Desktop's masked `/proc` paths. The runtime's preflight fails closed there with
+  `bwrap: Can't mount proc on /proc`.
+- `PO_DIAGNOSTIC_TMPFS_WORKSPACE=1`: with the Codex-home denial, `codex exec` cannot
+  remount a virtiofs workspace bind read-only (`Can't remount readonly on
+  /workspace/.git`). It fails closed before any model request. A Docker volume
+  (ext4) workspace worked in a scratch check.
+
+The runtime never uses either switch.
+
+Verified again, model-free, on 2026-11-28 after merging the hardening and the model
+credential (adapter `docker-development-v5`), on the same scratch image and Docker
+Desktop 29.9.3 with both diagnostics:
+
+- `tests/test_egress_containers.py`: all controls above pass; the Fastly fronting probe
+  still reaches GitHub (expected failure);
+- `tests/test_model_token_containers.py`: commands get `403` for the three model hosts,
+  see no token and cannot read `auth.json`; the Codex process's credentialed CONNECTs
+  are `allowed`/`valid`; real `codex exec` sends `credential: valid` for `chatgpt.com`;
+- a new control in it shows the credentialed tunnel still passes the SNI check. The
+  isolated proxy resolves `chatgpt.com` to a TCP sink on the internal network (a Docker
+  network alias), so nothing can reach OpenAI. With the credential, SNI `chatgpt.com` is
+  forwarded (`tls` event, one ClientHello at the sink); SNI `pypi.org` and
+  `raw.githubusercontent.com` are closed with `sni-mismatch`/`valid` and nothing reaches
+  the sink; without the credential the CONNECT gets `403`.
+
+**Not verified:**
+- that real model traffic works through the credentialed proxy end to end. That needs an
+  owner-approved live run; the measurement run will show it, because `egress.jsonl`
+  then has `credential: valid` events for the model hosts.
+- that `apply_patch` works under the Codex-home denial (the stand-in model is not
+  offered that tool).
+- that the Codex-home denial works with a Linux host bind mount (the owner's Snap
+  Docker). The preflight uses a tmpfs workspace; a failure would stop the attempt
+  before any model request.
+- Composer, .NET and Go installs (the image has no such toolchains yet).
+- the allowlist itself (still a guess until measured).
 
 ### Owner commands for the measurement run (the Codex machine)
 
@@ -226,7 +337,10 @@ rather than leaking. Signs of that in a measurement or a later run:
 - connection errors, timeouts or failed name resolution in `executor.stdout` and
   `executor.stderr` (`codex.stdout`/`codex.stderr` for the measurement);
 - `egress.jsonl` is empty or missing, or contains no OpenAI host (`api.openai.com`,
-  `chatgpt.com`, `auth.openai.com`) even though the model answered nothing.
+  `chatgpt.com`, `auth.openai.com`) even though the model answered nothing;
+- OpenAI hosts appear only as `refused` with `credential: absent` (Codex reached the
+  proxy but did not send the model credential, so the model is unreachable), or
+  `credentialed_hosts` in the evidence is empty.
 
 Treat any of these as "Codex 0.169.0 does not honour the proxy for model or login
 traffic". Do not widen the network to get around it. Record the failure, keep the
@@ -236,25 +350,46 @@ the log, that this works at all is a hypothesis.
 The security-investigation reviewer (`principiis/investigation.py`) uses the same
 runtime, so it is limited by the same allowlist.
 
-**Known gaps, to resolve before tests go public (#75 item 2):**
+**Known gaps (#75 item 2).**
 
-- **The login token is readable inside the container**, and the model API is allowed.
-  A command could call the API directly with hosted web search turned on, which gets
-  around `web_search = "disabled"`. This needs a fix (for example keeping the token
-  out of the agent's sandbox) or an explicit owner decision.
-- **Host-header fronting through Fastly reaches GitHub (open, verified).** The proxy
-  sees the SNI but not the HTTP `Host` inside TLS. `pypi.org` and
+Open, to resolve before tests go public:
+
+- **Host-header fronting through Fastly reaches GitHub (verified on real Docker).** The
+  proxy sees the SNI but not the HTTP `Host` inside TLS. `pypi.org` and
   `files.pythonhosted.org` share Fastly with `raw.githubusercontent.com`: on 2026-11-27,
   a tunnel to `pypi.org` with SNI `pypi.org` and `Host: raw.githubusercontent.com`
   returned `200` with this repository's `README.md` (`X-GitHub-Request-Id`, `Via: 1.1
-  varnish`). The same probe got `403` from `registry.npmjs.org` (Cloudflare) and
-  `repo.packagist.org` (BunnyCDN) and `421` from `api.nuget.org`. So **while PyPI is
-  allowed, GitHub content is reachable.** The control records this as an expected
-  failure (`test_host_header_fronting_through_an_allowed_cdn_does_not_reach_github`).
-  Closing it needs an owner decision: TLS termination at the proxy for CDN-shared hosts
-  (a per-run CA in the image trust store), a registry gateway that makes its own
-  upstream requests (pip `--index-url` at the proxy), or dropping the Fastly hosts.
-  The OpenAI hosts are on Cloudflare; fronting through them was not tested.
+  varnish`), and the merged branch reproduced it on 2026-11-28. The same probe got `403`
+  from `registry.npmjs.org` (Cloudflare) and `repo.packagist.org` (BunnyCDN) and `421`
+  from `api.nuget.org`. So **while PyPI is allowed, GitHub content is reachable.** The
+  control records this as an expected failure
+  (`test_host_header_fronting_through_an_allowed_cdn_does_not_reach_github`). Closing it
+  needs an owner decision: TLS termination at the proxy for CDN-shared hosts (a per-run
+  CA in the image trust store), a registry gateway that makes its own upstream requests
+  (pip `--index-url` at the proxy), or dropping the Fastly hosts. The OpenAI hosts are on
+  Cloudflare; fronting through them was not tested, and only the Codex process can open
+  them.
+- **Docker Desktop needs the diagnostics.** On Docker Desktop the runtime's preflight
+  fails closed (`bwrap: Can't mount proc on /proc`), and `codex exec` cannot remount a
+  virtiofs workspace bind read-only once the Codex home is denied. The model-free
+  controls pass there only with `PO_DIAGNOSTIC_UNMASK_PROC=1` and
+  `PO_DIAGNOSTIC_TMPFS_WORKSPACE=1`, which the runtime never uses; for the same reason
+  `tests/test_development_runtime_containers.py` (no diagnostics) fails closed in its
+  preflight there. Real runs need a Linux Docker host, where neither has been rechecked
+  since the model credential (the owner's Snap Docker).
+- **Real model traffic through the credentialed proxy is unverified.** Nothing has yet
+  carried real model or login traffic through the credentialed, SNI-checked proxy end
+  to end. That needs an owner-approved live run; the measurement run will show it,
+  because `egress.jsonl` then has `credential: valid` events and `tls` events with a
+  matching `sni` for the model hosts.
+- **The Codex process itself still reaches the model hosts.** Its own hosted search
+  stays off only through `web_search = "disabled"`. The barrier against commands relies
+  on bubblewrap's fresh `/proc`; Codex's `--no-proc` fallback would show the Codex
+  process's environment, but the preflight probe would then fail. In the stand-in run
+  Codex also requested `ab.chatgpt.com` with the credential; it is not a model domain,
+  so it was refused. The measurement decides whether it is needed: `draft-allowlist`
+  lists OpenAI/ChatGPT hosts as `model_domains_measured` for the owner and never puts
+  them in `domains`.
 - **Hosts that serve arbitrary content.** `proxy.golang.org` is never allowed because
   it serves any public GitHub repository as a Go module, so Go module downloads fail
   until a safe option exists (a vetted module cache, for example). npm and PyPI also
@@ -263,14 +398,34 @@ runtime, so it is limited by the same allowlist.
   never-allow list is not exhaustive; allowlist mode is default-deny regardless.
 - **Encrypted Client Hello** is refused, including Chrome-style GREASE ECH, so a
   client that always offers ECH cannot use the proxy. No client in the image does.
+- Also unverified: `apply_patch` under the Codex-home denial, the Codex-home denial
+  with a Linux host bind mount, Composer/.NET/Go installs, and the allowlist itself (see
+  "Not verified" above).
 
-Closed and verified on real Docker (2026-11-27, see above): SNI-based domain fronting
-(SNI must equal the CONNECT host), plain-HTTP `Host` fronting, DNS (external names do
-not resolve on the internal network, including `github.com`), IPv6 (no global address,
-no IPv6 route), and reachability of the proxy from the default bridge (it now has its own
-outside network and listens only on its internal address).
+Closed and verified on real Docker (2026-11-27, rechecked on the merged branch
+2026-11-28, see above):
 
-**Runs made before this change** had full network access through the ordinary Docker
+- **Commands calling the model API.** The login was readable from commands and the
+  model API was allowed, so a command could have called it with hosted web search turned
+  on. Model hosts now need the per-attempt model credential, which only the Codex
+  process holds, and commands cannot read the login. Commands get `403` for all three
+  model hosts.
+- **SNI-based domain fronting** (SNI must equal the CONNECT host), including through a
+  credentialed model-host tunnel, and **plain-HTTP `Host` fronting**.
+- **GitHub and its mirrors** are refused (never-allow list), for commands and for the
+  Codex process alike.
+- **DNS** (external names do not resolve on the internal network, including
+  `github.com`) and **IPv6** (no global address, no IPv6 route).
+- **Reachability of the proxy from the default bridge**: it has its own outside network
+  and listens only on its internal address.
+
+**Runs from before this enforcement** are recognisable by their adapter.
+`docker-development-v3` runs have no SNI/Host checks, put the proxy on the default
+bridge, have no `egress.model_credential` in `runtime_version` and no `credential` field
+in `egress.jsonl`; commands in them could reach the model hosts. `docker-development-v4`
+names one half of this enforcement on an unmerged branch only.
+
+**Runs made before the network limits** had full network access through the ordinary Docker
 bridge and live web search. Their results show it: execution evidence has
 `runtime.network` = `bridge; ordinary development network access`, adapter
 `docker-development-v2`, and `codex.settings.web_search` = `live`. Report them as such.

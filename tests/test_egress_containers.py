@@ -104,7 +104,7 @@ sock.sendall(b'GET http://pypi.org/secret-path-sentinel?q=query-sentinel HTTP/1.
 print(sock.recv(4096).split(b'\r\n')[0].decode())
 '''
 LOG_KEYS = {'method', 'host', 'port', 'decision', 'time', 'event', 'mode', 'allowlist', 'error', 'address',
-            'reason', 'sni'}
+            'reason', 'sni', 'credential', 'model_domains', 'model_token'}
 GITHUB = ('github.com', 'api.github.com', 'raw.githubusercontent.com', 'codeload.github.com',
           'objects.githubusercontent.com', 'gist.github.com')
 

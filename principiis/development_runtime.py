@@ -4,13 +4,14 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import subprocess
 import threading
 import time
 import uuid
 
 from .codex import redact
-from .egress_proxy import unsafe_entry
+from .egress_proxy import MODEL_TOKEN_VARIABLE, normalise_host, unsafe_entry
 from .execution import execute
 from .jsonio import write_json
 from .snapshot import forbid_foreign_git
@@ -22,9 +23,18 @@ NETWORK_ALLOWLIST = CHECKOUT / 'fixtures/development/network_allowlist.json'
 EGRESS_PROXY = Path(__file__).resolve().with_name('egress_proxy.py')
 EGRESS_PORT = 3128
 EGRESS_MODES = ('allowlist', 'log')
-# v4 (#75): the proxy has its own per-run outside network instead of the default bridge,
-# listens only on its internal-network address, and checks SNI and Host.
-ADAPTER = 'docker-development-v4'
+# v5 (#75): v4 of the egress hardening (own per-run outside network instead of the
+# default bridge, proxy listens only on its internal-network address, SNI and Host
+# checks) merged with v4 of the model token split (model_domains need the per-run
+# proxy token, held only by the Codex process). Neither v4 enforced both.
+ADAPTER = 'docker-development-v5'
+CODEX_HOME = '/home/developer/.codex'
+# Model hosts serve hosted web search, which ignores every network limit. Only the Codex
+# process may reach them: each attempt gets a fresh token that the proxy requires for
+# `model_domains`; the commands Codex runs get the token-less proxy (#75).
+MODEL_CREDENTIAL = ('per-run-token-v1: model_domains need proxy-authorization basic model:<per-run token>; '
+                    'only the Codex process has it; commands get the token-less proxy and cannot read CODEX_HOME')
+PROXY_VARIABLES = ('HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy')
 NETWORK_DESCRIPTION = {
     'allowlist':'internal Docker network; only route out is the egress proxy (own per-run outside network), limited to the network allowlist with SNI/Host checks',
     'log':'internal Docker network; only route out is the egress proxy (own per-run outside network), logging every destination without limits',
@@ -72,6 +82,26 @@ for name in ('python', 'python3', 'python'+str(sys.version_info.major)+'.'+str(s
         p=pathlib.Path(os.path.normpath(str(p.parent/target)))
         assert str(p).startswith('/usr/local/bin/') and p.is_file() and os.access(p,os.X_OK)
         paths.add(str(p))
+# Commands must not recover the model token (#75): not from their environment, not
+# from another process (bubblewrap gives them a fresh PID namespace and /proc), and
+# not from the Codex home (login, shell snapshots), which the profile denies.
+assert 'PO_MODEL_TOKEN' not in os.environ
+for name in ('HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy'):
+    assert '@' not in os.environ.get(name, ''), name + ' carries a credential'
+for entry in pathlib.Path('/proc').iterdir():
+    if entry.name.isdigit():
+        try:
+            data = (entry / 'environ').read_bytes()
+        except OSError:
+            continue
+        assert b'PO_MODEL_TOKEN=' not in data and b'://model:' not in data, 'model token visible in /proc'
+home = os.environ.get('CODEX_HOME', '/home/developer/.codex')
+for attempt in (lambda: os.listdir(home), lambda: open(os.path.join(home, 'auth.json')).close()):
+    try:
+        attempt()
+    except PermissionError:
+        continue
+    raise AssertionError('CODEX_HOME or its auth.json is readable from commands')
 print(json.dumps({'sandbox':'workspace-write','symlink_targets':sorted(paths)}))
 """.replace('CHECKOUT_INSTRUCTIONS', repr(str(CHECKOUT / 'AGENTS.md')))
 
@@ -84,13 +114,43 @@ WEB_SEARCH = 'disabled'
 def workspace_permission_settings():
     # Explicit profile selection and legacy network overrides do not compose in
     # Codex 0.169.0. Use one supported workspace-derived profile in every path.
+    # Commands must not read the Codex home: it holds the login and shell snapshots
+    # of the Codex process environment, which carries the model token.
     return {'default_permissions':'development',
             'permissions.development.extends':':workspace',
-            'permissions.development.network.enabled':True}
+            'permissions.development.network.enabled':True,
+            'permissions.development.filesystem':{CODEX_HOME:'none'}}
+
+
+def command_environment(address):
+    """Environment policy for the commands Codex runs: the proxy without the model token."""
+    url = f'http://{address}:{EGRESS_PORT}'
+    return {'set': {name: url for name in PROXY_VARIABLES}, 'exclude': [MODEL_TOKEN_VARIABLE]}
+
+
+def command_settings(address):
+    policy = command_environment(address)
+    return {'shell_environment_policy.set': policy['set'], 'shell_environment_policy.exclude': policy['exclude']}
+
+
+# The Codex process alone gets the credentialed proxy; the token variable is dropped first.
+MODEL_PROXY_BOOT = ('model_proxy="http://model:${PO_MODEL_TOKEN}@${HTTPS_PROXY#http://}"; unset PO_MODEL_TOKEN; '
+                    'export HTTPS_PROXY="$model_proxy" HTTP_PROXY="$model_proxy" '
+                    'https_proxy="$model_proxy" http_proxy="$model_proxy"; unset model_proxy; ')
+
+
+def toml_value(value):
+    """A `-c` value: TOML inline tables for mappings, JSON-compatible scalars and arrays otherwise."""
+    if isinstance(value, dict):
+        return '{' + ','.join((k if re.fullmatch(r'[A-Za-z0-9_-]+', k) else json.dumps(k)) + '=' + toml_value(v)
+                              for k, v in value.items()) + '}'
+    if isinstance(value, list):
+        return '[' + ','.join(toml_value(v) for v in value) + ']'
+    return json.dumps(value)
 
 
 def configuration_args(settings):
-    return [item for key,value in settings.items() for item in ('-c',key+'='+json.dumps(value))]
+    return [item for key,value in settings.items() for item in ('-c',key+'='+toml_value(value))]
 
 
 def local_path(value, label, *, executable=False):
@@ -127,10 +187,10 @@ def docker_command(docker, args):
     return [docker, '--host', 'unix:///var/run/docker.sock', *args]
 
 
-def docker_run(docker, args, *, timeout=20):
+def docker_run(docker, args, *, timeout=20, env=None):
     try:
         result = subprocess.run(docker_command(docker, args), capture_output=True, text=True,
-                                env=docker_environment(), timeout=timeout)
+                                env=env or docker_environment(), timeout=timeout)
     except subprocess.TimeoutExpired as error:
         raise ValueError(f'Docker {args[0]} exceeded its {timeout}s diagnostic timeout') from error
     if result.returncode:
@@ -138,12 +198,12 @@ def docker_run(docker, args, *, timeout=20):
     return result.stdout
 
 
-def preflight_run(docker, args, *, timeout=20):
+def preflight_run(docker, args, *, timeout=20, env=None):
     """Named no-auth controls always remove their container, including CLI timeout."""
     name = 'po-development-preflight-' + uuid.uuid4().hex
     failure = None
     try:
-        return docker_run(docker, ['run', '--name', name, *args], timeout=timeout)
+        return docker_run(docker, ['run', '--name', name, *args], timeout=timeout, env=env)
     except BaseException as error:
         failure = error
         raise
@@ -190,13 +250,29 @@ def load_allowlist(path=NETWORK_ALLOWLIST):
     for entry in domains:
         if reason := unsafe_entry(entry):
             raise ValueError(f'network allowlist entry {entry!r} is refused: {reason}')
-    return domains
+    return {'domains': domains, 'model_domains': model_domains(document, domains)}
+
+
+def model_domains(document, domains):
+    """Hosts only the Codex process may reach (with the per-run proxy token); never commands."""
+    models = document.get('model_domains')
+    if (not isinstance(models, list) or not models
+            or any(not isinstance(v, str) or normalise_host(v) != v for v in models)):
+        raise ValueError('network allowlist needs model_domains: exact lowercase domain names, no wildcards')
+    for entry in models:
+        if reason := unsafe_entry(entry):
+            raise ValueError(f'network allowlist model domain {entry!r} is refused: {reason}')
+    for entry in domains:
+        parent = entry.removeprefix('*.')
+        if any(m == entry or (entry.startswith('*.') and (m == parent or m.endswith('.' + parent))) for m in models):
+            raise ValueError(f'{entry} in domains would let commands reach a model domain')
+    return models
 
 
 def egress_summary(log):
     """Hosts the proxy allowed and refused, from its JSON-lines decision log."""
     # `allowed` is the policy decision; `connected` means the upstream connection opened.
-    hosts = {'allowed': set(), 'refused': set(), 'connected': set()}
+    hosts = {'allowed': set(), 'refused': set(), 'connected': set(), 'credentialed': set()}
     for line in log.splitlines():
         try:
             event = json.loads(line)
@@ -204,6 +280,9 @@ def egress_summary(log):
             continue
         if isinstance(event, dict) and event.get('decision') in hosts and isinstance(event.get('host'), str):
             hosts[event['decision']].add(event['host'])
+            # Requested with this run's model token, so by the Codex process itself.
+            if event.get('credential') == 'valid':
+                hosts['credentialed'].add(event['host'])
     return {key + '_hosts': sorted(value) for key, value in hosts.items()}
 
 
@@ -304,7 +383,7 @@ class DevelopmentRuntime:
         if egress not in EGRESS_MODES:
             raise ValueError(f'egress mode must be one of {EGRESS_MODES}')
         self.egress = egress
-        self.allowlist = load_allowlist() if egress == 'allowlist' else []
+        self.allowlist = load_allowlist() if egress == 'allowlist' else {'domains': [], 'model_domains': []}
         self.config = load_config(config_path)
         c = self.config
         output, source = Path(output).resolve(), Path(source).resolve()
@@ -327,14 +406,21 @@ class DevelopmentRuntime:
             raise ValueError('prepared runtime did not report a Codex CLI version')
         # No authentication or candidate files are mounted. Failure is detected before
         # allocating a development attempt or contacting the model.
+        # A stand-in model token reaches the Codex process exactly as in `execute`; the
+        # probe, run as a command, must not find it (#75). No network, so it goes nowhere.
         attest = preflight_run(c['docker'], ['--network', 'none',
-            *restrictions(nested_sandbox=True),
+            *restrictions(nested_sandbox=True), *proxy_environment('preflight.invalid'),
+            '--env', MODEL_TOKEN_VARIABLE,
             '--tmpfs', '/workspace:rw,exec,nosuid,nodev,size=256m,mode=1777',
             '--tmpfs', '/outside-workspace:rw,nosuid,nodev,size=1m,mode=1777',
             '--entrypoint', '/bin/sh', c['image'], '-eu', '-c',
-            'mkdir -p "$CODEX_HOME"; touch /outside-workspace/outer-write; rm /outside-workspace/outer-write; exec "$@"', 'po-runtime-preflight-v1',
+            'mkdir -p "$CODEX_HOME"; echo preflight-login > "$CODEX_HOME/auth.json"; '
+            'touch /outside-workspace/outer-write; rm /outside-workspace/outer-write; ' + MODEL_PROXY_BOOT + 'exec "$@"',
+            'po-runtime-preflight-v1',
             'codex', '--no-daemon', 'sandbox', '--permission-profile', 'development',
-            *configuration_args(workspace_permission_settings()), '--cd', '/workspace', '--', 'python', '-c', SANDBOX_PROBE], timeout=60)
+            *configuration_args({**workspace_permission_settings(), **command_settings('preflight.invalid')}),
+            '--cd', '/workspace', '--', 'python', '-c', SANDBOX_PROBE], timeout=60,
+            env={**docker_environment(), MODEL_TOKEN_VARIABLE: secrets.token_hex(32)})
         try:
             attestation = json.loads(attest)
         except (TypeError, ValueError) as error:
@@ -347,10 +433,12 @@ class DevelopmentRuntime:
         self.version = {'sandbox_policy_sha256':hashlib.sha256(SANDBOX_POLICY.read_bytes()).hexdigest(),
                         'temporary_filesystems':'exec,nosuid,nodev',
                         'snapshot_binding':self.snapshot_binding, 'permission_settings':workspace_permission_settings(), 'codex':codex_version, 'runtime_user':runtime_user(),
+                        'command_environment':command_environment('<egress proxy>'),
                         'image':c['image'], 'adapter':ADAPTER, 'web_search':WEB_SEARCH,
                         'egress':{'mode':egress, 'port':EGRESS_PORT,
                                   'allowlist_sha256':hashlib.sha256(NETWORK_ALLOWLIST.read_bytes()).hexdigest() if egress == 'allowlist' else None,
-                                  'proxy_sha256':hashlib.sha256(EGRESS_PROXY.read_bytes()).hexdigest()}}
+                                  'proxy_sha256':hashlib.sha256(EGRESS_PROXY.read_bytes()).hexdigest(),
+                                  'model_credential':MODEL_CREDENTIAL}}
 
     def execute(self, workspace, request, stdout, stderr):
         c = self.config
@@ -380,7 +468,7 @@ class DevelopmentRuntime:
                 '{ echo "Subscription login status unavailable" >&2; exit 1; }; '
                 'case "$login_status" in *"Logged in using ChatGPT"*) ;; '
                 '*) echo "ChatGPT subscription authentication required" >&2; exit 1 ;; esac; '
-                'unset login_status; exec "$@"')
+                'unset login_status; ' + MODEL_PROXY_BOOT + 'exec "$@"')
         codex = ['codex', '--no-daemon', 'exec', '--ephemeral', '--ignore-user-config',
                  '--ignore-rules', '--skip-git-repo-check', '--json',
                  '--cd', '/workspace']
@@ -413,21 +501,25 @@ class DevelopmentRuntime:
 
         sampler = threading.Thread(target=sample)
         evidence = {'argv': None, 'exit_status': None, 'memory': {}}
+        # Never on a command line, in a log or in evidence: Docker reads it from its own environment.
+        model_token = secrets.token_hex(32)
         try:
             try:
-                proxy = self.start_egress(egress)
+                proxy = self.start_egress(egress, model_token)
             except (OSError, ValueError, subprocess.TimeoutExpired) as error:
                 evidence['error'] = 'egress setup failed before authentication or model: ' + str(error)
                 proxy = None
             if proxy is not None:
+                settings.update(command_settings(proxy))
                 argv = docker_command(c['docker'], ['run', '-i', '--name', name, '--network', egress['network'],
-                            *restrictions(nested_sandbox=True), *proxy_environment(proxy),
+                            *restrictions(nested_sandbox=True), *proxy_environment(proxy), '--env', MODEL_TOKEN_VARIABLE,
                             '--mount', f'type=bind,src={workspace},dst=/workspace',
                             '--mount', f'type=bind,src={c["auth_file"]},dst=/run/subscription-auth.json,readonly',
-                            '--entrypoint', '/bin/sh', c['image'], '-eu', '-c', boot, '--', *codex])
+                            '--entrypoint', '/bin/sh', c['image'], '-eu', '-c', boot, '--',
+                            *codex[:-1], *configuration_args(command_settings(proxy)), codex[-1]])
                 sampler.start()
                 evidence = execute(argv, workspace, request, stdout, stderr,
-                                   env=docker_environment(), transform=redact)
+                                   env={**docker_environment(), MODEL_TOKEN_VARIABLE: model_token}, transform=redact)
         finally:
             done.set()
             if sampler.is_alive():
@@ -471,12 +563,14 @@ class DevelopmentRuntime:
                                'network':NETWORK_DESCRIPTION[self.egress]}
         return evidence
 
-    def start_egress(self, egress):
+    def start_egress(self, egress, model_token=''):
         """Create the internal network and the proxy that is its only route out; return the proxy address.
 
         The proxy starts on the internal network alone, binds to its address there, and
         only then joins its own per-run outside network. It never joins the default
-        bridge, so no other container can reach it.
+        bridge, so no other container can reach it. It reads `model_token` from its
+        environment: it is the credential that `model_domains` require, and never
+        appears on a command line.
         """
         c = self.config
         docker_run(c['docker'], ['network', 'create', '--driver', 'bridge', '--internal', '--ipv6=false',
@@ -488,9 +582,10 @@ class DevelopmentRuntime:
             raise ValueError('development network has IPv6 enabled')
         docker_run(c['docker'], ['network', 'create', '--driver', 'bridge', '--ipv6=false', egress['outside_network']])
         docker_run(c['docker'], ['run', '--detach', '--name', egress['container'], '--network', egress['network'],
-                                 *restrictions(), '--entrypoint', 'python', c['image'],
+                                 *restrictions(), '--env', MODEL_TOKEN_VARIABLE, '--entrypoint', 'python', c['image'],
                                  '-I', '-S', '-c', EGRESS_PROXY.read_text(), self.egress,
-                                 json.dumps(self.allowlist), str(EGRESS_PORT), 'own-address'])
+                                 json.dumps(self.allowlist), str(EGRESS_PORT), 'own-address'],
+                   env={**docker_environment(), MODEL_TOKEN_VARIABLE: model_token})
         status = json.loads(docker_run(c['docker'], ['inspect', egress['container']]))[0]
         address = status['NetworkSettings']['Networks'][egress['network']]['IPAddress']
         listening = self.proxy_listening(egress['container'])

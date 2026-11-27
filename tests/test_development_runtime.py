@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 import subprocess
 
-from principiis.development_runtime import SANDBOX_PROBE, DevelopmentRuntime, cleanup_runtime, docker_command, load_config, preflight_run, configuration_args, workspace_permission_settings, restrictions
+from principiis.development_runtime import ADAPTER, CODEX_HOME, MODEL_CREDENTIAL, SANDBOX_PROBE, DevelopmentRuntime, cleanup_runtime, docker_command, load_config, preflight_run, configuration_args, workspace_permission_settings, restrictions
 
 
 IMAGE = 'sha256:' + 'a' * 64
@@ -20,6 +20,11 @@ args=sys.argv[1:]
 assert args[:2] == ['--host','unix:///var/run/docker.sock']
 args=args[2:]
 with pathlib.Path(''' + repr(str(base / 'commands.jsonl')) + ''').open('a') as f: f.write(json.dumps(args)+'\\n')
+import os
+if args[0] == 'run' and os.environ.get('PO_MODEL_TOKEN'):
+    # What the Docker client would hand a container for a bare `--env PO_MODEL_TOKEN`.
+    with pathlib.Path(''' + repr(str(base / 'tokens.jsonl')) + ''').open('a') as f:
+        f.write(json.dumps({'argv':args,'token':os.environ['PO_MODEL_TOKEN']})+'\\n')
 if args[:2] == ['image','inspect']:
     print(json.dumps([{'Id':''' + repr(IMAGE) + ''','Config':{'Env':['PATH=/usr/bin:/bin'],'Volumes':None}}])); sys.exit()
 if args[0] == 'run' and '--version' in args:
@@ -51,7 +56,9 @@ if args[0] == 'logs' and args[-1].startswith('po-development-egress-'):
     print(json.dumps({'event':'listening','mode':'allowlist','address':'172.30.0.2','port':3128}))
     print(json.dumps({'method':'CONNECT','host':'pypi.org','port':443,'decision':'allowed'}))
     print(json.dumps({'method':'CONNECT','host':'pypi.org','port':443,'decision':'connected'}))
-    print(json.dumps({'method':'CONNECT','host':'github.com','port':443,'decision':'refused'}));sys.exit()
+    print(json.dumps({'method':'CONNECT','host':'github.com','port':443,'decision':'refused'}))
+    print(json.dumps({'method':'CONNECT','host':'chatgpt.com','port':443,'decision':'allowed','credential':'valid'}))
+    print(json.dumps({'method':'CONNECT','host':'api.openai.com','port':443,'decision':'refused','credential':'absent','reason':'model host without the model credential'}));sys.exit()
 if args[0] == 'logs':
     print('application startup');sys.exit()
 if args[0] == 'stats':
@@ -192,7 +199,7 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             self.assertEqual(log, output / 'egress.jsonl')
             self.assertIn('"decision": "refused"', log.read_text())
             self.assertEqual(evidence['egress']['mode'], 'allowlist')
-            self.assertEqual(evidence['egress']['refused_hosts'], ['github.com'])
+            self.assertEqual(evidence['egress']['refused_hosts'], ['api.openai.com', 'github.com'])
             self.assertEqual(evidence['egress']['connected_hosts'], ['pypi.org'])
             self.assertIn('allowlist', evidence['runtime']['network'])
             allocation = json.loads((output / 'runtime.json').read_text())
@@ -201,7 +208,7 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             self.assertEqual([v[-3:] for v in allocation['egress_cleanup_argvs']],
                              [['rm', '-f', proxy_name], ['network', 'rm', network], ['network', 'rm', outside_network]])
             self.assertEqual(allocation['state'], 'removed')
-            self.assertEqual(runtime.version['adapter'], 'docker-development-v4')
+            self.assertEqual(runtime.version['adapter'], 'docker-development-v5')
 
     def egress_failure(self, replace):
         with temporary_directory() as directory:
@@ -230,6 +237,84 @@ class DevelopmentRuntimeTests(unittest.TestCase):
 
     def test_a_proxy_listening_anywhere_but_its_internal_address_stops_before_auth_or_model(self):
         self.assertIn('listen', self.egress_failure([("'address':'172.30.0.2'", "'address':'0.0.0.0'")]))
+
+    def tokens(self, base):
+        path = base / 'tokens.jsonl'
+        return [json.loads(v) for v in path.read_text().splitlines()] if path.exists() else []
+
+    def test_model_hosts_get_a_per_run_token_that_only_codex_holds_and_nothing_logs(self):
+        with temporary_directory() as directory:
+            base = Path(directory)
+            config_path, config = self.configuration(base)
+            output = base / 'run'
+            runtime = DevelopmentRuntime(config_path, output, base / 'tasks')
+            workspace = output / 'workspace'; workspace.mkdir(parents=True)
+            stdout, stderr = io.StringIO(), io.StringIO()
+            evidence = runtime.execute(workspace, 'request', stdout, stderr)
+            launch = self.launch(base)
+            proxy = next(c for c in self.commands(base) if c[0] == 'run' and '--detach' in c)
+            received = {('proxy' if '--detach' in v['argv'] else 'codex' if '-i' in v['argv'] else 'preflight'): v['token']
+                        for v in self.tokens(base)}
+            token = received['proxy']
+            self.assertRegex(token, r'^[0-9a-f]{64}$')
+            self.assertEqual(received['codex'], token)
+            # Both containers get it by name only, from the Docker client's environment.
+            for argv in (proxy, launch):
+                self.assertEqual(argv[argv.index('PO_MODEL_TOKEN') - 1], '--env')
+            policy = json.loads(proxy[proxy.index('allowlist') + 1])
+            self.assertEqual(sorted(policy['model_domains']), ['api.openai.com', 'auth.openai.com', 'chatgpt.com'])
+            self.assertNotIn('chatgpt.com', policy['domains'])
+            # The Codex process gets the credentialed proxy; the token variable itself is dropped.
+            boot = launch[launch.index('-c') + 1]
+            self.assertIn('http://model:${PO_MODEL_TOKEN}@', boot)
+            self.assertIn('unset PO_MODEL_TOKEN', boot)
+            self.assertLess(boot.index('unset PO_MODEL_TOKEN'), boot.index('exec "$@"'))
+            # Commands get the token-less proxy and cannot read the Codex home (login, shell snapshots).
+            plain = 'http://172.30.0.2:3128'
+            policy_arg = next(v for v in launch if v.startswith('shell_environment_policy.set='))
+            for name in ('HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy'):
+                self.assertIn(f'{name}="{plain}"', policy_arg)
+            self.assertIn('shell_environment_policy.exclude=["PO_MODEL_TOKEN"]', launch)
+            self.assertIn('permissions.development.filesystem={"' + CODEX_HOME + '"="none"}', launch)
+            retained = [json.dumps(self.commands(base)), json.dumps(evidence), stdout.getvalue(), stderr.getvalue(),
+                        (output / 'runtime.json').read_text(), (output / 'egress.jsonl').read_text()]
+            for text in retained:
+                self.assertNotIn(token, text)
+            self.assertEqual(evidence['egress']['credentialed_hosts'], ['chatgpt.com'])
+            self.assertEqual(evidence['egress']['model_credential'], MODEL_CREDENTIAL)
+            runtime.execute(workspace, 'request', io.StringIO(), io.StringIO())
+            self.assertNotEqual(self.tokens(base)[-1]['token'], token)
+
+    def test_preflight_proves_commands_cannot_see_a_model_token(self):
+        with temporary_directory() as directory:
+            base = Path(directory)
+            config_path, config = self.configuration(base)
+            DevelopmentRuntime(config_path, base / 'run', base / 'tasks')
+            attest = next(c for c in self.commands(base) if 'po-runtime-preflight-v1' in c)
+            self.assertEqual(attest[attest.index('PO_MODEL_TOKEN') - 1], '--env')
+            self.assertTrue(any(v.startswith('shell_environment_policy.set=') for v in attest))
+            self.assertIn('permissions.development.filesystem={"' + CODEX_HOME + '"="none"}', attest)
+            sentinel = next(v['token'] for v in self.tokens(base) if 'po-runtime-preflight-v1' in v['argv'])
+            self.assertNotIn(sentinel, json.dumps(self.commands(base)))
+            for check in ('PO_MODEL_TOKEN', '://model:', 'auth.json', 'CODEX_HOME'):
+                self.assertIn(check, SANDBOX_PROBE)
+
+    def test_runtime_version_names_the_model_credential_scheme_not_the_token(self):
+        with temporary_directory() as directory:
+            base = Path(directory)
+            config_path, config = self.configuration(base)
+            runtime = DevelopmentRuntime(config_path, base / 'run', base / 'tasks')
+            self.assertEqual(ADAPTER, 'docker-development-v5')
+            self.assertEqual(runtime.version['adapter'], ADAPTER)
+            self.assertEqual(runtime.version['egress']['model_credential'], MODEL_CREDENTIAL)
+            self.assertIn('proxy-authorization', MODEL_CREDENTIAL)
+            commands = runtime.version['command_environment']
+            self.assertEqual(commands['exclude'], ['PO_MODEL_TOKEN'])
+            self.assertEqual(commands['set']['HTTPS_PROXY'], 'http://<egress proxy>:3128')
+            self.assertEqual(runtime.version['permission_settings']['permissions.development.filesystem'],
+                             {CODEX_HOME: 'none'})
+            for value in self.tokens(base):
+                self.assertNotIn(value['token'], json.dumps(runtime.version))
 
     def test_log_mode_is_a_different_runtime_version(self):
         with temporary_directory() as directory:
