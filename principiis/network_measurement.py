@@ -17,8 +17,8 @@ import re
 import sys
 import uuid
 
-from .development_runtime import (CHECKOUT, DevelopmentRuntime, docker_run, inspect_image, load_config,
-                                  preflight_run, restrictions)
+from .development_runtime import (CHECKOUT, DevelopmentRuntime, docker_run, inspect_image, load_allowlist,
+                                  load_config, preflight_run, restrictions)
 from .jsonio import write_json
 
 REQUEST = CHECKOUT / 'fixtures/development/network_measurement_request.txt'
@@ -58,6 +58,15 @@ def exclusion(host):
             return reason
 
 
+# Measured hosts of these families go to the owner as model hosts, never into `domains`:
+# commands must not reach the model API (it offers hosted web search).
+MODEL_FAMILIES = ('openai.com', 'chatgpt.com')
+
+
+def model_host(host):
+    return any(host == suffix or host.endswith('.' + suffix) for suffix in MODEL_FAMILIES)
+
+
 def draft_allowlist(measurement, output):
     """Write a DRAFT allowlist from measured hosts. It carries TODO markers, so the loader refuses it."""
     measurement, output = Path(measurement), Path(output)
@@ -68,16 +77,19 @@ def draft_allowlist(measurement, output):
     hosts = document.get('connected_hosts') if isinstance(document, dict) else None
     if not isinstance(hosts, list) or any(not isinstance(v, str) for v in hosts):
         raise ValueError('measurement has no connected_hosts list')
-    kept = sorted({v for v in hosts if not exclusion(v)})
+    models = sorted({v for v in hosts if model_host(v)})
+    kept = sorted({v for v in hosts if not exclusion(v) and not model_host(v)})
     excluded = {v: exclusion(v) for v in sorted(set(hosts)) if exclusion(v)}
     draft = {'version': '1',
              'status': 'TODO-OWNER: DRAFT from a measurement (sha256 %s). Review each host, then replace this '
                        'status with the approval note. The runtime refuses this file while any marker remains.'
                        % hashlib.sha256(raw).hexdigest(),
              'measured_from': 'TODO-OWNER: describe the measurement run (request fixture, date, who approved)',
+             'model_domains': load_allowlist()['model_domains'],
+             'model_domains_measured': models,
              'domains': kept}
     output.write_text(json.dumps(draft, indent=2) + '\n')
-    return {'draft': str(output), 'hosts': kept, 'excluded': excluded}
+    return {'draft': str(output), 'hosts': kept, 'model_hosts': models, 'excluded': excluded}
 
 
 def check(report, name, function):
