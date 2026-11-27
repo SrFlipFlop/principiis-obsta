@@ -173,8 +173,13 @@ def inspect_image(docker, image):
     return {'id': image, 'environment_names': sorted(v.split('=', 1)[0] for v in config.get('Env') or [])}
 
 
-def load_allowlist():
-    document = json.loads(NETWORK_ALLOWLIST.read_text())
+def load_allowlist(path=NETWORK_ALLOWLIST):
+    raw = Path(path).read_text()
+    # `network_measurement draft-allowlist` leaves TODO markers; enforcement must
+    # refuse a draft until the owner has reviewed and removed every one.
+    if 'TODO' in raw:
+        raise ValueError(f'network allowlist {path} still contains a TODO marker; the owner must review and remove it')
+    document = json.loads(raw)
     if not isinstance(document, dict):
         raise ValueError('network allowlist must be a JSON object')
     domains = document.get('domains')
