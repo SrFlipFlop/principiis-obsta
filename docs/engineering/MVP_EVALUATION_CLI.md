@@ -42,9 +42,8 @@ Runs bound before this change record an absolute `manifest` path and have no cop
 Their records are never rewritten. `evaluate` finds the evaluator by SHA-256
 (`manifest_sha256` and every `files` hash must all match) in this order: the recorded
 path, the repository's `benchmarks/*/evaluator/*/` tree, then any configured root:
-`--evaluator-root DIR` (repeatable, `principiis.assessment evaluate`) or the
-`PRINCIPIIS_EVALUATOR_ROOT` environment variable (path-separator list), which is also
-the way to supply a root through the `principiis` operator CLI. Under a configured root
+`principiis evaluate --evaluator-root DIR` (repeatable) or the
+`PRINCIPIIS_EVALUATOR_ROOT` environment variable (path-separator list). Under a configured root
 the directory itself and every directory containing a file with the manifest's name are
 tried. Same-named files with other content are skipped; a hash mismatch is never
 accepted, and if nothing matches the command fails before allocating an assessment.
