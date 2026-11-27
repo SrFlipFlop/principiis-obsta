@@ -22,10 +22,12 @@ NETWORK_ALLOWLIST = CHECKOUT / 'fixtures/development/network_allowlist.json'
 EGRESS_PROXY = Path(__file__).resolve().with_name('egress_proxy.py')
 EGRESS_PORT = 3128
 EGRESS_MODES = ('allowlist', 'log')
-ADAPTER = 'docker-development-v3'
+# v4 (#75): the proxy has its own per-run outside network instead of the default bridge,
+# listens only on its internal-network address, and checks SNI and Host.
+ADAPTER = 'docker-development-v4'
 NETWORK_DESCRIPTION = {
-    'allowlist':'internal Docker network; only route out is the egress proxy, limited to the network allowlist',
-    'log':'internal Docker network; only route out is the egress proxy, logging every destination without limits',
+    'allowlist':'internal Docker network; only route out is the egress proxy (own per-run outside network), limited to the network allowlist with SNI/Host checks',
+    'log':'internal Docker network; only route out is the egress proxy (own per-run outside network), logging every destination without limits',
 }
 
 
@@ -254,10 +256,13 @@ def cleanup_runtime(allocation_path, config_path, output):
         raise ValueError('runtime allocation image/cleanup command differs from frozen configuration')
     # Allocations before #75 have no egress proxy or network.
     token = name.removeprefix('po-development-')
+    # Allocations before the outside network (adapter v3) have no `outside_network`.
     egress = allocation.get('egress')
-    if egress is not None and egress != {'container':'po-development-egress-'+token, 'network':'po-development-net-'+token}:
+    expected = {'container':'po-development-egress-'+token, 'network':'po-development-net-'+token}
+    if egress is not None and egress not in (expected, dict(expected, outside_network='po-development-out-'+token)):
         raise ValueError('runtime allocation has an invalid egress identity')
-    egress_argvs = [['rm','-f',egress['container']], ['network','rm',egress['network']]] if egress else []
+    egress_argvs = ([['rm','-f',egress['container']], ['network','rm',egress['network']]]
+                    + ([['network','rm',egress['outside_network']]] if 'outside_network' in egress else [])) if egress else []
     output = Path(output).resolve()
     output.mkdir(parents=True,exist_ok=False)
     record = {'schema_version':1,'outcome':'cleanup_error','allocation':str(allocation_path),
@@ -367,7 +372,8 @@ class DevelopmentRuntime:
                              'Choose a run root visible to the Docker daemon.') from error
         token = uuid.uuid4().hex
         name = 'po-development-' + token
-        egress = {'container':'po-development-egress-' + token, 'network':'po-development-net-' + token}
+        egress = {'container':'po-development-egress-' + token, 'network':'po-development-net-' + token,
+                  'outside_network':'po-development-out-' + token}
         boot = ('mkdir -p "$CODEX_HOME"; cp /run/subscription-auth.json "$CODEX_HOME/auth.json"; '
                 'chmod 600 "$CODEX_HOME/auth.json"; '
                 'login_status="$(codex login status 2>&1)" || '
@@ -384,7 +390,8 @@ class DevelopmentRuntime:
         codex.append('-')
         allocation_path = workspace.parent / 'runtime.json'
         egress_log = workspace.parent / 'egress.jsonl'
-        removals = [['rm', '-f', name], ['rm', '-f', egress['container']], ['network', 'rm', egress['network']]]
+        removals = [['rm', '-f', name], ['rm', '-f', egress['container']], ['network', 'rm', egress['network']],
+                    ['network', 'rm', egress['outside_network']]]
         allocation = {'schema_version':1,'adapter':ADAPTER,'container':name,'egress':egress,
                       'image':c['image'],'sandbox_policy_sha256':self.version['sandbox_policy_sha256'],'state':'allocated','allocated_at':time.time(),
                       'cleanup_argv':docker_command(c['docker'],['rm','-f',name]),
@@ -465,20 +472,47 @@ class DevelopmentRuntime:
         return evidence
 
     def start_egress(self, egress):
-        """Create the internal network and the proxy that is its only route out; return the proxy address."""
+        """Create the internal network and the proxy that is its only route out; return the proxy address.
+
+        The proxy starts on the internal network alone, binds to its address there, and
+        only then joins its own per-run outside network. It never joins the default
+        bridge, so no other container can reach it.
+        """
         c = self.config
         docker_run(c['docker'], ['network', 'create', '--driver', 'bridge', '--internal', '--ipv6=false',
                                  egress['network']])
         network = json.loads(docker_run(c['docker'], ['network', 'inspect', egress['network']]))[0]
         if network.get('Internal') is not True:
             raise ValueError('development network is not internal')
-        docker_run(c['docker'], ['run', '--detach', '--name', egress['container'], '--network', 'bridge',
+        if network.get('EnableIPv6'):
+            raise ValueError('development network has IPv6 enabled')
+        docker_run(c['docker'], ['network', 'create', '--driver', 'bridge', '--ipv6=false', egress['outside_network']])
+        docker_run(c['docker'], ['run', '--detach', '--name', egress['container'], '--network', egress['network'],
                                  *restrictions(), '--entrypoint', 'python', c['image'],
                                  '-I', '-S', '-c', EGRESS_PROXY.read_text(), self.egress,
-                                 json.dumps(self.allowlist), str(EGRESS_PORT)])
-        docker_run(c['docker'], ['network', 'connect', egress['network'], egress['container']])
+                                 json.dumps(self.allowlist), str(EGRESS_PORT), 'own-address'])
         status = json.loads(docker_run(c['docker'], ['inspect', egress['container']]))[0]
-        return status['NetworkSettings']['Networks'][egress['network']]['IPAddress']
+        address = status['NetworkSettings']['Networks'][egress['network']]['IPAddress']
+        listening = self.proxy_listening(egress['container'])
+        if listening != address:
+            raise ValueError(f'egress proxy must listen only on its internal address {address}, not {listening}')
+        docker_run(c['docker'], ['network', 'connect', egress['outside_network'], egress['container']])
+        return address
+
+    def proxy_listening(self, container, *, timeout=15):
+        """The address in the proxy's `listening` log line, waiting for it to appear."""
+        deadline = time.monotonic() + timeout
+        while True:
+            for line in docker_run(self.config['docker'], ['logs', container]).splitlines():
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(event, dict) and event.get('event') == 'listening':
+                    return event.get('address')
+            if time.monotonic() > deadline:
+                raise ValueError('egress proxy did not report its listening address')
+            time.sleep(.2)
 
 
 

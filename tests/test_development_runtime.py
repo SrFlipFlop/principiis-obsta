@@ -42,9 +42,13 @@ if args[0] == 'run':
 if args[0] == 'inspect':
     records=[json.loads(v) for v in pathlib.Path(''' + repr(str(base / 'commands.jsonl')) + ''').read_text().splitlines()]
     network=next((c[-1] for c in reversed(records) if c[:2]==['network','create']),'fixture-network')
+    networks={network:{'IPAddress':'172.30.0.2'}}
+    if args[-1].startswith('po-development-egress-'):
+        networks={c[-1]:{'IPAddress':'172.30.0.2' if '--internal' in c else '172.31.0.2'} for c in records if c[:2]==['network','create']}
     ports={'8123/tcp':[{'HostIp':'127.0.0.1','HostPort':'58123'}]} if args[-1].startswith('po-preview-relay-') else {'8123/tcp':None}
-    print(json.dumps([{'State':{'Running':True},'NetworkSettings':{'Ports':ports,'Networks':{network:{'IPAddress':'172.30.0.2'}}}}]));sys.exit()
+    print(json.dumps([{'State':{'Running':True},'NetworkSettings':{'Ports':ports,'Networks':networks}}]));sys.exit()
 if args[0] == 'logs' and args[-1].startswith('po-development-egress-'):
+    print(json.dumps({'event':'listening','mode':'allowlist','address':'172.30.0.2','port':3128}))
     print(json.dumps({'method':'CONNECT','host':'pypi.org','port':443,'decision':'allowed'}))
     print(json.dumps({'method':'CONNECT','host':'pypi.org','port':443,'decision':'connected'}))
     print(json.dumps({'method':'CONNECT','host':'github.com','port':443,'decision':'refused'}));sys.exit()
@@ -152,13 +156,25 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             workspace = output / 'workspace'; workspace.mkdir(parents=True)
             evidence = runtime.execute(workspace, 'request', io.StringIO(), io.StringIO())
             commands = self.commands(base)
-            created = next(c for c in commands if c[:2] == ['network', 'create'])
-            network = created[-1]
-            self.assertIn('--internal', created)
+            internal, outside = [c for c in commands if c[:2] == ['network', 'create']]
+            network, outside_network = internal[-1], outside[-1]
+            self.assertIn('--internal', internal)
+            self.assertNotIn('--internal', outside)
+            self.assertIn('--ipv6=false', internal)
+            self.assertIn('--ipv6=false', outside)
+            self.assertRegex(network, r'^po-development-net-[0-9a-f]{32}$')
+            self.assertEqual(outside_network, network.replace('-net-', '-out-'))
             proxy = next(c for c in commands if c[0] == 'run' and '--detach' in c)
             proxy_name = proxy[proxy.index('--name') + 1]
-            self.assertEqual(proxy[proxy.index('--network') + 1], 'bridge')
-            self.assertIn(['network', 'connect', network, proxy_name], commands)
+            # The proxy starts on the internal network only and binds to its address
+            # there; the per-run outside network is connected afterwards. Never the
+            # default bridge, where other containers could reach it.
+            self.assertEqual(proxy[proxy.index('--network') + 1], network)
+            self.assertEqual(proxy[-1], 'own-address')
+            self.assertNotIn('bridge', [c[2] for c in commands if c[:2] == ['network', 'connect']])
+            self.assertEqual([c for c in commands if c[:2] == ['network', 'connect']],
+                             [['network', 'connect', outside_network, proxy_name]])
+            self.assertLess(commands.index(proxy), commands.index(['network', 'connect', outside_network, proxy_name]))
             self.assertNotIn('--mount', proxy)
             self.assertNotIn(config['auth_file'], repr(proxy))
             self.assertIn('allowlist', proxy)
@@ -171,6 +187,7 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             self.assertIn(['rm', '-f', proxy_name], commands)
             self.assertIn(['network', 'rm', network], commands)
             self.assertLess(commands.index(['rm', '-f', proxy_name]), commands.index(['network', 'rm', network]))
+            self.assertLess(commands.index(['rm', '-f', proxy_name]), commands.index(['network', 'rm', outside_network]))
             log = Path(evidence['egress']['log'])
             self.assertEqual(log, output / 'egress.jsonl')
             self.assertIn('"decision": "refused"', log.read_text())
@@ -179,8 +196,40 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             self.assertEqual(evidence['egress']['connected_hosts'], ['pypi.org'])
             self.assertIn('allowlist', evidence['runtime']['network'])
             allocation = json.loads((output / 'runtime.json').read_text())
-            self.assertEqual(allocation['egress'], {'container': proxy_name, 'network': network})
+            self.assertEqual(allocation['egress'], {'container': proxy_name, 'network': network,
+                                                    'outside_network': outside_network})
+            self.assertEqual([v[-3:] for v in allocation['egress_cleanup_argvs']],
+                             [['rm', '-f', proxy_name], ['network', 'rm', network], ['network', 'rm', outside_network]])
             self.assertEqual(allocation['state'], 'removed')
+            self.assertEqual(runtime.version['adapter'], 'docker-development-v4')
+
+    def egress_failure(self, replace):
+        with temporary_directory() as directory:
+            base = Path(directory)
+            config_path, config = self.configuration(base)
+            docker = Path(config['docker'])
+            text = docker.read_text()
+            for old, new in replace:
+                assert old in text, old
+                text = text.replace(old, new)
+            docker.write_text(text)
+            output = base / 'run'
+            runtime = DevelopmentRuntime(config_path, output, base / 'tasks')
+            workspace = output / 'workspace'; workspace.mkdir(parents=True)
+            evidence = runtime.execute(workspace, 'request', io.StringIO(), io.StringIO())
+            commands = self.commands(base)
+            self.assertIsNone(evidence['exit_status'])
+            self.assertFalse(any(c[0] == 'run' and '-i' in c for c in commands))
+            for created in (c[-1] for c in commands if c[:2] == ['network', 'create']):
+                self.assertIn(['network', 'rm', created], commands)
+            self.assertEqual(json.loads((output / 'runtime.json').read_text())['state'], 'removed')
+            return evidence['error']
+
+    def test_an_internal_network_with_ipv6_stops_before_auth_or_model(self):
+        self.assertIn('IPv6', self.egress_failure([("'EnableIPv6':False", "'EnableIPv6':True")]))
+
+    def test_a_proxy_listening_anywhere_but_its_internal_address_stops_before_auth_or_model(self):
+        self.assertIn('listen', self.egress_failure([("'address':'172.30.0.2'", "'address':'0.0.0.0'")]))
 
     def test_log_mode_is_a_different_runtime_version(self):
         with temporary_directory() as directory:
@@ -369,6 +418,47 @@ class DevelopmentRuntimeTests(unittest.TestCase):
         allocation.write_text(json.dumps({'schema_version':1,'container':name,'image':IMAGE,
             'state':'allocated','cleanup_argv':docker_command(config['docker'],['rm','-f',name])}))
         return allocation
+
+    def egress_allocation(self, base, config, egress):
+        allocation = self.cleanup_allocation(base, config)
+        allocation.write_text(json.dumps(dict(json.loads(allocation.read_text()), egress=egress)))
+        return allocation
+
+    def test_explicit_cleanup_removes_the_proxy_before_both_networks(self):
+        with temporary_directory() as directory:
+            base=Path(directory)
+            path,config=self.configuration(base)
+            token='b'*32
+            egress={'container':'po-development-egress-'+token,'network':'po-development-net-'+token,
+                    'outside_network':'po-development-out-'+token}
+            record=cleanup_runtime(self.egress_allocation(base,config,egress),path,base/'cleanup')
+            self.assertEqual(record['outcome'],'removed')
+            self.assertEqual(self.commands(base),[['rm','-f','po-development-'+token],['rm','-f',egress['container']],
+                                                  ['network','rm',egress['network']],['network','rm',egress['outside_network']]])
+
+    def test_explicit_cleanup_accepts_allocations_made_before_the_outside_network(self):
+        with temporary_directory() as directory:
+            base=Path(directory)
+            path,config=self.configuration(base)
+            token='b'*32
+            egress={'container':'po-development-egress-'+token,'network':'po-development-net-'+token}
+            record=cleanup_runtime(self.egress_allocation(base,config,egress),path,base/'cleanup')
+            self.assertEqual(record['outcome'],'removed')
+            self.assertEqual(self.commands(base),[['rm','-f','po-development-'+token],['rm','-f',egress['container']],
+                                                  ['network','rm',egress['network']]])
+
+    def test_explicit_cleanup_refuses_a_foreign_egress_identity(self):
+        token='b'*32
+        good={'container':'po-development-egress-'+token,'network':'po-development-net-'+token,
+              'outside_network':'po-development-out-'+token}
+        for egress in (dict(good,outside_network='bridge'), dict(good,outside_network='po-development-out-'+'c'*32),
+                       dict(good,extra='x'), {'container':good['container']}, dict(good,outside_network=None)):
+            with temporary_directory() as directory, self.subTest(egress=egress):
+                base=Path(directory)
+                path,config=self.configuration(base)
+                with self.assertRaisesRegex(ValueError,'egress identity'):
+                    cleanup_runtime(self.egress_allocation(base,config,egress),path,base/'cleanup')
+                self.assertFalse((base/'commands.jsonl').exists())
 
     def test_explicit_cleanup_keeps_original_evidence_and_does_not_need_auth_file(self):
         with temporary_directory() as directory:

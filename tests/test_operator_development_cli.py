@@ -63,6 +63,8 @@ class OperatorDevelopmentCLI(unittest.TestCase):
                 network=args[-1].replace('po-development-egress-','po-development-net-')
                 print(json.dumps([{'NetworkSettings':{'Networks':{network:{'IPAddress':'172.30.0.2'}}}}]));sys.exit()
             if args[0] == 'logs':
+                if args[-1].startswith('po-development-egress-'):
+                    print(json.dumps({'event':'listening','address':'172.30.0.2','port':3128}))
                 sys.exit()
             assert args[0] == 'run' and '-i' in args, args
             mounts=[args[index+1] for index,value in enumerate(args) if value=='--mount']

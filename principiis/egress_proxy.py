@@ -1,7 +1,7 @@
 """The development container's only way out: a logging HTTP(S) forward proxy.
 
 This file is also the program the trusted egress container runs, as
-`python -I -S -c <this source> MODE ALLOWLIST_JSON PORT`, so it imports only the
+`python -I -S -c <this source> MODE ALLOWLIST_JSON PORT [BIND]`, so it imports only the
 standard library. `log` mode forwards every well-formed destination and records it
 (the measurement that builds the allowlist); `allowlist` mode forwards only listed
 domains on web ports. Every decision is printed as one JSON line on stdout.
@@ -328,13 +328,16 @@ def handle(client, mode, allowlist):
                 end.close()
 
 
-def serve(mode, allowlist, port):
-    listener = socket.create_server(('0.0.0.0', port))
-    log(event='listening', mode=mode, port=port, allowlist=allowlist)
+def serve(mode, allowlist, port, bind='0.0.0.0'):
+    # `own-address`: the container's address on the only network it has at start, the
+    # internal development network. Networks joined later (the way out) cannot reach it.
+    address = socket.gethostbyname(socket.gethostname()) if bind == 'own-address' else bind
+    listener = socket.create_server((address, port))
+    log(event='listening', mode=mode, address=address, port=port, allowlist=allowlist)
     while True:
         client, _ = listener.accept()
         threading.Thread(target=handle, args=(client, mode, allowlist), daemon=True).start()
 
 
 if __name__ == '__main__':
-    serve(sys.argv[1], json.loads(sys.argv[2]), int(sys.argv[3]))
+    serve(sys.argv[1], json.loads(sys.argv[2]), int(sys.argv[3]), *sys.argv[4:5])
