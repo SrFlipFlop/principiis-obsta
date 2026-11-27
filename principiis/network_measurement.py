@@ -19,6 +19,7 @@ import uuid
 
 from .development_runtime import (CHECKOUT, DevelopmentRuntime, docker_run, inspect_image, load_config,
                                   preflight_run, restrictions)
+from .egress_proxy import never_allowed
 from .jsonio import write_json
 
 REQUEST = CHECKOUT / 'fixtures/development/network_measurement_request.txt'
@@ -53,6 +54,8 @@ EXCLUDED = (
 def exclusion(host):
     if re.fullmatch(r'[0-9.]+|.*:.*', host):
         return 'IP literal: the allowlist is by domain name'
+    if never_allowed(host):
+        return 'never allowed (egress_proxy.NEVER_ALLOW): serves GitHub content or mirrors arbitrary repositories'
     for suffix, reason in EXCLUDED:
         if host == suffix or host.endswith('.' + suffix):
             return reason

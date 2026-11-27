@@ -65,6 +65,14 @@ class DraftAllowlist(unittest.TestCase):
                 '140.82.112.3', 'proxy.golang.org'})
             self.assertNotIn('github', (base / 'draft.json').read_text())
 
+    def test_never_allowed_mirrors_are_never_drafted(self):
+        with temporary_directory() as directory:
+            base = Path(directory)
+            measurement = write_measurement(base / 'm.json', ['pypi.org', 'cdn.jsdelivr.net', 'web.archive.org', 'ghcr.io'])
+            summary = network_measurement.draft_allowlist(measurement, base / 'draft.json')
+            self.assertEqual(summary['hosts'], ['pypi.org'])
+            self.assertEqual(set(summary['excluded']), {'cdn.jsdelivr.net', 'web.archive.org', 'ghcr.io'})
+
     def test_existing_output_and_malformed_measurement_are_refused(self):
         with temporary_directory() as directory:
             base = Path(directory)

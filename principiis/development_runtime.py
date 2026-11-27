@@ -10,7 +10,7 @@ import time
 import uuid
 
 from .codex import redact
-from .egress_proxy import normalise_host
+from .egress_proxy import unsafe_entry
 from .execution import execute
 from .jsonio import write_json
 from .snapshot import forbid_foreign_git
@@ -183,9 +183,11 @@ def load_allowlist(path=NETWORK_ALLOWLIST):
     if not isinstance(document, dict):
         raise ValueError('network allowlist must be a JSON object')
     domains = document.get('domains')
-    if (document.get('version') != '1' or not isinstance(domains, list)
-            or any(not isinstance(v, str) or normalise_host(v.removeprefix('*.')) != v.removeprefix('*.') for v in domains)):
+    if document.get('version') != '1' or not isinstance(domains, list):
         raise ValueError('network allowlist must be version 1 with lowercase domain names')
+    for entry in domains:
+        if reason := unsafe_entry(entry):
+            raise ValueError(f'network allowlist entry {entry!r} is refused: {reason}')
     return domains
 
 
