@@ -26,7 +26,8 @@ def _matches(directory, name, manifest_sha256, files):
             if Path(relative).is_absolute() or '..' in Path(relative).parts:
                 return False
             path = directory / relative
-            if path.is_symlink() or not path.is_file() or _sha(path) != expected:
+            # The same rule the evaluator applies at use (`assessment._relative`).
+            if path.resolve() != path or not path.is_file() or _sha(path) != expected:
                 return False
         return True
     except OSError:
@@ -53,6 +54,11 @@ def locate(recorded_manifest, manifest_sha256, files, *, extra_roots=()):
     """
     recorded = Path(recorded_manifest)
     for directory in _candidates(recorded, extra_roots):
+        # Content is what is trusted, so a symlinked location is followed, then checked as resolved.
+        try:
+            directory = directory.resolve()
+        except OSError:
+            continue
         if _matches(directory, recorded.name, manifest_sha256, files):
             return directory / recorded.name
     raise ValueError('retained evaluator not found by SHA-256 (searched the recorded path, '
@@ -68,11 +74,12 @@ def identity(binding):
     return {key: value for key, value in binding.items() if key not in LOCATION_FIELDS}
 
 
-def copy_evaluator(root, declaration, files):
+def copy_evaluator(root, declaration, manifest_sha256, files):
     """Make a run self-contained: copy the manifest and its hashed dependency files into it.
 
-    Returns the run-relative manifest path. The copy is staged and renamed so a failed
-    bind never leaves a half-written `evaluator/` directory.
+    Returns the run-relative manifest path. Every copied byte is checked against the
+    recorded hashes, and the copy is staged and renamed so a failed bind never leaves
+    a half-written `evaluator/` directory.
     """
     declaration = Path(declaration).resolve()
     target, staging = Path(root) / 'evaluator', Path(root) / 'evaluator.partial'
@@ -81,10 +88,18 @@ def copy_evaluator(root, declaration, files):
             raise ValueError('evaluator copy location is not a directory')
         if stale.exists():
             shutil.rmtree(stale)
-    for name in [declaration.name, *files]:
-        destination = staging / name
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes((declaration.parent / name).read_bytes())
+    expected = dict(files, **{declaration.name: manifest_sha256})
+    try:
+        for name, sha256 in expected.items():
+            content = (declaration.parent / name).read_bytes()
+            if hashlib.sha256(content).hexdigest() != sha256:
+                raise ValueError('evaluator dependency content changed: ' + str(name))
+            destination = staging / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(content)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
     staging.rename(target)
     return 'evaluator/' + declaration.name
 

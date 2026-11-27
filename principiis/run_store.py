@@ -482,7 +482,8 @@ class RunStore:
         else:
             if 'manifest' in binding:
                 binding = dict(binding, source_manifest=binding['manifest'],
-                               manifest=copy_evaluator(self.root, declaration, binding['files']))
+                               manifest=copy_evaluator(self.root, declaration, binding['manifest_sha256'],
+                                                       binding['files']))
             (self.root / 'evaluator-manifest.json').write_bytes(Path(declaration).read_bytes())
             (self.root / 'evaluator-release.json').write_bytes(Path(release).read_bytes())
             write_json(target, binding)
