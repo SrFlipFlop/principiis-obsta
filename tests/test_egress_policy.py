@@ -15,19 +15,19 @@ from principiis.development_runtime import load_allowlist
 from principiis.egress_proxy import allowed, client_hello, credential, never_allowed, unsafe_entry
 
 
-ALLOWLIST = ['pypi.org', '*.pythonhosted.org', 'chatgpt.com']
+ALLOWLIST = ['registry.npmjs.org', '*.nuget.org', 'chatgpt.com']
 
 
 class EgressPolicyTests(unittest.TestCase):
     def test_allowlist_mode_admits_listed_hosts_on_web_ports(self):
-        for host, port in (('pypi.org', 443), ('PyPI.org.', 443), ('files.pythonhosted.org', 443),
+        for host, port in (('registry.npmjs.org', 443), ('Registry.NPMjs.org.', 443), ('api.nuget.org', 443),
                            ('chatgpt.com', 80)):
             self.assertTrue(allowed(host, port, 'allowlist', ALLOWLIST), (host, port))
 
     def test_allowlist_mode_refuses_everything_else(self):
-        for host, port in (('github.com', 443), ('pypi.org.attacker.example', 443), ('evilpypi.org', 443),
-                           ('pythonhosted.org', 443), ('pypi.org', 22), ('140.82.112.3', 443),
-                           ('', 443), ('pypi.org\r\nX: y', 443)):
+        for host, port in (('github.com', 443), ('registry.npmjs.org.attacker.example', 443),
+                           ('evilregistry.npmjs.org', 443), ('nuget.org', 443), ('registry.npmjs.org', 22),
+                           ('140.82.112.3', 443), ('', 443), ('registry.npmjs.org\r\nX: y', 443)):
             self.assertFalse(allowed(host, port, 'allowlist', ALLOWLIST), (host, port))
 
     def test_log_mode_admits_any_well_formed_destination(self):
@@ -36,7 +36,7 @@ class EgressPolicyTests(unittest.TestCase):
         self.assertFalse(allowed('bad host', 443, 'log', []))
 
     def test_unknown_mode_refuses(self):
-        self.assertFalse(allowed('pypi.org', 443, 'open', ALLOWLIST))
+        self.assertFalse(allowed('registry.npmjs.org', 443, 'open', ALLOWLIST))
 
 
 def hello(server_hostname):
@@ -78,12 +78,12 @@ class NeverAllowTests(unittest.TestCase):
         for entry in ('raw.githubusercontent.com', '*.githubusercontent.com', '*.github.com', '*.golang.org',
                       '*.archive.org', '*.io', '*.com', '*.org', '*', '*.dev', 'proxy.golang.org'):
             self.assertTrue(unsafe_entry(entry), entry)
-        for entry in ('pypi.org', '*.pythonhosted.org', 'sum.golang.org', '*.npmjs.org'):
+        for entry in ('registry.npmjs.org', '*.nuget.org', 'sum.golang.org', '*.npmjs.org'):
             self.assertIsNone(unsafe_entry(entry), entry)
 
     def test_the_proxy_ignores_unsafe_wildcards(self):
         self.assertFalse(allowed('example.com', 443, 'allowlist', ['*.com']))
-        self.assertTrue(allowed('files.pythonhosted.org', 443, 'allowlist', ['*.com', '*.pythonhosted.org']))
+        self.assertTrue(allowed('api.nuget.org', 443, 'allowlist', ['*.com', '*.nuget.org']))
 
 
 class AllowlistLoaderTests(unittest.TestCase):
@@ -97,17 +97,17 @@ class AllowlistLoaderTests(unittest.TestCase):
         for entry in ('github.com', 'raw.githubusercontent.com', '*.githubusercontent.com', '*.golang.org',
                       'cdn.jsdelivr.net', 'gitlab.com', '*.org', '*.com', '*'):
             with self.subTest(entry=entry), self.assertRaisesRegex(ValueError, 'never|broad|domain'):
-                self.load(['pypi.org', entry])
+                self.load(['registry.npmjs.org', entry])
 
     def test_loader_accepts_ordinary_registries(self):
-        self.assertEqual(self.load(['pypi.org', '*.pythonhosted.org', 'sum.golang.org']),
-                         {'domains': ['pypi.org', '*.pythonhosted.org', 'sum.golang.org'],
+        self.assertEqual(self.load(['registry.npmjs.org', '*.nuget.org', 'sum.golang.org']),
+                         {'domains': ['registry.npmjs.org', '*.nuget.org', 'sum.golang.org'],
                           'model_domains': ['chatgpt.com']})
 
     def test_loader_applies_the_never_allow_list_to_model_domains_too(self):
         for entry in ('github.com', 'raw.githubusercontent.com', 'gitlab.com', 'cdn.jsdelivr.net', '10.0.0.1'):
             with self.subTest(entry=entry), self.assertRaisesRegex(ValueError, 'model domain .* is refused'):
-                self.load(['pypi.org'], ['chatgpt.com', entry])
+                self.load(['registry.npmjs.org'], ['chatgpt.com', entry])
 
     def test_the_proxy_refuses_never_allowed_model_domains_even_with_the_credential(self):
         self.assertFalse(allowed('raw.githubusercontent.com', 443, 'allowlist', [], ['raw.githubusercontent.com'],
@@ -178,7 +178,7 @@ class Upstream:
 
 class HandleTests(unittest.TestCase):
     def exchange(self, mode, head, payload=b'', policy=None, token=''):
-        policy = policy or {'domains': ['pypi.org'], 'model_domains': []}
+        policy = policy or {'domains': ['registry.npmjs.org'], 'model_domains': []}
         upstream, events = Upstream(), []
         client, proxy_side = socket.socketpair()
         with patch.object(egress_proxy.socket, 'create_connection', upstream.connect), \
@@ -201,7 +201,7 @@ class HandleTests(unittest.TestCase):
             upstream.thread.join(10)
         return reply, upstream.received, events
 
-    CONNECT = b'CONNECT pypi.org:443 HTTP/1.1\r\nHost: pypi.org:443\r\n\r\n'
+    CONNECT = b'CONNECT registry.npmjs.org:443 HTTP/1.1\r\nHost: registry.npmjs.org:443\r\n\r\n'
 
     def test_a_tunnel_whose_sni_names_another_host_is_closed_before_any_byte_is_forwarded(self):
         for name, reason in (('raw.githubusercontent.com', 'sni-mismatch'), (None, 'no-sni')):
@@ -213,7 +213,7 @@ class HandleTests(unittest.TestCase):
 
     def test_a_tunnel_offering_encrypted_client_hello_is_closed(self):
         reply, forwarded, events = self.exchange('allowlist', self.CONNECT,
-                                                 synthetic_hello(server_name(b'pypi.org'), (0xfe0d, b'\x00')))
+                                                 synthetic_hello(server_name(b'registry.npmjs.org'), (0xfe0d, b'\x00')))
         self.assertEqual(forwarded, b'')
         self.assertEqual([e for e in events if e.get('decision') == 'refused'][-1]['reason'], 'ech')
 
@@ -224,11 +224,11 @@ class HandleTests(unittest.TestCase):
         self.assertEqual([e for e in events if e.get('decision') == 'refused'][-1]['reason'], 'not-tls')
 
     def test_a_tunnel_with_the_matching_sni_forwards_the_hello_unchanged(self):
-        data = hello('pypi.org')
+        data = hello('registry.npmjs.org')
         reply, forwarded, events = self.exchange('allowlist', self.CONNECT, data + b'rest')
         self.assertIn(b' 200 ', reply)
         self.assertEqual(forwarded, data + b'rest')
-        self.assertIn('pypi.org', [e.get('sni') for e in events])
+        self.assertIn('registry.npmjs.org', [e.get('sni') for e in events])
 
     def test_log_mode_forwards_a_mismatch_and_records_the_sni(self):
         data = hello('raw.githubusercontent.com')
@@ -237,20 +237,20 @@ class HandleTests(unittest.TestCase):
         self.assertIn('raw.githubusercontent.com', [e.get('sni') for e in events])
 
     def test_plain_http_whose_host_header_names_another_host_is_refused(self):
-        for host in (b'raw.githubusercontent.com', b'pypi.org\r\nHost: github.com', None):
+        for host in (b'raw.githubusercontent.com', b'registry.npmjs.org\r\nHost: github.com', None):
             with self.subTest(host=host):
                 header = b'Host: ' + host + b'\r\n' if host else b''
                 reply, forwarded, events = self.exchange(
-                    'allowlist', b'GET http://pypi.org/simple/ HTTP/1.1\r\n' + header + b'\r\n')
+                    'allowlist', b'GET http://registry.npmjs.org/six HTTP/1.1\r\n' + header + b'\r\n')
                 self.assertIn(b' 403 ', reply)
                 self.assertEqual(forwarded, b'')
 
     def test_plain_http_forwards_one_request_and_nothing_after_it(self):
         smuggled = b'GET /x HTTP/1.1\r\nHost: raw.githubusercontent.com\r\n\r\n'
         reply, forwarded, events = self.exchange(
-            'allowlist', b'POST http://pypi.org/simple/ HTTP/1.1\r\nHost: pypi.org:80\r\nContent-Length: 2\r\n'
+            'allowlist', b'POST http://registry.npmjs.org/six HTTP/1.1\r\nHost: registry.npmjs.org:80\r\nContent-Length: 2\r\n'
                          b'Connection: keep-alive\r\n\r\nok' + smuggled)
-        self.assertTrue(forwarded.startswith(b'POST /simple/ HTTP/1.1\r\n'), forwarded)
+        self.assertTrue(forwarded.startswith(b'POST /six HTTP/1.1\r\n'), forwarded)
         self.assertTrue(forwarded.endswith(b'\r\n\r\nok'), forwarded)
         self.assertIn(b'Connection: close', forwarded)
         self.assertNotIn(b'keep-alive', forwarded)
@@ -258,7 +258,7 @@ class HandleTests(unittest.TestCase):
 
 
 TOKEN = 'per-run-model-token-0123456789abcdef'
-POLICY = {'domains': ['pypi.org'], 'model_domains': ['chatgpt.com', 'api.openai.com']}
+POLICY = {'domains': ['registry.npmjs.org'], 'model_domains': ['chatgpt.com', 'api.openai.com']}
 
 
 def basic(user, password):
@@ -285,7 +285,7 @@ class ModelCredentialTests(unittest.TestCase):
         self.assertFalse(allowed('chatgpt.com', 22, 'allowlist', [], ['chatgpt.com'], credential=True))
         # The credential never widens the ordinary allowlist.
         self.assertFalse(allowed('github.com', 443, 'allowlist', POLICY['domains'], POLICY['model_domains'], credential=True))
-        self.assertTrue(allowed('pypi.org', 443, 'allowlist', POLICY['domains'], POLICY['model_domains']))
+        self.assertTrue(allowed('registry.npmjs.org', 443, 'allowlist', POLICY['domains'], POLICY['model_domains']))
 
     def request(self, head, *, policy=POLICY, mode='allowlist', token=TOKEN):
         """Drive one proxy connection over a socket pair; return (reply, log events)."""
@@ -344,7 +344,7 @@ class ModelCredentialTests(unittest.TestCase):
 
 class CredentialedTunnelTests(unittest.TestCase):
     """The model credential is checked at CONNECT; the SNI check still applies after it."""
-    MODEL = {'domains': ['pypi.org'], 'model_domains': ['chatgpt.com']}
+    MODEL = {'domains': ['registry.npmjs.org'], 'model_domains': ['chatgpt.com']}
     exchange = HandleTests.exchange
 
     def connect(self, credential_header=True):
@@ -369,6 +369,312 @@ class CredentialedTunnelTests(unittest.TestCase):
         self.assertEqual(events[0]['credential'], 'valid')
         self.assertIn('chatgpt.com', [e.get('sni') for e in events if e.get('event') == 'tls'])
         self.assertNotIn(TOKEN, json.dumps(events))
+
+
+class GatewayOnlyTests(unittest.TestCase):
+    """PyPI shares Fastly with raw.githubusercontent.com: a tunnel to it can front GitHub with
+    the Host header inside TLS. It is reached only through the proxy's PyPI gateway."""
+
+    def test_pypi_hosts_and_wildcards_covering_them_are_unsafe_entries(self):
+        for entry in ('pypi.org', 'files.pythonhosted.org', '*.pythonhosted.org', '*.pypi.org', 'test.pypi.org',
+                      'pythonhosted.org'):
+            with self.subTest(entry=entry):
+                self.assertIn('gateway', unsafe_entry(entry) or '')
+                self.assertIn('Fastly', unsafe_entry(entry) or '')
+
+    def test_the_loader_refuses_them_in_domains_and_model_domains(self):
+        for entry in ('pypi.org', 'files.pythonhosted.org', '*.pythonhosted.org'):
+            with self.subTest(entry=entry):
+                with self.assertRaisesRegex(ValueError, 'gateway'):
+                    AllowlistLoaderTests.load(self, ['registry.npmjs.org', entry])
+                if not entry.startswith('*.'):  # model domains refuse every wildcard anyway
+                    with self.assertRaisesRegex(ValueError, 'gateway'):
+                        AllowlistLoaderTests.load(self, ['registry.npmjs.org'], ['chatgpt.com', entry])
+
+    def test_the_proxy_never_tunnels_to_them_even_when_listed(self):
+        for host in ('pypi.org', 'files.pythonhosted.org'):
+            self.assertFalse(allowed(host, 443, 'allowlist', [host, '*.pythonhosted.org']), host)
+            self.assertFalse(allowed(host, 443, 'allowlist', [], [host], credential=True), host)
+
+    def test_the_gateway_only_hosts_are_kept_in_one_place(self):
+        self.assertEqual(set(egress_proxy.GATEWAY_UPSTREAMS), {'pypi.org', 'files.pythonhosted.org'})
+        for host in egress_proxy.GATEWAY_UPSTREAMS:
+            self.assertTrue(egress_proxy.gateway_only(host), host)
+        self.assertFalse(egress_proxy.gateway_only('registry.npmjs.org'))
+
+    def test_a_tunnel_to_pypi_gets_403_and_says_to_use_the_gateway(self):
+        with patch.object(egress_proxy.socket, 'create_connection', side_effect=AssertionError('no tunnel')):
+            reply, events = ModelCredentialTests.request(
+                self, 'CONNECT pypi.org:443 HTTP/1.1\r\nHost: pypi.org:443\r\n\r\n',
+                policy={'domains': ['pypi.org', 'registry.npmjs.org'], 'model_domains': []})
+        self.assertIn(b' 403 ', reply)
+        self.assertIn('gateway', [e for e in events if e.get('decision') == 'refused'][-1]['reason'])
+
+    def test_the_shipped_allowlist_has_no_gateway_only_host(self):
+        domains = load_allowlist()['domains']
+        self.assertNotIn('pypi.org', domains)
+        self.assertNotIn('files.pythonhosted.org', domains)
+
+
+HASH = 'ab/cd/' + 'e' * 60
+WHEEL = f'/pypi/files/packages/{HASH}/six-1.16.0-py2.py3-none-any.whl'
+JSON_TYPE = 'application/vnd.pypi.simple.v1+json'
+
+
+class GatewayRouteTests(unittest.TestCase):
+    def test_simple_index_paths_are_normalised_to_pypi(self):
+        for target, path in (('/pypi/simple/six/', '/simple/six/'), ('/pypi/simple/six', '/simple/six/'),
+                             ('/pypi/simple/Zope.Interface/', '/simple/zope-interface/'),
+                             ('/pypi/simple/typing_extensions/', '/simple/typing-extensions/'),
+                             ('/pypi/simple/a/', '/simple/a/')):
+            with self.subTest(target=target):
+                self.assertEqual(egress_proxy.gateway_route('GET', target), ('simple', 'pypi.org', path))
+
+    def test_file_paths_go_to_files_pythonhosted_org_unchanged(self):
+        for name in ('six-1.16.0-py2.py3-none-any.whl', 'six-1.16.0.tar.gz', 'six-1.16.0-py2.py3-none-any.whl.metadata',
+                     'Flask-3.0.0.zip', 'pkg-1.0.tar.bz2'):
+            target = f'/pypi/files/packages/{HASH}/{name}'
+            with self.subTest(name=name):
+                self.assertEqual(egress_proxy.gateway_route('GET', target),
+                                 ('files', 'files.pythonhosted.org', f'/packages/{HASH}/{name}'))
+
+    def test_everything_else_is_refused(self):
+        refused = ['/pypi/simple/', '/pypi/simple/../', '/pypi/simple/six/../../x/', '/pypi/simple/..',
+                   '/pypi/simple/six/?q=1', '/pypi/simple/six/#x', '/pypi/simple/%2e%2e/', '/pypi/simple/six%2F/',
+                   '/pypi/simple/-six/', '/pypi/simple/six/extra/', '/pypi/simple/' + 'a' * 300 + '/',
+                   '/pypi/files/packages/../../x', '/pypi/files/packages/' + HASH + '/../six.whl',
+                   '/pypi/files/packages/' + HASH + '/README.md', '/pypi/files/packages/' + HASH + '/.whl',
+                   '/pypi/files/packages/ab/cd/short/six-1.16.0.tar.gz', '/pypi/files/packages/AB/cd/' + 'e' * 60 + '/x.whl',
+                   '/pypi/files/SrFlipFlop/principiis-obsta/main/README.md', WHEEL + '?x=1', WHEEL + '/',
+                   '/pypi/pypi/six/json', '/pypi/', '/simple/six/', '/', '', 'six', '//pypi/simple/six/',
+                   '/pypi/simple/six/\\', '/pypi/simple/si x/']
+        for target in refused:
+            with self.subTest(target=target), self.assertRaises(egress_proxy.Refused):
+                egress_proxy.gateway_route('GET', target)
+        for method in ('POST', 'PUT', 'HEAD', 'DELETE', 'CONNECT', 'OPTIONS'):
+            with self.subTest(method=method), self.assertRaises(egress_proxy.Refused):
+                egress_proxy.gateway_route(method, '/pypi/simple/six/')
+
+    def test_only_simple_api_media_types_are_forwarded_in_accept(self):
+        pip = 'application/vnd.pypi.simple.v1+json, application/vnd.pypi.simple.v1+html; q=0.1, text/html; q=0.01'
+        self.assertEqual(egress_proxy.gateway_accept(pip), pip)
+        self.assertEqual(egress_proxy.gateway_accept('text/html'), 'text/html')
+        for value in (None, '', '*/*', 'application/json', 'text/html, application/x-evil',
+                      'text/html; charset=x\r\nHost: raw.githubusercontent.com', 'text/html;q=1;evil=1'):
+            with self.subTest(value=value):
+                self.assertEqual(egress_proxy.gateway_accept(value), egress_proxy.DEFAULT_ACCEPT)
+
+
+class GatewayRewriteTests(unittest.TestCase):
+    FILE = 'https://files.pythonhosted.org/packages/' + HASH + '/six-1.16.0-py2.py3-none-any.whl'
+
+    def test_html_hrefs_point_at_the_gateway_and_keep_their_hash(self):
+        body = (f'<a href="{self.FILE}#sha256={"0" * 64}" data-requires-python="&gt;=2.7" '
+                f'data-dist-info-metadata="sha256={"1" * 64}">six</a>\n'
+                '<a href="https://raw.githubusercontent.com/x/y/main/z.whl#sha256=00">bad</a>').encode()
+        out = egress_proxy.rewrite_index(body, 'application/vnd.pypi.simple.v1+html').decode()
+        self.assertIn(f'href="/pypi/files/packages/{HASH}/six-1.16.0-py2.py3-none-any.whl#sha256={"0" * 64}"', out)
+        self.assertIn('data-dist-info-metadata="sha256=' + '1' * 64, out)
+        self.assertNotIn('files.pythonhosted.org', out)
+        self.assertNotIn('githubusercontent', out)
+
+    def test_json_urls_point_at_the_gateway_and_hashes_are_kept(self):
+        document = {'meta': {'api-version': '1.1'}, 'name': 'six', 'versions': ['1.16.0'],
+                    'files': [{'filename': 'six-1.16.0-py2.py3-none-any.whl', 'url': self.FILE,
+                               'hashes': {'sha256': '0' * 64}, 'core-metadata': {'sha256': '1' * 64}},
+                              {'filename': 'evil.whl', 'url': 'https://raw.githubusercontent.com/x/y/main/evil.whl',
+                               'hashes': {'sha256': '2' * 64}}]}
+        out = json.loads(egress_proxy.rewrite_index(json.dumps(document).encode(), JSON_TYPE))
+        self.assertEqual([f['url'] for f in out['files']],
+                         [f'/pypi/files/packages/{HASH}/six-1.16.0-py2.py3-none-any.whl'])
+        self.assertEqual(out['files'][0]['hashes'], {'sha256': '0' * 64})
+        self.assertEqual(out['files'][0]['core-metadata'], {'sha256': '1' * 64})
+        self.assertEqual(out['meta'], {'api-version': '1.1'})
+
+    def test_other_content_types_and_malformed_json_are_refused(self):
+        for body, kind in ((b'{}', 'application/json'), (b'not json', JSON_TYPE), (b'[]', JSON_TYPE)):
+            with self.subTest(kind=kind, body=body), self.assertRaises(egress_proxy.Refused):
+                egress_proxy.rewrite_index(body, kind)
+
+
+class FakeResponse:
+    def __init__(self, status=200, headers=None, body=b''):
+        self.status, self.headers, self.stream = status, headers or {}, io.BytesIO(body)
+
+    def getheader(self, name, default=None):
+        return next((v for k, v in self.headers.items() if k.lower() == name.lower()), default)
+
+    def getheaders(self):
+        return list(self.headers.items())
+
+    def read(self, size=-1):
+        return self.stream.read(size)
+
+    def close(self):
+        pass
+
+
+class GatewayHandleTests(unittest.TestCase):
+    """The gateway on the proxy's own port: origin-form `/pypi/...` requests."""
+
+    def serve(self, head, response=None, *, mode='allowlist', address=None):
+        calls, events = [], []
+
+        def fetch(host, path, accept):
+            calls.append((host, path, accept))
+            return response or FakeResponse()
+        client, proxy_side = socket.socketpair()
+        with patch.object(egress_proxy, 'open_upstream', fetch), \
+                patch.object(egress_proxy.socket, 'create_connection', side_effect=AssertionError('no tunnel')), \
+                patch.object(egress_proxy, 'log', lambda **event: events.append(event)):
+            worker = threading.Thread(target=egress_proxy.handle,
+                                      args=(proxy_side, mode, {'domains': [], 'model_domains': []}, ''),
+                                      kwargs={'address': address})
+            worker.start()
+            client.sendall(head)
+            client.shutdown(socket.SHUT_WR)
+            client.settimeout(10)
+            reply = b''
+            while data := client.recv(65536):
+                reply += data
+            worker.join(10)
+            client.close()
+        status = reply.split(b'\r\n', 1)[0]
+        return status, reply.partition(b'\r\n\r\n')[2], calls, events
+
+    def test_an_index_request_is_fetched_from_pypi_rewritten_and_logged_without_its_path(self):
+        body = json.dumps({'meta': {'api-version': '1.1'}, 'name': 'six', 'files': [
+            {'filename': 'six.whl', 'url': GatewayRewriteTests.FILE, 'hashes': {'sha256': '0' * 64}}]}).encode()
+        status, _, calls, events = self.serve(b'GET /pypi/simple/Six/?secret-query HTTP/1.1\r\n\r\n')
+        self.assertIn(b' 403 ', status)
+        self.assertEqual(calls, [])
+        self.assertNotIn('secret-query', json.dumps(events))
+        head = (b'GET /pypi/simple/Six/ HTTP/1.1\r\nHost: raw.githubusercontent.com\r\nAccept: ' + JSON_TYPE.encode()
+                + b'\r\nAuthorization: Bearer header-value-sentinel\r\nX-Sentinel: header-value-sentinel\r\n\r\n')
+        status, reply, calls, events = self.serve(head, FakeResponse(200, {'Content-Type': JSON_TYPE}, body))
+        self.assertIn(b' 200 ', status)
+        self.assertEqual(calls, [('pypi.org', '/simple/six/', JSON_TYPE)])
+        self.assertEqual(json.loads(reply)['files'][0]['url'],
+                         f'/pypi/files/packages/{HASH}/six-1.16.0-py2.py3-none-any.whl')
+        decisions = [(e.get('host'), e.get('route'), e.get('decision')) for e in events]
+        self.assertIn(('pypi.org', 'simple', 'allowed'), decisions)
+        self.assertIn(('pypi.org', 'simple', 'connected'), decisions)
+        text = json.dumps(events)
+        for sentinel in ('six', 'Six', 'header-value-sentinel', 'githubusercontent'):
+            self.assertNotIn(sentinel, text)
+
+    def test_a_file_is_streamed_from_files_pythonhosted_org(self):
+        data = b'PK' + bytes(range(256)) * 400
+        status, reply, calls, events = self.serve(
+            b'GET ' + WHEEL.encode() + b' HTTP/1.1\r\nHost: x\r\nRange: bytes=0-1\r\n\r\n',
+            FakeResponse(200, {'Content-Type': 'application/octet-stream', 'Content-Length': str(len(data))}, data))
+        self.assertIn(b' 200 ', status)
+        self.assertEqual(reply, data)
+        self.assertEqual(calls, [('files.pythonhosted.org', WHEEL.removeprefix('/pypi/files'), None)])
+
+    def test_refused_requests_never_reach_upstream(self):
+        for head in (b'GET /pypi/files/SrFlipFlop/principiis-obsta/main/README.md HTTP/1.1\r\nHost: raw.githubusercontent.com\r\n\r\n',
+                     b'GET /pypi/simple/../../ HTTP/1.1\r\n\r\n', b'POST /pypi/simple/six/ HTTP/1.1\r\nContent-Length: 0\r\n\r\n',
+                     b'GET /pypi/simple/six/ HTTP/1.1\r\nContent-Length: 3\r\n\r\nabc',
+                     b'GET /pypi/simple/six/ HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n',
+                     b'GET /SrFlipFlop/principiis-obsta/main/README.md HTTP/1.1\r\nHost: raw.githubusercontent.com\r\n\r\n'):
+            with self.subTest(head=head):
+                status, reply, calls, events = self.serve(head)
+                self.assertIn(b' 403 ', status)
+                self.assertEqual(calls, [])
+                self.assertEqual([e['decision'] for e in events if 'decision' in e], ['refused'])
+                self.assertNotIn('README', json.dumps(events))
+
+    def test_upstream_redirects_errors_and_github_answers_are_not_relayed(self):
+        cases = ((FakeResponse(301, {'Location': 'https://raw.githubusercontent.com/x'}), 'upstream-redirect'),
+                 (FakeResponse(200, {'Content-Type': JSON_TYPE, 'X-GitHub-Request-Id': 'A:B'}, b'{"files": []}'), 'github-response'),
+                 (FakeResponse(500), 'upstream-status'),
+                 (FakeResponse(200, {'Content-Type': 'text/plain'}, b'# principiis-obsta'), 'content-type'))
+        for response, reason in cases:
+            with self.subTest(reason=reason):
+                status, reply, calls, events = self.serve(b'GET /pypi/simple/six/ HTTP/1.1\r\n\r\n', response)
+                self.assertIn(b' 502 ', status)
+                self.assertNotIn(b'githubusercontent', reply)
+                self.assertNotIn(b'principiis', reply)
+                self.assertEqual([e.get('reason') for e in events if e.get('decision') == 'refused'], [reason])
+
+    def test_not_found_is_relayed_as_not_found(self):
+        status, reply, calls, events = self.serve(b'GET /pypi/simple/no-such-project/ HTTP/1.1\r\n\r\n',
+                                                  FakeResponse(404, {'Content-Type': 'text/html'}, b'gone'))
+        self.assertIn(b' 404 ', status)
+        self.assertEqual(reply, b'')
+
+    def test_oversized_answers_are_refused_or_cut(self):
+        with patch.object(egress_proxy, 'INDEX_LIMIT', 10):
+            status, reply, calls, events = self.serve(b'GET /pypi/simple/six/ HTTP/1.1\r\n\r\n',
+                                                      FakeResponse(200, {'Content-Type': JSON_TYPE}, b'{"files": [] }'))
+        self.assertIn(b' 502 ', status)
+        self.assertIn('too-large', [e.get('reason') for e in events])
+        with patch.object(egress_proxy, 'FILE_LIMIT', 10):
+            status, reply, calls, events = self.serve(b'GET ' + WHEEL.encode() + b' HTTP/1.1\r\n\r\n',
+                                                      FakeResponse(200, {'Content-Length': '20'}, b'x' * 20))
+            self.assertIn(b' 502 ', status)
+            status, reply, calls, events = self.serve(b'GET ' + WHEEL.encode() + b' HTTP/1.1\r\n\r\n',
+                                                      FakeResponse(200, {}, b'x' * 20))
+            self.assertLessEqual(len(reply), 10)
+            self.assertIn('too-large', [e.get('reason') for e in events])
+
+    def test_absolute_form_to_the_proxys_own_address_is_the_gateway(self):
+        response = FakeResponse(200, {'Content-Type': JSON_TYPE}, b'{"files": []}')
+        status, reply, calls, events = self.serve(
+            b'GET http://172.30.0.2:3128/pypi/simple/six/ HTTP/1.1\r\nHost: 172.30.0.2:3128\r\n\r\n',
+            response, address='172.30.0.2')
+        self.assertIn(b' 200 ', status)
+        self.assertEqual(calls[0][:2], ('pypi.org', '/simple/six/'))
+        # Absolute-form to PyPI itself is not the gateway, and PyPI is gateway-only.
+        status, reply, calls, events = self.serve(
+            b'GET http://pypi.org/simple/six/ HTTP/1.1\r\nHost: pypi.org\r\n\r\n', address='172.30.0.2')
+        self.assertIn(b' 403 ', status)
+        self.assertEqual(calls, [])
+
+    def test_the_gateway_also_serves_in_log_mode(self):
+        status, reply, calls, events = self.serve(b'GET /pypi/simple/six/ HTTP/1.1\r\n\r\n',
+                                                  FakeResponse(200, {'Content-Type': JSON_TYPE}, b'{"files": []}'),
+                                                  mode='log')
+        self.assertIn(b' 200 ', status)
+        self.assertEqual(calls[0][0], 'pypi.org')
+
+
+class GatewayUpstreamTests(unittest.TestCase):
+    def test_upstream_is_verified_https_to_the_fixed_host_with_fixed_headers(self):
+        connections = []
+
+        class Connection:
+            def __init__(self, host, port=None, *, context=None, timeout=None):
+                connections.append(self)
+                self.host, self.port, self.context, self.timeout = host, port, context, timeout
+
+            def request(self, method, path, headers=None):
+                self.sent = (method, path, headers)
+
+            def getresponse(self):
+                return FakeResponse()
+
+            def close(self):
+                self.closed = True
+
+        with patch.object(egress_proxy.http.client, 'HTTPSConnection', Connection):
+            egress_proxy.open_upstream('pypi.org', '/simple/six/', JSON_TYPE)
+            egress_proxy.open_upstream('files.pythonhosted.org', f'/packages/{HASH}/six.whl', None)
+        first, second = connections
+        self.assertEqual((first.host, first.port), ('pypi.org', 443))
+        self.assertEqual(first.context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(first.context.check_hostname)
+        method, path, headers = first.sent
+        self.assertEqual((method, path), ('GET', '/simple/six/'))
+        self.assertEqual({k.lower() for k in headers}, {'accept', 'accept-encoding', 'user-agent', 'connection'})
+        self.assertEqual(headers['Accept'], JSON_TYPE)
+        self.assertEqual(headers['Accept-Encoding'], 'identity')
+        self.assertEqual(headers['Connection'], 'close')
+        self.assertEqual(second.host, 'files.pythonhosted.org')
+        for host, path in (('raw.githubusercontent.com', '/x'), ('pypi.org', '/../x'), ('pypi.org', 'http://x/')):
+            with self.subTest(host=host, path=path), self.assertRaises(egress_proxy.Refused):
+                egress_proxy.open_upstream(host, path, None)
 
 
 if __name__ == '__main__':

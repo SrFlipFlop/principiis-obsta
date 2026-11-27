@@ -27,7 +27,9 @@ EGRESS_MODES = ('allowlist', 'log')
 # default bridge, proxy listens only on its internal-network address, SNI and Host
 # checks) merged with v4 of the model token split (model_domains need the per-run
 # proxy token, held only by the Codex process). Neither v4 enforced both.
-ADAPTER = 'docker-development-v5'
+# v6 (#75): PyPI is no longer tunnelled (Fastly Host fronting reached GitHub); commands
+# install Python packages through the proxy's PyPI gateway.
+ADAPTER = 'docker-development-v6'
 CODEX_HOME = '/home/developer/.codex'
 # Model hosts serve hosted web search, which ignores every network limit. Only the Codex
 # process may reach them: each attempt gets a fresh token that the proxy requires for
@@ -35,8 +37,17 @@ CODEX_HOME = '/home/developer/.codex'
 MODEL_CREDENTIAL = ('per-run-token-v1: model_domains need proxy-authorization basic model:<per-run token>; '
                     'only the Codex process has it; commands get the token-less proxy and cannot read CODEX_HOME')
 PROXY_VARIABLES = ('HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy')
+# pypi.org and files.pythonhosted.org share Fastly with raw.githubusercontent.com, so a
+# CONNECT tunnel to them can front GitHub with the Host header inside TLS (#75). The proxy
+# never tunnels them; it serves a read-only PyPI gateway on its own port instead.
+PYPI_GATEWAY = ('pypi-gateway-v1: plain HTTP at http://<egress proxy>:3128/pypi/simple/ (PIP_INDEX_URL, '
+                'UV_DEFAULT_INDEX); the proxy fetches only GET https://pypi.org/simple/<normalised project>/ and '
+                'https://files.pythonhosted.org/packages/<hashed path> itself, with certificate verification, '
+                'fixed SNI/Host and no client headers but a simple-API Accept, no redirects, and rewrites index '
+                'file URLs to /pypi/files/ keeping their hashes; CONNECT to PyPI hosts is refused because they '
+                'share Fastly with raw.githubusercontent.com')
 NETWORK_DESCRIPTION = {
-    'allowlist':'internal Docker network; only route out is the egress proxy (own per-run outside network), limited to the network allowlist with SNI/Host checks',
+    'allowlist':'internal Docker network; only route out is the egress proxy (own per-run outside network), limited to the network allowlist with SNI/Host checks; PyPI only through its read-only gateway',
     'log':'internal Docker network; only route out is the egress proxy (own per-run outside network), logging every destination without limits',
 }
 
@@ -122,10 +133,18 @@ def workspace_permission_settings():
             'permissions.development.filesystem':{CODEX_HOME:'none'}}
 
 
-def command_environment(address):
-    """Environment policy for the commands Codex runs: the proxy without the model token."""
+def package_environment(address):
+    """Proxy and package-index variables for commands: the token-less proxy and the PyPI gateway."""
     url = f'http://{address}:{EGRESS_PORT}'
-    return {'set': {name: url for name in PROXY_VARIABLES}, 'exclude': [MODEL_TOKEN_VARIABLE]}
+    index = url + '/pypi/simple/'
+    no_proxy = 'localhost,127.0.0.1,::1,' + address
+    return {**{name: url for name in PROXY_VARIABLES}, 'NO_PROXY': no_proxy, 'no_proxy': no_proxy,
+            'PIP_INDEX_URL': index, 'PIP_TRUSTED_HOST': f'{address}:{EGRESS_PORT}', 'UV_DEFAULT_INDEX': index}
+
+
+def command_environment(address):
+    """Environment policy for the commands Codex runs: the proxy without the model token, and the PyPI gateway."""
+    return {'set': package_environment(address), 'exclude': [MODEL_TOKEN_VARIABLE]}
 
 
 def command_settings(address):
@@ -438,7 +457,7 @@ class DevelopmentRuntime:
                         'egress':{'mode':egress, 'port':EGRESS_PORT,
                                   'allowlist_sha256':hashlib.sha256(NETWORK_ALLOWLIST.read_bytes()).hexdigest() if egress == 'allowlist' else None,
                                   'proxy_sha256':hashlib.sha256(EGRESS_PROXY.read_bytes()).hexdigest(),
-                                  'model_credential':MODEL_CREDENTIAL}}
+                                  'model_credential':MODEL_CREDENTIAL, 'pypi_gateway':PYPI_GATEWAY}}
 
     def execute(self, workspace, request, stdout, stderr):
         c = self.config
@@ -612,10 +631,7 @@ class DevelopmentRuntime:
 
 
 def proxy_environment(address):
-    url = f'http://{address}:{EGRESS_PORT}'
-    values = {'HTTPS_PROXY':url, 'HTTP_PROXY':url, 'https_proxy':url, 'http_proxy':url,
-              'NO_PROXY':'localhost,127.0.0.1,::1', 'no_proxy':'localhost,127.0.0.1,::1'}
-    return [item for key, value in values.items() for item in ('--env', f'{key}={value}')]
+    return [item for key, value in package_environment(address).items() for item in ('--env', f'{key}={value}')]
 
 
 def remove(docker, argv):

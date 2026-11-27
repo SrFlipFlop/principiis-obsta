@@ -2,9 +2,10 @@
 
 Nothing here can reach OpenAI. Every proxy started here has its outside network
 removed right after it starts, so it can decide and log but never connect out; the
-`codex exec` controls also run the proxy with a refuse-everything policy. The login is
-a FAKE file with dummy tokens, and the one model that answers is a loopback stand-in
-inside the container.
+`codex exec` controls also run the proxy with a refuse-everything policy. The one
+exception, the PyPI gateway control, keeps its way out but gets no model token (so the
+model hosts are always refused) and no `domains`. The login is a FAKE file with dummy
+tokens, and the one model that answers is a loopback stand-in inside the container.
 
     PO_RUNTIME_IMAGE=sha256:... PO_RUNTIME_ROOT=/var/tmp/po-scratch PO_EGRESS_CONTROL=1 \\
         python3 -m unittest discover -s tests -p test_model_token_containers.py
@@ -291,6 +292,40 @@ class ModelTokenContainerTests(unittest.TestCase):
         self.assertNotIn('connected', {e['decision'] for e in events})
         for value in secrets_of(token):
             self.assertNotIn(value, json.dumps(self.log(egress['container'])))
+
+    def test_a_command_in_the_codex_sandbox_installs_from_pypi_through_the_gateway(self):
+        # The one proxy here that keeps its way out, so the gateway can reach PyPI. It still
+        # cannot reach OpenAI: it gets no model token (so no credential is ever valid, and
+        # model hosts are refused), `domains` is empty, and the container gets no token either.
+        suffix = uuid.uuid4().hex
+        egress = {'container': 'po-development-egress-' + suffix, 'network': 'po-development-net-' + suffix,
+                  'outside_network': 'po-development-out-' + suffix}
+        self.resources[:0] = [['rm', '-f', egress['container']], ['network', 'rm', egress['network']],
+                              ['network', 'rm', egress['outside_network']]]
+        self.runtime.allowlist = {'domains': [], 'model_domains': list(MODEL_HOSTS)}
+        proxy = self.runtime.start_egress(egress, '')
+        install = ('python -m venv /workspace/venv && /workspace/venv/bin/pip install --no-cache-dir '
+                   'six==1.16.0 requests==2.32.3 2>&1 | grep -E "Successfully|ERROR" ; '
+                   'env | grep -E "^(PIP_INDEX_URL|PIP_TRUSTED_HOST|UV_DEFAULT_INDEX)=" | sort')
+        output = docker_run(self.docker, [
+            'run', '--rm', '--network', egress['network'], *runtime_module.restrictions(nested_sandbox=True),
+            '--tmpfs', '/workspace:rw,exec,nosuid,nodev,size=256m,mode=1777',
+            '--entrypoint', '/bin/sh', self.image, '-eu', '-c', 'mkdir -p "$CODEX_HOME"; exec "$@"', 'po-gateway-control',
+            'codex', '--no-daemon', 'sandbox', '--permission-profile', 'development',
+            *configuration_args({**workspace_permission_settings(), **command_settings(proxy)}),
+            '--cd', '/workspace', '--', '/bin/sh', '-c', install], timeout=300)
+        print('\ncommand in the Codex sandbox (command environment only):', output.strip())
+        self.assertIn('Successfully installed', output)
+        for package in ('six-1.16.0', 'requests-2.32.3', 'urllib3-'):
+            self.assertIn(package, output)
+        self.assertIn(f'PIP_INDEX_URL=http://{proxy}:3128/pypi/simple/', output)
+        events = self.log(egress['container'])
+        print('proxy decisions:', sorted({(e.get('event'), e.get('host'), e.get('route'), e['decision'])
+                                          for e in events if 'decision' in e}))
+        routes = {(e['host'], e['route']) for e in events if e.get('event') == 'gateway' and e['decision'] == 'connected'}
+        self.assertEqual(routes, {('pypi.org', 'simple'), ('files.pythonhosted.org', 'files')})
+        self.assertFalse({e.get('host') for e in events if e.get('method') == 'CONNECT'} & {'pypi.org', 'files.pythonhosted.org'})
+        self.assertNotIn('connected', {e['decision'] for e in events if e.get('host') in MODEL_HOSTS})
 
     def test_the_codex_process_credentialed_tunnel_still_passes_the_sni_check(self):
         # chatgpt.com resolves, for the isolated proxy only, to a sink on the internal

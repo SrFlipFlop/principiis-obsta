@@ -36,10 +36,10 @@ class DraftAllowlist(unittest.TestCase):
         with temporary_directory() as directory:
             base = Path(directory)
             measurement = write_measurement(base / 'measurement.json',
-                                            ['pypi.org', 'files.pythonhosted.org', 'registry.npmjs.org', 'docs.python.org'])
+                                            ['repo.packagist.org', 'api.nuget.org', 'registry.npmjs.org', 'docs.python.org'])
             draft = base / 'draft.json'
             summary = network_measurement.draft_allowlist(measurement, draft)
-            self.assertEqual(summary['hosts'], ['docs.python.org', 'files.pythonhosted.org', 'pypi.org', 'registry.npmjs.org'])
+            self.assertEqual(summary['hosts'], ['api.nuget.org', 'docs.python.org', 'registry.npmjs.org', 'repo.packagist.org'])
             document = json.loads(draft.read_text())
             self.assertEqual(document['version'], '1')
             self.assertEqual(document['domains'], summary['hosts'])
@@ -56,10 +56,10 @@ class DraftAllowlist(unittest.TestCase):
     def test_measured_model_hosts_stay_out_of_the_ordinary_domains(self):
         with temporary_directory() as directory:
             base = Path(directory)
-            measurement = write_measurement(base / 'm.json', ['pypi.org', 'chatgpt.com', 'api.openai.com', 'ab.chatgpt.com'])
+            measurement = write_measurement(base / 'm.json', ['registry.npmjs.org', 'chatgpt.com', 'api.openai.com', 'ab.chatgpt.com'])
             summary = network_measurement.draft_allowlist(measurement, base / 'draft.json')
             document = json.loads((base / 'draft.json').read_text())
-            self.assertEqual(document['domains'], ['pypi.org'])
+            self.assertEqual(document['domains'], ['registry.npmjs.org'])
             self.assertEqual(summary['model_hosts'], ['ab.chatgpt.com', 'api.openai.com', 'chatgpt.com'])
             # A measured model host that is not yet a model domain is for the owner to decide.
             self.assertIn('ab.chatgpt.com', document['model_domains_measured'])
@@ -68,10 +68,10 @@ class DraftAllowlist(unittest.TestCase):
         with temporary_directory() as directory:
             base = Path(directory)
             measurement = write_measurement(base / 'm.json', [
-                'pypi.org', 'github.com', 'codeload.github.com', 'raw.githubusercontent.com',
+                'registry.npmjs.org', 'github.com', 'codeload.github.com', 'raw.githubusercontent.com',
                 'gitlab.com', '140.82.112.3', 'proxy.golang.org'])
             summary = network_measurement.draft_allowlist(measurement, base / 'draft.json')
-            self.assertEqual(summary['hosts'], ['pypi.org'])
+            self.assertEqual(summary['hosts'], ['registry.npmjs.org'])
             self.assertEqual(set(summary['excluded']), {
                 'github.com', 'codeload.github.com', 'raw.githubusercontent.com', 'gitlab.com',
                 '140.82.112.3', 'proxy.golang.org'})
@@ -80,9 +80,9 @@ class DraftAllowlist(unittest.TestCase):
     def test_never_allowed_mirrors_are_never_drafted(self):
         with temporary_directory() as directory:
             base = Path(directory)
-            measurement = write_measurement(base / 'm.json', ['pypi.org', 'cdn.jsdelivr.net', 'web.archive.org', 'ghcr.io'])
+            measurement = write_measurement(base / 'm.json', ['registry.npmjs.org', 'cdn.jsdelivr.net', 'web.archive.org', 'ghcr.io'])
             summary = network_measurement.draft_allowlist(measurement, base / 'draft.json')
-            self.assertEqual(summary['hosts'], ['pypi.org'])
+            self.assertEqual(summary['hosts'], ['registry.npmjs.org'])
             self.assertEqual(set(summary['excluded']), {'cdn.jsdelivr.net', 'web.archive.org', 'ghcr.io'})
 
     def test_existing_output_and_malformed_measurement_are_refused(self):
@@ -97,9 +97,18 @@ class DraftAllowlist(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'connected_hosts'):
                 network_measurement.draft_allowlist(base / 'bad.json', base / 'new.json')
 
+    def test_pypi_hosts_are_never_drafted_they_are_gateway_only(self):
+        with temporary_directory() as directory:
+            base = Path(directory)
+            measurement = write_measurement(base / 'm.json', ['registry.npmjs.org', 'pypi.org', 'files.pythonhosted.org'])
+            summary = network_measurement.draft_allowlist(measurement, base / 'draft.json')
+            self.assertEqual(summary['hosts'], ['registry.npmjs.org'])
+            self.assertEqual(set(summary['excluded']), {'pypi.org', 'files.pythonhosted.org'})
+            self.assertIn('gateway', summary['excluded']['pypi.org'])
+
     def test_the_committed_allowlist_has_no_markers(self):
-        self.assertIn('pypi.org', development_runtime.load_allowlist()['domains'])
-        self.assertIn('files.pythonhosted.org', development_runtime.load_allowlist()['domains'])
+        self.assertIn('registry.npmjs.org', development_runtime.load_allowlist()['domains'])
+        self.assertNotIn('pypi.org', development_runtime.load_allowlist()['domains'])
 
     def test_the_committed_allowlist_keeps_model_hosts_apart(self):
         allowlist = development_runtime.load_allowlist()
@@ -115,10 +124,10 @@ class AllowlistLoader(unittest.TestCase):
             return development_runtime.load_allowlist(path)
 
     def test_both_lists_are_required_and_validated(self):
-        good = {'version': '1', 'domains': ['pypi.org'], 'model_domains': ['chatgpt.com']}
-        self.assertEqual(self.load(good), {'domains': ['pypi.org'], 'model_domains': ['chatgpt.com']})
+        good = {'version': '1', 'domains': ['registry.npmjs.org'], 'model_domains': ['chatgpt.com']}
+        self.assertEqual(self.load(good), {'domains': ['registry.npmjs.org'], 'model_domains': ['chatgpt.com']})
         for changes in ({'model_domains': None}, {'model_domains': []}, {'model_domains': ['ChatGPT.com']},
-                        {'model_domains': 'chatgpt.com'}, {'domains': ['chatgpt.com', 'pypi.org']},
+                        {'model_domains': 'chatgpt.com'}, {'domains': ['chatgpt.com', 'registry.npmjs.org']},
                         {'domains': ['*.chatgpt.com']}, {'model_domains': ['*.openai.com']}):
             document = {k: v for k, v in dict(good, **changes).items() if v is not None}
             with self.subTest(changes), self.assertRaises(ValueError):
@@ -238,6 +247,103 @@ class Preflight(unittest.TestCase):
                 network_measurement.main(['preflight', '--config', str(config), '--runs-root', str(base / 'nope')])
             self.assertEqual(raised.exception.code, 1)
             self.assertIn('PREFLIGHT FAILED', output.getvalue())
+
+    def test_the_proxy_import_check_covers_the_gateway_modules(self):
+        with temporary_directory() as directory:
+            base = Path(directory)
+            config, runs, _ = self.setup(base)
+            network_measurement.preflight(config, runs)
+            imports = [c for c in map(json.loads, (base / 'commands.jsonl').read_text().splitlines())
+                       if c[0] == 'run' and any(v.startswith('import ') for v in c)]
+            self.assertEqual(len(imports), 1)
+            for module in ('ssl', 'http.client'):
+                self.assertIn(module, imports[0][-1])
+
+
+GITHUB_ANSWER = {'connect': 'HTTP/1.1 200 Connection established', 'tls': 'established',
+                 'status': 'HTTP/1.1 200 OK', 'github_header': True, 'body': '# principiis-obsta\n'}
+CDN_REFUSAL = {'connect': 'HTTP/1.1 200 Connection established', 'tls': 'established',
+               'status': 'HTTP/1.1 403 Forbidden', 'github_header': False, 'body': 'Forbidden'}
+
+
+class FrontingCheck(unittest.TestCase):
+    def test_verdict_flags_any_github_answer(self):
+        verdict = network_measurement.fronting_verdict
+        self.assertEqual(verdict(GITHUB_ANSWER)[0], 'FAIL')
+        self.assertEqual(verdict(dict(GITHUB_ANSWER, github_header=False))[0], 'FAIL')
+        self.assertEqual(verdict(dict(GITHUB_ANSWER, status='HTTP/1.1 404 Not Found', body='nope'))[0], 'FAIL')
+        self.assertEqual(verdict(CDN_REFUSAL)[0], 'PASS')
+        self.assertEqual(verdict(dict(CDN_REFUSAL, status='HTTP/1.1 421 Misdirected Request'))[0], 'PASS')
+        # No TLS, no answer: nothing was shown either way.
+        self.assertEqual(verdict({'connect': 'HTTP/1.1 502 Bad Gateway'})[0], 'INCONCLUSIVE')
+        self.assertEqual(verdict(dict(CDN_REFUSAL, tls='failed: SSLError'))[0], 'INCONCLUSIVE')
+
+    def test_the_probe_sends_the_github_host_inside_a_tunnel_with_the_right_sni(self):
+        probe = network_measurement.FRONTING_PROBE
+        for needle in ('CONNECT', 'server_hostname=host', 'Host: raw.githubusercontent.com',
+                       network_measurement.FRONTING_PATH, 'x-github-request-id'):
+            self.assertIn(needle, probe)
+        self.assertEqual(network_measurement.FRONTING_PATH, '/SrFlipFlop/principiis-obsta/main/README.md')
+
+    def run_check(self, base, document, answers):
+        allowlist = base / 'allowlist.json'
+        allowlist.write_text(json.dumps(document))
+        config = base / 'runtime.json'
+        auth = base / 'login.json'
+        auth.write_text('never read')
+        config.write_text(json.dumps({'version': '1', 'docker': str(fake_docker(base)), 'image': IMAGE,
+                                      'auth_file': str(auth), 'clean_runtime_review': 'fixture review'}))
+        seen = {}
+
+        def start(runtime, egress, model_token=''):
+            seen['policy'], seen['egress'], seen['token'] = runtime.allowlist, egress, model_token
+            return '172.30.0.2'
+
+        def run(docker, argv, **kwargs):
+            seen['argv'] = argv
+            hosts = argv[argv.index('172.30.0.2') + 1:]
+            return json.dumps({h: answers[h] for h in hosts}) + '\n'
+        removed = []
+        with patch.object(network_measurement.DevelopmentRuntime, 'start_egress', start), \
+                patch.object(network_measurement, 'docker_run', run), \
+                patch.object(network_measurement, 'remove', lambda docker, argv: removed.append(argv)):
+            report = network_measurement.fronting_check(config, allowlist)
+        return report, seen, removed
+
+    def test_every_domain_is_probed_model_domains_never_and_resources_are_removed(self):
+        with temporary_directory() as directory:
+            base = Path(directory)
+            document = {'version': '1', 'status': 'TODO-OWNER: draft', 'model_domains': ['chatgpt.com', 'api.openai.com'],
+                        'domains': ['registry.npmjs.org', 'api.nuget.org', '*.example.org', 'github.com', 'pypi.org']}
+            report, seen, removed = self.run_check(base, document, {'registry.npmjs.org': CDN_REFUSAL,
+                                                                   'api.nuget.org': GITHUB_ANSWER})
+            statuses = {item['host']: item['status'] for item in report}
+            self.assertEqual(statuses, {'registry.npmjs.org': 'PASS', 'api.nuget.org': 'FAIL',
+                                        '*.example.org': 'UNCHECKED', 'github.com': 'REFUSED', 'pypi.org': 'REFUSED'})
+            self.assertEqual(seen['policy'], {'domains': ['registry.npmjs.org', 'api.nuget.org'], 'model_domains': []})
+            self.assertEqual(seen['token'], '')
+            self.assertNotIn('chatgpt.com', json.dumps(seen['argv']))
+            self.assertNotIn('openai', json.dumps(seen['argv']))
+            self.assertEqual(seen['argv'][seen['argv'].index('--network') + 1], seen['egress']['network'])
+            self.assertEqual(removed, [['rm', '-f', seen['egress']['container']], ['network', 'rm', seen['egress']['network']],
+                                       ['network', 'rm', seen['egress']['outside_network']]])
+
+    def test_command_line_reports_and_exits_nonzero_unless_every_domain_passes(self):
+        with temporary_directory() as directory:
+            base = Path(directory)
+            passing = [{'host': 'registry.npmjs.org', 'status': 'PASS', 'detail': 'HTTP/1.1 403'}]
+            with patch.object(network_measurement, 'fronting_check', return_value=passing) as check, \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                network_measurement.main(['fronting-check', '--config', 'c.json', '--allowlist', 'a.json'])
+            check.assert_called_once_with('c.json', 'a.json')
+            self.assertIn('FRONTING CHECK OK', output.getvalue())
+            failing = passing + [{'host': 'api.nuget.org', 'status': 'FAIL', 'detail': 'GitHub answered'}]
+            with patch.object(network_measurement, 'fronting_check', return_value=failing), \
+                    contextlib.redirect_stdout(io.StringIO()) as output, self.assertRaises(SystemExit) as raised:
+                network_measurement.main(['fronting-check', '--config', 'c.json'])
+            self.assertEqual(raised.exception.code, 1)
+            self.assertIn('FAIL  api.nuget.org', output.getvalue())
+            self.assertIn('FRONTING CHECK FAILED', output.getvalue())
 
 
 if __name__ == '__main__':

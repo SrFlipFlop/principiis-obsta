@@ -15,13 +15,22 @@ HTTPS is tunnelled with CONNECT, so the proxy sees the domain, never the path. I
 `allowlist` mode a tunnel is forwarded only if the client's TLS ClientHello names the
 same server (SNI) as the CONNECT line, and a plain-HTTP request only if its `Host`
 header names the request-line host; this stops domain fronting by SNI or Host.
+
+It cannot see the `Host` header inside TLS, so a host that shares a CDN with GitHub can
+front it (`GATEWAY_ONLY`). PyPI is such a host and is never tunnelled: the same port
+also serves a read-only PyPI gateway over plain HTTP (`/pypi/simple/<project>/`,
+`/pypi/files/packages/...`, origin-form). The gateway itself makes the HTTPS request,
+with certificate verification and a fixed host, path shape and header set, and points
+the index's file URLs back at itself. It serves in both modes.
 """
 import base64
 import hmac
+import http.client
 import json
 import os
 import re
 import socket
+import ssl
 import sys
 import threading
 import time
@@ -50,9 +59,26 @@ NEVER_ALLOW = (
 )
 
 
+# Hosts reached only through the PyPI gateway, never through a CONNECT tunnel: the loader
+# refuses them (and wildcards covering them) in either list, and the proxy ignores them
+# if listed. They share the Fastly CDN with raw.githubusercontent.com, and the proxy
+# cannot see the HTTP Host header inside TLS: on 2026-11-27 and 2026-11-28 a tunnel to
+# pypi.org with SNI pypi.org and `Host: raw.githubusercontent.com` returned this
+# repository's README. A suffix also covers its subdomains. Before allowing any other
+# host, run `python3 -m principiis.network_measurement fronting-check`.
+GATEWAY_ONLY = ('pypi.org', 'pythonhosted.org')
+# The only upstreams the gateway contacts, and the route each serves.
+GATEWAY_UPSTREAMS = ('pypi.org', 'files.pythonhosted.org')
+
+
 def never_allowed(host):
     host = normalise_host(host)
     return host is None or any(host == suffix or host.endswith('.' + suffix) for suffix in NEVER_ALLOW)
+
+
+def gateway_only(host):
+    host = normalise_host(host)
+    return host is not None and any(host == suffix or host.endswith('.' + suffix) for suffix in GATEWAY_ONLY)
 
 
 def unsafe_entry(entry):
@@ -70,6 +96,11 @@ def unsafe_entry(entry):
     for suffix in NEVER_ALLOW:
         if base == suffix or base.endswith('.' + suffix) or (wildcard and suffix.endswith('.' + base)):
             return f'never allowed: {suffix} serves GitHub content or mirrors arbitrary repositories'
+    for suffix in GATEWAY_ONLY:
+        if base == suffix or base.endswith('.' + suffix) or (wildcard and suffix.endswith('.' + base)):
+            return (f'gateway-only: {suffix} shares the Fastly CDN with raw.githubusercontent.com, so a tunnel '
+                    'to it can front GitHub with the Host header inside TLS; commands reach PyPI through the '
+                    "proxy's PyPI gateway")
     return None
 
 
@@ -293,7 +324,200 @@ def discard(source, target):
         pass
 
 
-def handle(client, mode, policy, token=''):
+class Refused(ValueError):
+    """A gateway request or upstream answer that must not be served; `reason` is logged."""
+
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason
+
+
+# PEP 503 project names (normalised before the upstream request) and PyPI's hashed file
+# paths. Nothing else: no `/simple/` root, no JSON API, no query, no percent-encoding.
+GATEWAY_PROJECT = re.compile(r'/pypi/simple/([A-Za-z0-9](?:[A-Za-z0-9._-]{0,198}[A-Za-z0-9])?)/?')
+GATEWAY_FILE = re.compile(r'/pypi/files(/packages/[0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{60}/[A-Za-z0-9_][A-Za-z0-9._+-]{0,250}'
+                          r'\.(?:whl|tar\.gz|zip|tar\.bz2|tar\.xz|tgz|egg)(?:\.metadata)?)')
+FILES_ORIGIN = 'https://files.pythonhosted.org'
+JSON_INDEX = 'application/vnd.pypi.simple.v1+json'
+INDEX_TYPES = (JSON_INDEX, 'application/vnd.pypi.simple.v1+html', 'text/html')
+DEFAULT_ACCEPT = 'application/vnd.pypi.simple.v1+json, application/vnd.pypi.simple.v1+html; q=0.1, text/html; q=0.01'
+USER_AGENT = 'principiis-pypi-gateway/1'
+INDEX_LIMIT = 64 * 1024 * 1024   # the largest simple pages are a few MB
+FILE_LIMIT = 1024 ** 3           # wheels larger than 1 GiB (some CUDA builds) are refused
+UPSTREAM_TIMEOUT = 60
+HTTP_METHODS = ('GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'CONNECT', 'TRACE')
+
+
+def gateway_route(method, target):
+    """(route, upstream host, upstream path) for a gateway request target, or `Refused`."""
+    if method != 'GET':
+        raise Refused('method')
+    if match := GATEWAY_PROJECT.fullmatch(target):
+        return 'simple', 'pypi.org', '/simple/' + re.sub(r'[-_.]+', '-', match[1]).lower() + '/'
+    if match := GATEWAY_FILE.fullmatch(target):
+        return 'files', 'files.pythonhosted.org', match[1]
+    raise Refused('path')
+
+
+def gateway_accept(value):
+    """The client's Accept if it names only simple-API media types (with at most a q value); else the default."""
+    if not isinstance(value, str) or not value.strip():
+        return DEFAULT_ACCEPT
+    parts = []
+    for part in value.split(','):
+        kind, *parameters = [v.strip() for v in part.split(';')]
+        if (kind.lower() not in INDEX_TYPES or len(parameters) > 1
+                or any(not re.fullmatch(r'q=(?:0(?:\.[0-9]{1,3})?|1(?:\.0{1,3})?)', p) for p in parameters)):
+            return DEFAULT_ACCEPT
+        parts.append('; '.join([kind.lower(), *parameters]))
+    return ', '.join(parts)
+
+
+def gateway_file_url(url):
+    """The gateway path for a files.pythonhosted.org URL (keeping a hash fragment), or None."""
+    if not isinstance(url, str) or not url.startswith(FILES_ORIGIN + '/'):
+        return None
+    base, _, fragment = url.partition('#')
+    path = '/pypi/files' + base[len(FILES_ORIGIN):]
+    if not GATEWAY_FILE.fullmatch(path):
+        return None
+    if re.fullmatch(r'(?:md5|sha1|sha224|sha256|sha384|sha512)=[0-9a-f]{32,128}', fragment):
+        return path + '#' + fragment
+    return path
+
+
+def index_type(content_type):
+    kind = (content_type or '').split(';')[0].strip().lower()
+    if kind not in INDEX_TYPES:
+        raise Refused('content-type')
+    return kind
+
+
+def rewrite_index(body, content_type):
+    """Point every file URL of a simple-API page at the gateway; drop files hosted anywhere else."""
+    kind = index_type(content_type)
+    if kind == JSON_INDEX:
+        try:
+            document = json.loads(body)
+        except ValueError as error:
+            raise Refused('malformed-index') from error
+        if not isinstance(document, dict) or not isinstance(document.get('files', []), list):
+            raise Refused('malformed-index')
+        files = []
+        for entry in document.get('files', []):
+            local = gateway_file_url(entry.get('url')) if isinstance(entry, dict) else None
+            if local:
+                files.append(dict(entry, url=local))
+        document['files'] = files
+        return json.dumps(document).encode()
+
+    def anchor(match):
+        local = gateway_file_url(match[1].decode('latin-1').replace('&amp;', '&'))
+        return b'href="' + (local or '').encode() + b'"'
+    return re.sub(rb'href="([^"]*)"', anchor, body)
+
+
+def open_upstream(host, path, accept):
+    """GET `path` from a gateway upstream over verified HTTPS; SNI and Host are `host`. No client header is sent."""
+    if host == 'pypi.org':
+        valid = re.fullmatch(r'/simple/[a-z0-9](?:[a-z0-9-]{0,198}[a-z0-9])?/', path)
+    elif host == 'files.pythonhosted.org':
+        valid = GATEWAY_FILE.fullmatch('/pypi/files' + path)
+    else:
+        valid = None
+    if not valid:
+        raise Refused('upstream')
+    connection = http.client.HTTPSConnection(host, 443, context=ssl.create_default_context(),
+                                             timeout=UPSTREAM_TIMEOUT)
+    # `Connection: close` hands the socket to the response (http.client), which the caller closes.
+    connection.request('GET', path, headers={'Accept': accept or '*/*', 'Accept-Encoding': 'identity',
+                                             'User-Agent': USER_AGENT, 'Connection': 'close'})
+    return connection.getresponse()
+
+
+def send_head(client, status, headers=()):
+    reason = {200: 'OK', 403: 'Forbidden', 404: 'Not Found', 502: 'Bad Gateway'}[status]
+    lines = [f'HTTP/1.1 {status} {reason}', *headers, 'Connection: close']
+    if not any(line.startswith('Content-Length:') for line in headers) and status != 200:
+        lines.append('Content-Length: 0')
+    client.sendall(('\r\n'.join(lines) + '\r\n\r\n').encode('latin-1'))
+
+
+def serve_gateway(client, method, target, headers):
+    """Serve one PyPI gateway request. Logs the route and upstream host, never the path or headers."""
+    names = [line.split(':', 1)[0].strip().lower() for line in headers]
+    values = [line.split(':', 1)[1].strip() if ':' in line else '' for line in headers]
+    event = {'event': 'gateway', 'method': method if method in HTTP_METHODS else 'other', 'route': 'invalid'}
+    try:
+        if 'transfer-encoding' in names or any(v != '0' for n, v in zip(names, values) if n == 'content-length'):
+            raise Refused('request-body')
+        route, host, path = gateway_route(method, target)
+    except Refused as refusal:
+        log(**event, decision='refused', reason=refusal.reason)
+        send_head(client, 403)
+        return
+    event.update(route=route, host=host, port=443)
+    accept = gateway_accept(next((v for n, v in zip(names, values) if n == 'accept'), None)) if route == 'simple' else None
+    log(**event, decision='allowed')
+    response, sent = None, False
+    try:
+        response = open_upstream(host, path, accept)
+        status = response.status
+        if response.getheader('X-GitHub-Request-Id') is not None:
+            raise Refused('github-response')
+        if 300 <= status < 400:
+            raise Refused('upstream-redirect')
+        if status not in (200, 404):
+            raise Refused('upstream-status')
+        if status == 404:
+            log(**event, decision='connected', status=status)
+            send_head(client, 404)
+            return
+        if route == 'simple':
+            kind = index_type(response.getheader('Content-Type'))
+            body = response.read(INDEX_LIMIT + 1)
+            if len(body) > INDEX_LIMIT:
+                raise Refused('too-large')
+            body = rewrite_index(body, kind)
+            log(**event, decision='connected', status=status)
+            send_head(client, 200, [f'Content-Type: {kind}' + ('' if kind == JSON_INDEX else '; charset=utf-8'),
+                                    f'Content-Length: {len(body)}'])
+            sent = True
+            client.sendall(body)
+            return
+        length = response.getheader('Content-Length')
+        if length is not None and (not length.isdigit() or int(length) > FILE_LIMIT):
+            raise Refused('too-large')
+        log(**event, decision='connected', status=status)
+        send_head(client, 200, ['Content-Type: application/octet-stream',
+                                *([f'Content-Length: {int(length)}'] if length is not None else [])])
+        sent, total = True, 0
+        while chunk := response.read(65536):
+            total += len(chunk)
+            if total > FILE_LIMIT:
+                log(**event, decision='refused', reason='too-large')
+                return
+            client.sendall(chunk)
+    except Refused as refusal:
+        log(**event, decision='refused', reason=refusal.reason)
+        if not sent:
+            send_head(client, 502)
+    except (OSError, http.client.HTTPException, ValueError) as error:
+        log(event='error', route=event['route'], host=host, error=type(error).__name__)
+        if not sent:
+            send_head(client, 502)
+    finally:
+        if response is not None:
+            response.close()
+
+
+def own_target(target, address):
+    """The origin-form target of an absolute-form request to the proxy's own address, or None."""
+    match = re.fullmatch(r'http://([^/:]+)(?::\d+)?(/.*)?', target)
+    return (match[2] or '/') if address and match and match[1] == address else None
+
+
+def handle(client, mode, policy, token='', address=None):
     upstream = None
     answered = False
     try:
@@ -301,6 +525,11 @@ def handle(client, mode, policy, token=''):
         if not lines:
             return
         method, target, version = lines[0].split(' ')
+        # Origin-form (or absolute-form naming the proxy itself) is the PyPI gateway, in both modes.
+        if method != 'CONNECT' and (target.startswith('/') or own_target(target, address)):
+            answered = True
+            serve_gateway(client, method, target if target.startswith('/') else own_target(target, address), lines[1:])
+            return
         host, port, path = destination(method, target)
         name = normalise_host(host)
         presented = credential(lines[1:], token)
@@ -310,6 +539,8 @@ def handle(client, mode, policy, token=''):
         reason = None
         if not decision and model and presented != 'valid':
             reason = 'model host without the model credential'
+        elif not decision and mode == 'allowlist' and gateway_only(host):
+            reason = 'gateway-only host: use the PyPI gateway'
         if decision and mode == 'allowlist' and method != 'CONNECT':
             reason = plain_refusal(name, port, lines[1:])
             decision = reason is None
@@ -381,7 +612,8 @@ def serve(mode, policy, port, token='', bind='0.0.0.0'):
         model_domains=policy.get('model_domains'), model_token='set' if token else 'missing')
     while True:
         client, _ = listener.accept()
-        threading.Thread(target=handle, args=(client, mode, policy, token), daemon=True).start()
+        threading.Thread(target=handle, args=(client, mode, policy, token), kwargs={'address': address},
+                         daemon=True).start()
 
 
 if __name__ == '__main__':

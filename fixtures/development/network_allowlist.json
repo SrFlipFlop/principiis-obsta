@@ -1,14 +1,12 @@
 {
   "version": "1",
-  "status": "provisional: not yet measured. Replace with the domains a logging-only run on a disposable fixture actually reached (#75). proxy.golang.org is deliberately absent: it serves any public GitHub repository as a Go module. model_domains are reachable only by the Codex process, which alone holds the per-run proxy token; commands get 403 there (otherwise a command could call the model API with hosted web search).",
+  "status": "provisional: not yet measured. Replace with the domains a logging-only run on a disposable fixture actually reached (#75). proxy.golang.org is deliberately absent: it serves any public GitHub repository as a Go module. pypi.org and files.pythonhosted.org are deliberately absent: they share Fastly with raw.githubusercontent.com, so a tunnel to them can front GitHub with the Host header; commands reach PyPI only through the proxy's PyPI gateway (http://<proxy>:3128/pypi/simple/). Run `python3 -m principiis.network_measurement fronting-check` before adding any host. model_domains are reachable only by the Codex process, which alone holds the per-run proxy token; commands get 403 there (otherwise a command could call the model API with hosted web search).",
   "model_domains": [
     "api.openai.com",
     "auth.openai.com",
     "chatgpt.com"
   ],
   "domains": [
-    "pypi.org",
-    "files.pythonhosted.org",
     "registry.npmjs.org",
     "repo.packagist.org",
     "packagist.org",

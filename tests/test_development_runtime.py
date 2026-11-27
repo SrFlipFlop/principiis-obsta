@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 import subprocess
 
-from principiis.development_runtime import ADAPTER, CODEX_HOME, MODEL_CREDENTIAL, SANDBOX_PROBE, DevelopmentRuntime, cleanup_runtime, docker_command, load_config, preflight_run, configuration_args, workspace_permission_settings, restrictions
+from principiis.development_runtime import ADAPTER, CODEX_HOME, MODEL_CREDENTIAL, PYPI_GATEWAY, SANDBOX_PROBE, DevelopmentRuntime, cleanup_runtime, docker_command, load_config, preflight_run, configuration_args, workspace_permission_settings, restrictions
 
 
 IMAGE = 'sha256:' + 'a' * 64
@@ -54,8 +54,8 @@ if args[0] == 'inspect':
     print(json.dumps([{'State':{'Running':True},'NetworkSettings':{'Ports':ports,'Networks':networks}}]));sys.exit()
 if args[0] == 'logs' and args[-1].startswith('po-development-egress-'):
     print(json.dumps({'event':'listening','mode':'allowlist','address':'172.30.0.2','port':3128}))
-    print(json.dumps({'method':'CONNECT','host':'pypi.org','port':443,'decision':'allowed'}))
-    print(json.dumps({'method':'CONNECT','host':'pypi.org','port':443,'decision':'connected'}))
+    print(json.dumps({'method':'CONNECT','host':'registry.npmjs.org','port':443,'decision':'allowed'}))
+    print(json.dumps({'method':'CONNECT','host':'registry.npmjs.org','port':443,'decision':'connected'}))
     print(json.dumps({'method':'CONNECT','host':'github.com','port':443,'decision':'refused'}))
     print(json.dumps({'method':'CONNECT','host':'chatgpt.com','port':443,'decision':'allowed','credential':'valid'}))
     print(json.dumps({'method':'CONNECT','host':'api.openai.com','port':443,'decision':'refused','credential':'absent','reason':'model host without the model credential'}));sys.exit()
@@ -185,12 +185,15 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             self.assertNotIn('--mount', proxy)
             self.assertNotIn(config['auth_file'], repr(proxy))
             self.assertIn('allowlist', proxy)
-            self.assertIn('pypi.org', proxy[proxy.index('allowlist') + 1])
+            self.assertIn('registry.npmjs.org', proxy[proxy.index('allowlist') + 1])
+            self.assertNotIn('pypi.org', proxy[proxy.index('allowlist') + 1])
             self.assertNotIn('github.com', proxy[proxy.index('allowlist') + 1])
             launch = self.launch(base)
             self.assertEqual(launch[launch.index('--network') + 1], network)
             self.assertIn('HTTPS_PROXY=http://172.30.0.2:3128', launch)
             self.assertIn('HTTP_PROXY=http://172.30.0.2:3128', launch)
+            self.assertIn('PIP_INDEX_URL=http://172.30.0.2:3128/pypi/simple/', launch)
+            self.assertIn('NO_PROXY=localhost,127.0.0.1,::1,172.30.0.2', launch)
             self.assertIn(['rm', '-f', proxy_name], commands)
             self.assertIn(['network', 'rm', network], commands)
             self.assertLess(commands.index(['rm', '-f', proxy_name]), commands.index(['network', 'rm', network]))
@@ -200,7 +203,7 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             self.assertIn('"decision": "refused"', log.read_text())
             self.assertEqual(evidence['egress']['mode'], 'allowlist')
             self.assertEqual(evidence['egress']['refused_hosts'], ['api.openai.com', 'github.com'])
-            self.assertEqual(evidence['egress']['connected_hosts'], ['pypi.org'])
+            self.assertEqual(evidence['egress']['connected_hosts'], ['registry.npmjs.org'])
             self.assertIn('allowlist', evidence['runtime']['network'])
             allocation = json.loads((output / 'runtime.json').read_text())
             self.assertEqual(allocation['egress'], {'container': proxy_name, 'network': network,
@@ -208,7 +211,7 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             self.assertEqual([v[-3:] for v in allocation['egress_cleanup_argvs']],
                              [['rm', '-f', proxy_name], ['network', 'rm', network], ['network', 'rm', outside_network]])
             self.assertEqual(allocation['state'], 'removed')
-            self.assertEqual(runtime.version['adapter'], 'docker-development-v5')
+            self.assertEqual(runtime.version['adapter'], 'docker-development-v6')
 
     def egress_failure(self, replace):
         with temporary_directory() as directory:
@@ -274,6 +277,8 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             policy_arg = next(v for v in launch if v.startswith('shell_environment_policy.set='))
             for name in ('HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy'):
                 self.assertIn(f'{name}="{plain}"', policy_arg)
+            self.assertIn(f'PIP_INDEX_URL="{plain}/pypi/simple/"', policy_arg)
+            self.assertIn('PIP_TRUSTED_HOST="172.30.0.2:3128"', policy_arg)
             self.assertIn('shell_environment_policy.exclude=["PO_MODEL_TOKEN"]', launch)
             self.assertIn('permissions.development.filesystem={"' + CODEX_HOME + '"="none"}', launch)
             retained = [json.dumps(self.commands(base)), json.dumps(evidence), stdout.getvalue(), stderr.getvalue(),
@@ -304,13 +309,21 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             base = Path(directory)
             config_path, config = self.configuration(base)
             runtime = DevelopmentRuntime(config_path, base / 'run', base / 'tasks')
-            self.assertEqual(ADAPTER, 'docker-development-v5')
+            self.assertEqual(ADAPTER, 'docker-development-v6')
             self.assertEqual(runtime.version['adapter'], ADAPTER)
             self.assertEqual(runtime.version['egress']['model_credential'], MODEL_CREDENTIAL)
             self.assertIn('proxy-authorization', MODEL_CREDENTIAL)
             commands = runtime.version['command_environment']
             self.assertEqual(commands['exclude'], ['PO_MODEL_TOKEN'])
             self.assertEqual(commands['set']['HTTPS_PROXY'], 'http://<egress proxy>:3128')
+            # Python package installs go through the proxy's PyPI gateway, never a tunnel to PyPI.
+            self.assertEqual(commands['set']['PIP_INDEX_URL'], 'http://<egress proxy>:3128/pypi/simple/')
+            self.assertEqual(commands['set']['PIP_TRUSTED_HOST'], '<egress proxy>:3128')
+            self.assertEqual(commands['set']['UV_DEFAULT_INDEX'], 'http://<egress proxy>:3128/pypi/simple/')
+            self.assertEqual(commands['set']['NO_PROXY'], 'localhost,127.0.0.1,::1,<egress proxy>')
+            self.assertEqual(runtime.version['egress']['pypi_gateway'], PYPI_GATEWAY)
+            for needle in ('pypi.org', 'files.pythonhosted.org', '/pypi/simple/', 'Fastly'):
+                self.assertIn(needle, PYPI_GATEWAY)
             self.assertEqual(runtime.version['permission_settings']['permissions.development.filesystem'],
                              {CODEX_HOME: 'none'})
             for value in self.tokens(base):
