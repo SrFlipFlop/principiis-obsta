@@ -64,7 +64,10 @@ class DevelopmentRuntimeTests(unittest.TestCase):
     def test_sandbox_probe_checks_this_checkout_is_invisible_without_host_specific_paths(self):
         checkout_instructions = Path(__file__).resolve().parents[1] / 'AGENTS.md'
         self.assertIn(repr(str(checkout_instructions)), SANDBOX_PROBE)
-        self.assertNotIn('/home/srflipflop', SANDBOX_PROBE)
+        # The probe must name this checkout (derived at import) and nothing else host
+        # specific. Remove that derived path first, so a checkout that itself lives
+        # under /home/srflipflop is not mistaken for a hardcoded host path.
+        self.assertNotIn('/home/srflipflop', SANDBOX_PROBE.replace(str(checkout_instructions), ''))
 
     def test_temporary_tool_execution_is_enabled_only_for_development(self):
         for development in (False, True):
