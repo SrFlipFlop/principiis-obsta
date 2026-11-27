@@ -120,10 +120,37 @@ never a benchmark run:
 python3 -m principiis.network_measurement --config RUNTIME_JSON --output NEW_DIR_OUTSIDE_CHECKOUT
 ```
 
-It prints the hosts reached and keeps `measurement.json`, `egress.jsonl` and the Codex
+It prints the hosts it actually connected to (`connected_hosts`; a host that was
+allowed but never answered is not counted) and keeps `measurement.json`, `egress.jsonl` and the Codex
 logs. It is a live subscription run, so it needs the owner's approval (AGENTS.md hard
 rule 3). Review the hosts, replace `domains`, drop the `status` note, and report the
 list and method in the paper.
+
+The security-investigation reviewer (`principiis/investigation.py`) uses the same
+runtime, so it is limited by the same allowlist.
+
+**Known gaps, to resolve before tests go public (#75 item 2):**
+
+- **The login token is readable inside the container**, and the model API is allowed.
+  A command could call the API directly with hosted web search turned on, which gets
+  around `web_search = "disabled"`. This needs a fix (for example keeping the token
+  out of the agent's sandbox) or an explicit owner decision.
+- **Hosts that serve arbitrary content.** `proxy.golang.org` is left off because it
+  serves any public GitHub repository as a Go module, so Go module downloads fail
+  until a safe option exists (a vetted module cache, for example). npm and PyPI also
+  serve anything anyone uploads; that risk is lower and accepted for now. Packagist
+  package downloads normally come from GitHub, so Composer installs may fail too.
+- **Domain fronting.** The proxy checks only the CONNECT host, not TLS SNI or the
+  HTTP `Host` header inside the tunnel.
+- **DNS.** Whether Docker's embedded DNS forwards outside queries on `--internal`
+  networks depends on the Docker version. If it does, DNS can carry data out. The
+  controller checks only `Internal: true`; an opt-in container control should prove
+  that external names do not resolve.
+- **Other containers on the default bridge** can reach the proxy, which listens on
+  all interfaces. In `log` mode that is unlimited egress for them.
+- None of this has run against real Docker yet. Add an opt-in container control
+  (refused host, allowed host, direct egress and DNS all checked, no model) before
+  relying on it.
 
 **Runs made before this change** had full network access through the ordinary Docker
 bridge and live web search. Their results show it: execution evidence has

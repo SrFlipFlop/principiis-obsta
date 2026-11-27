@@ -1,6 +1,6 @@
 {
   "version": "1",
-  "status": "provisional: not yet measured. Replace with the domains a logging-only run on a disposable fixture actually reached (#75).",
+  "status": "provisional: not yet measured. Replace with the domains a logging-only run on a disposable fixture actually reached (#75). proxy.golang.org is deliberately absent: it serves any public GitHub repository as a Go module.",
   "domains": [
     "api.openai.com",
     "auth.openai.com",
@@ -10,8 +10,6 @@
     "registry.npmjs.org",
     "repo.packagist.org",
     "packagist.org",
-    "api.nuget.org",
-    "proxy.golang.org",
-    "sum.golang.org"
+    "api.nuget.org"
   ]
 }

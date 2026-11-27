@@ -19,14 +19,14 @@ WEB_PORTS = (80, 443)
 HOST = re.compile(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\Z')
 
 
-def normal(host):
+def normalise_host(host):
     host = host.lower().rstrip('.') if isinstance(host, str) else ''
     return host if HOST.match(host) else None
 
 
 def allowed(host, port, mode, allowlist):
     """Whether the proxy may open a connection to `host:port`."""
-    host = normal(host)
+    host = normalise_host(host)
     if host is None or not isinstance(port, int) or not 0 < port < 65536:
         return False
     if mode == 'log':
@@ -54,11 +54,11 @@ def pipe(source, target):
     except OSError:
         pass
     finally:
-        for end in (source, target):
-            try:
-                end.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
+        # Half-close: the other direction may still be carrying a response.
+        try:
+            target.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
 
 
 def read_head(client):
@@ -85,6 +85,7 @@ def destination(method, target):
 
 def handle(client, mode, allowlist):
     upstream = None
+    answered = False
     try:
         lines, rest = read_head(client)
         if not lines:
@@ -92,12 +93,15 @@ def handle(client, mode, allowlist):
         method, target, version = lines[0].split(' ')
         host, port, path = destination(method, target)
         decision = allowed(host, port, mode, allowlist)
-        log(method=method, host=normal(host) or host, port=port, decision='allowed' if decision else 'refused')
+        log(method=method, host=normalise_host(host) or host, port=port, decision='allowed' if decision else 'refused')
         if not decision:
+            answered = True
             client.sendall(b'HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
             return
-        upstream = socket.create_connection((normal(host), port), timeout=30)
+        upstream = socket.create_connection((normalise_host(host), port), timeout=30)
         upstream.settimeout(None)
+        log(method=method, host=normalise_host(host), port=port, decision='connected')
+        answered = True
         if method == 'CONNECT':
             client.sendall(b'HTTP/1.1 200 Connection established\r\n\r\n')
         else:
@@ -111,6 +115,8 @@ def handle(client, mode, allowlist):
         reply.join()
     except (OSError, ValueError) as error:
         log(event='error', error=str(error)[:200])
+        if answered:
+            return
         try:
             client.sendall(b'HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
         except OSError:

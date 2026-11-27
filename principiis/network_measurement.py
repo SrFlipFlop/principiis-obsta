@@ -5,7 +5,7 @@
 Runs one ordinary Codex development session on a disposable fixture request, with
 the egress proxy in `log` mode: every destination is forwarded and recorded. The
 output keeps the workspace, Codex logs, `egress.jsonl` and `measurement.json`, whose
-`allowed_hosts` are the candidate allowlist. This is a live subscription run; it
+`connected_hosts` (destinations that actually answered) are the candidate allowlist. This is a live subscription run; it
 needs the owner's approval (AGENTS.md hard rule 3) and never uses a benchmark request.
 """
 import argparse
@@ -25,6 +25,7 @@ def measure(config, output, request=REQUEST):
     with (output / 'codex.stdout').open('w') as stdout, (output / 'codex.stderr').open('w') as stderr:
         evidence = runtime.execute(workspace, Path(request).read_text(), stdout, stderr)
     record = {'schema_version': 1, 'request': str(request), 'runtime_version': runtime.version,
+              'connected_hosts': evidence['egress']['connected_hosts'],
               'allowed_hosts': evidence['egress']['allowed_hosts'],
               'refused_hosts': evidence['egress']['refused_hosts'], 'execution': evidence}
     write_json(output / 'measurement.json', record)
@@ -38,7 +39,7 @@ def main(argv=None):
     parser.add_argument('--request', default=str(REQUEST), help='disposable fixture request')
     args = parser.parse_args(argv)
     record = measure(args.config, args.output, args.request)
-    print('\n'.join(record['allowed_hosts']))
+    print('\n'.join(record['connected_hosts']))
 
 
 if __name__ == '__main__':

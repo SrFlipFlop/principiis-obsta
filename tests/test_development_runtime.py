@@ -46,6 +46,7 @@ if args[0] == 'inspect':
     print(json.dumps([{'State':{'Running':True},'NetworkSettings':{'Ports':ports,'Networks':{network:{'IPAddress':'172.30.0.2'}}}}]));sys.exit()
 if args[0] == 'logs' and args[-1].startswith('po-development-egress-'):
     print(json.dumps({'method':'CONNECT','host':'pypi.org','port':443,'decision':'allowed'}))
+    print(json.dumps({'method':'CONNECT','host':'pypi.org','port':443,'decision':'connected'}))
     print(json.dumps({'method':'CONNECT','host':'github.com','port':443,'decision':'refused'}));sys.exit()
 if args[0] == 'logs':
     print('application startup');sys.exit()
@@ -172,6 +173,7 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             self.assertIn('"decision": "refused"', log.read_text())
             self.assertEqual(evidence['egress']['mode'], 'allowlist')
             self.assertEqual(evidence['egress']['refused_hosts'], ['github.com'])
+            self.assertEqual(evidence['egress']['connected_hosts'], ['pypi.org'])
             self.assertIn('allowlist', evidence['runtime']['network'])
             allocation = json.loads((output / 'runtime.json').read_text())
             self.assertEqual(allocation['egress'], {'container': proxy_name, 'network': network})

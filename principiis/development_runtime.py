@@ -10,7 +10,7 @@ import time
 import uuid
 
 from .codex import redact
-from .egress_proxy import normal
+from .egress_proxy import normalise_host
 from .execution import execute
 from .jsonio import write_json
 
@@ -21,6 +21,11 @@ NETWORK_ALLOWLIST = CHECKOUT / 'fixtures/development/network_allowlist.json'
 EGRESS_PROXY = Path(__file__).resolve().with_name('egress_proxy.py')
 EGRESS_PORT = 3128
 EGRESS_MODES = ('allowlist', 'log')
+ADAPTER = 'docker-development-v3'
+NETWORK_DESCRIPTION = {
+    'allowlist':'internal Docker network; only route out is the egress proxy, limited to the network allowlist',
+    'log':'internal Docker network; only route out is the egress proxy, logging every destination without limits',
+}
 
 
 IMAGE_ID = re.compile(r'sha256:[0-9a-f]{64}\Z')
@@ -169,16 +174,19 @@ def inspect_image(docker, image):
 
 def load_allowlist():
     document = json.loads(NETWORK_ALLOWLIST.read_text())
-    domains = document.get('domains') if isinstance(document, dict) else None
+    if not isinstance(document, dict):
+        raise ValueError('network allowlist must be a JSON object')
+    domains = document.get('domains')
     if (document.get('version') != '1' or not isinstance(domains, list)
-            or any(not isinstance(v, str) or normal(v.removeprefix('*.')) != v.removeprefix('*.') for v in domains)):
+            or any(not isinstance(v, str) or normalise_host(v.removeprefix('*.')) != v.removeprefix('*.') for v in domains)):
         raise ValueError('network allowlist must be version 1 with lowercase domain names')
     return domains
 
 
 def egress_summary(log):
     """Hosts the proxy allowed and refused, from its JSON-lines decision log."""
-    hosts = {'allowed': set(), 'refused': set()}
+    # `allowed` is the policy decision; `connected` means the upstream connection opened.
+    hosts = {'allowed': set(), 'refused': set(), 'connected': set()}
     for line in log.splitlines():
         try:
             event = json.loads(line)
@@ -390,17 +398,20 @@ class DevelopmentRuntime:
         sampler = threading.Thread(target=sample)
         evidence = {'argv': None, 'exit_status': None, 'memory': {}}
         try:
-            proxy = self.start_egress(egress)
-            argv = docker_command(c['docker'], ['run', '-i', '--name', name, '--network', egress['network'],
-                        *restrictions(nested_sandbox=True), *proxy_environment(proxy),
-                        '--mount', f'type=bind,src={workspace},dst=/workspace',
-                        '--mount', f'type=bind,src={c["auth_file"]},dst=/run/subscription-auth.json,readonly',
-                        '--entrypoint', '/bin/sh', c['image'], '-eu', '-c', boot, '--', *codex])
-            sampler.start()
-            evidence = execute(argv, workspace, request, stdout, stderr,
-                               env=docker_environment(), transform=redact)
-        except (OSError, ValueError, subprocess.TimeoutExpired) as error:
-            evidence['error'] = 'egress setup failed before authentication or model: ' + str(error)
+            try:
+                proxy = self.start_egress(egress)
+            except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+                evidence['error'] = 'egress setup failed before authentication or model: ' + str(error)
+                proxy = None
+            if proxy is not None:
+                argv = docker_command(c['docker'], ['run', '-i', '--name', name, '--network', egress['network'],
+                            *restrictions(nested_sandbox=True), *proxy_environment(proxy),
+                            '--mount', f'type=bind,src={workspace},dst=/workspace',
+                            '--mount', f'type=bind,src={c["auth_file"]},dst=/run/subscription-auth.json,readonly',
+                            '--entrypoint', '/bin/sh', c['image'], '-eu', '-c', boot, '--', *codex])
+                sampler.start()
+                evidence = execute(argv, workspace, request, stdout, stderr,
+                                   env=docker_environment(), transform=redact)
         finally:
             done.set()
             if sampler.is_alive():
@@ -460,12 +471,6 @@ class DevelopmentRuntime:
         status = json.loads(docker_run(c['docker'], ['inspect', egress['container']]))[0]
         return status['NetworkSettings']['Networks'][egress['network']]['IPAddress']
 
-
-ADAPTER = 'docker-development-v3'
-NETWORK_DESCRIPTION = {
-    'allowlist':'internal Docker network; only route out is the egress proxy, limited to the network allowlist',
-    'log':'internal Docker network; only route out is the egress proxy, logging every destination without limits',
-}
 
 
 def proxy_environment(address):
