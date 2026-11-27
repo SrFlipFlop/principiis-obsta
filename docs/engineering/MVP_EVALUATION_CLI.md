@@ -27,6 +27,35 @@ assessment or model launch. A declaration is not evidence that a package passed
 qualification; benchmark authors must supply and retain that actual evidence.
 Older unbound runs remain readable but cannot gain an evaluator through the simplified
 operator CLI; create a new run with the manifest at initialization.
+
+**Evaluator files are found by SHA-256, not path (#75 item 3).**
+
+`bind` (and so `init --evaluator-manifest` and `derive-evaluation`) copies the manifest
+and every hashed dependency file into the run at `evaluator/`, then records
+`manifest: "evaluator/<name>"` (relative to the run) plus `source_manifest` (the original
+absolute path, audit only, never used for identity). `evaluate` reads the run's own copy
+and re-verifies every hash, so a new run is self-contained: moving or deleting the
+original evaluator changes nothing, and editing the original is irrelevant. Tampering
+with the copy fails with `evaluator dependency content changed`.
+
+Runs bound before this change record an absolute `manifest` path and have no copy.
+Their records are never rewritten. `evaluate` finds the evaluator by SHA-256
+(`manifest_sha256` and every `files` hash must all match) in this order: the recorded
+path, the repository's `benchmarks/*/evaluator/*/` tree, then any configured root:
+`--evaluator-root DIR` (repeatable, `principiis.assessment evaluate`) or the
+`PRINCIPIIS_EVALUATOR_ROOT` environment variable (path-separator list), which is also
+the way to supply a root through the `principiis` operator CLI. Under a configured root
+the directory itself and every directory containing a file with the manifest's name are
+tried. Same-named files with other content are skipped; a hash mismatch is never
+accepted, and if nothing matches the command fails before allocating an assessment.
+Lookup is per directory: the manifest and all its dependencies must match in one place.
+Limitation: the published `benchmarks/` evaluator is a sanitised package whose manifest
+may hash differently from a private manifest an old run recorded; such a run needs the
+original bytes under a configured root.
+
+The package rule that the manifest's `owner_review` must equal the package's value is
+unchanged (`pending_owner_review` packages cannot bind), as are all other integrity checks.
+
 For a retained completed development run whose evaluator binding must remain frozen,
 `derive-evaluation` creates a **new evaluation-only run** with an independently
 qualified evaluator binding. It copies and attests the source run's
