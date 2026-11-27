@@ -133,6 +133,32 @@ class EvaluatorLookup(unittest.TestCase):
         self.assertIn('not found by SHA-256', process.stderr)
         self.assertEqual(self.operator('status')['assessments'], [])
 
+    def test_old_record_found_through_a_symlinked_root(self):
+        # macOS /tmp and /var are symlinks; a root given through one must still evaluate.
+        self.make_old_record()
+        self.bundle.rename(self.base / 'real')
+        (self.base / 'link').symlink_to(self.base / 'real', target_is_directory=True)
+        self.assert_evaluated(self.evaluate('--evaluator-root', str(self.base / 'link')))
+
+    def test_old_record_whose_recorded_directory_became_a_symlink_still_evaluates(self):
+        self.make_old_record()
+        self.bundle.rename(self.base / 'real')
+        self.bundle.symlink_to(self.base / 'real', target_is_directory=True)
+        self.assert_evaluated(self.evaluate())
+
+    def test_bind_refuses_a_copy_whose_bytes_differ_from_the_recorded_hashes(self):
+        self.make_run()
+        store = RunStore.open(self.root)
+        from principiis.assessment import load_declaration
+        binding = load_declaration(store, self.path, self.package)
+        # The source changes between verification and copying.
+        (self.bundle / 'seccomp.json').write_text('{"changed": true}')
+        with self.assertRaisesRegex(ValueError, 'evaluator dependency content changed'):
+            store.bind(binding, self.path, self.package / 'package.json')
+        self.assertFalse((self.root / 'evaluator').exists())
+        self.assertFalse((self.root / 'evaluator.partial').exists())
+        self.assertFalse((self.root / 'evaluator-binding.json').exists())
+
     def test_rebinding_same_evaluator_is_idempotent_and_different_one_is_refused(self):
         self.bound_run()
         first = (self.root / 'evaluator-binding.json').read_bytes()
