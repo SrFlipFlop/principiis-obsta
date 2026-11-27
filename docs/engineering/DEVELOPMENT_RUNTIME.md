@@ -93,7 +93,10 @@ or published evaluator material ([ADR 0003](../adr/0003-evaluator-material-is-pu
 - **A trusted egress proxy is the only way out.** It runs the standard-library program
   [`principiis/egress_proxy.py`](../../principiis/egress_proxy.py) (`python -I -S`) from
   the same pinned image, with no mounts, no credentials and the usual container
-  restrictions. It sits on the internal network and the ordinary bridge. The development
+  restrictions. It starts on the internal network alone, listens only on its address
+  there (the controller checks the `listening` log line against Docker's view), and then
+  joins its own per-run outside network `po-development-out-<token>` (IPv6 off). It never
+  joins the default bridge, so other containers cannot reach it. The development
   container gets `HTTPS_PROXY`/`HTTP_PROXY` (and lower-case forms) pointing at it.
   Tools that ignore the proxy variables, and direct DNS/TCP/UDP, fail closed.
 - **`allowlist` mode** (every development run) forwards only the domains in
@@ -101,14 +104,35 @@ or published evaluator material ([ADR 0003](../adr/0003-evaluator-material-is-pu
   on ports 80 and 443. `*.example.org` matches subdomains only. HTTPS is tunnelled with
   CONNECT, so the proxy sees the domain, never the path; a package host that also serves
   arbitrary repositories (for example GitHub) cannot be allowed safely.
-- **`log` mode** forwards every destination and records it. It exists only for the
-  measurement below.
+  - **SNI must match.** After `200` to a CONNECT, the proxy reads the client's TLS
+    ClientHello and forwards it only if its server name equals the CONNECT host. No SNI,
+    another SNI, Encrypted Client Hello and non-TLS bytes are refused (`reason`
+    `no-sni`, `sni-mismatch`, `ech`, `not-tls`), on any port.
+  - **Plain HTTP** is forwarded only with exactly one `Host` header naming the
+    request-line host and port, no `Transfer-Encoding`, and one request per connection
+    (`Connection: close`; anything after the body is dropped). Otherwise `403`
+    (`host-mismatch`, `unsupported-body`).
+  - **Never-allow list.** `NEVER_ALLOW` in `egress_proxy.py` names GitHub (github.com,
+    githubusercontent.com, github.io, githubassets.com, ghcr.io, githubapp.com, github.dev,
+    …) and services that mirror arbitrary public repositories (Go module proxies, jsDelivr,
+    githack, statically, esm.sh, Gitpod, Sourcegraph, GitLab, Bitbucket, Codeberg, Gitee,
+    archive.org, Software Heritage). `load_allowlist` refuses any entry that names one of
+    them or a wildcard that covers one, bare `*`, wildcards with fewer than two labels
+    after `*.` (`*.com`), and IP literals. The proxy refuses the same hosts and ignores
+    unsafe entries even if the file was edited. `network_measurement draft-allowlist`
+    never drafts them.
+- **`log` mode** forwards every destination and records it, with the SNI it saw. It
+  exists only for the measurement below.
 - Every decision is one JSON line in `egress.jsonl` beside the workspace. Execution
   evidence keeps the mode, allowlist and proxy digests, and the allowed and refused hosts.
 - The mode, allowlist digest and proxy digest are part of `runtime_version`, together
-  with `web_search`, so an existing run cannot continue under a different network policy.
-- `runtime.json` (the allocation sidecar) also records the proxy container and network.
-  `principiis cleanup` removes them after the development container.
+  with `web_search` and the adapter (`docker-development-v4` since the outside network),
+  so an existing run cannot continue under a different network policy.
+- `runtime.json` (the allocation sidecar) also records the proxy container, the internal
+  network and the outside network (`egress.outside_network`). `principiis cleanup`
+  removes the development container, then the proxy, then both networks. Allocations
+  made before the outside network existed have no `outside_network` and are still
+  accepted.
 
 **The allowlist is provisional.** It lists the ChatGPT/OpenAI endpoints and the five
 package registries, but has not been measured. Build it from a logging-only run on the
@@ -132,9 +156,34 @@ Verified, model-free, on 2026-11-27 against `principiis-development:mvp1`
 - `pip install six==1.16.0` and `npm install left-pad@1.3.0` succeed with the
   provisional allowlist. `files.pythonhosted.org` is needed besides `pypi.org`.
 
+Verified again, model-free, on 2026-11-27 after the hardening (SNI/Host checks,
+never-allow list, outside network, own-address listener) with the stock
+`python:3.12-slim` image (`sha256:191083cd...`, Docker 29.9.3, Docker Desktop on macOS;
+the control skips the Codex preflight, so any image with `python` works):
+
+- from a client on the internal network without the proxy: direct TCP to `1.1.1.1` and
+  to GitHub's address (resolved on the host and passed in), TCP to an IPv6 address,
+  and DNS for `pypi.org` and `github.com` all fail; the client has no global IPv6 address;
+- the internal network reports `Internal: true`, `EnableIPv6: false`; the proxy is on
+  exactly the internal and its outside network, and listens only on its internal address;
+- a container on the default bridge cannot connect to the proxy, and a container on the
+  outside network cannot connect to the proxy's outside address;
+- CONNECT to `github.com`, `api.github.com`, `raw.githubusercontent.com`,
+  `codeload.github.com`, `objects.githubusercontent.com`, `gist.github.com` and GitHub's
+  IP gets `403` (`refused`);
+- a tunnel to `pypi.org` or `files.pythonhosted.org` whose TLS SNI is
+  `raw.githubusercontent.com` is closed before any byte reaches the server
+  (`sni-mismatch`; the client sees `SSLEOFError`); `pypi.org` with its own SNI returns
+  `200` for `/simple/six/`;
+- plain HTTP to `pypi.org` with `Host: raw.githubusercontent.com` gets `403`;
+- `pip install six==1.16.0` succeeds (npm not checked: the stock image has no npm).
+
 Run it with `PO_RUNTIME_IMAGE=sha256:... PO_RUNTIME_ROOT=<dir the daemon can mount>
 PO_EGRESS_CONTROL=1 python3 -m unittest discover -s tests -p test_egress_containers.py`
-(about three minutes; it needs host internet, no login and no model).
+(under a minute with a stock image; it needs host internet, no login and no model).
+`PO_DOCKER` names the Docker CLI. The controller always talks to
+`unix:///var/run/docker.sock`; on Docker Desktop without that socket, point `PO_DOCKER`
+at a wrapper that swaps in the Desktop socket.
 
 **Not verified:** whether Codex 0.169.0 sends its own model and authentication traffic
 through `HTTPS_PROXY`, and whether commands inside its nested sandbox inherit the
@@ -193,22 +242,33 @@ runtime, so it is limited by the same allowlist.
   A command could call the API directly with hosted web search turned on, which gets
   around `web_search = "disabled"`. This needs a fix (for example keeping the token
   out of the agent's sandbox) or an explicit owner decision.
-- **Hosts that serve arbitrary content.** `proxy.golang.org` is left off because it
-  serves any public GitHub repository as a Go module, so Go module downloads fail
+- **Host-header fronting through Fastly reaches GitHub (open, verified).** The proxy
+  sees the SNI but not the HTTP `Host` inside TLS. `pypi.org` and
+  `files.pythonhosted.org` share Fastly with `raw.githubusercontent.com`: on 2026-11-27,
+  a tunnel to `pypi.org` with SNI `pypi.org` and `Host: raw.githubusercontent.com`
+  returned `200` with this repository's `README.md` (`X-GitHub-Request-Id`, `Via: 1.1
+  varnish`). The same probe got `403` from `registry.npmjs.org` (Cloudflare) and
+  `repo.packagist.org` (BunnyCDN) and `421` from `api.nuget.org`. So **while PyPI is
+  allowed, GitHub content is reachable.** The control records this as an expected
+  failure (`test_host_header_fronting_through_an_allowed_cdn_does_not_reach_github`).
+  Closing it needs an owner decision: TLS termination at the proxy for CDN-shared hosts
+  (a per-run CA in the image trust store), a registry gateway that makes its own
+  upstream requests (pip `--index-url` at the proxy), or dropping the Fastly hosts.
+  The OpenAI hosts are on Cloudflare; fronting through them was not tested.
+- **Hosts that serve arbitrary content.** `proxy.golang.org` is never allowed because
+  it serves any public GitHub repository as a Go module, so Go module downloads fail
   until a safe option exists (a vetted module cache, for example). npm and PyPI also
   serve anything anyone uploads; that risk is lower and accepted for now. Packagist
-  package downloads normally come from GitHub, so Composer installs may fail too.
-- **Domain fronting.** The proxy checks only the CONNECT host, not TLS SNI or the
-  HTTP `Host` header inside the tunnel.
-- **DNS.** Whether Docker's embedded DNS forwards outside queries on `--internal`
-  networks depends on the Docker version. If it does, DNS can carry data out. The
-  controller checks only `Internal: true`; an opt-in container control should prove
-  that external names do not resolve.
-- **Other containers on the default bridge** can reach the proxy, which listens on
-  all interfaces. In `log` mode that is unlimited egress for them.
-- None of this has run against real Docker yet. Add an opt-in container control
-  (refused host, allowed host, direct egress and DNS all checked, no model) before
-  relying on it.
+  package downloads normally come from GitHub, so Composer installs may fail too. The
+  never-allow list is not exhaustive; allowlist mode is default-deny regardless.
+- **Encrypted Client Hello** is refused, including Chrome-style GREASE ECH, so a
+  client that always offers ECH cannot use the proxy. No client in the image does.
+
+Closed and verified on real Docker (2026-11-27, see above): SNI-based domain fronting
+(SNI must equal the CONNECT host), plain-HTTP `Host` fronting, DNS (external names do
+not resolve on the internal network, including `github.com`), IPv6 (no global address,
+no IPv6 route), and reachability of the proxy from the default bridge (it now has its own
+outside network and listens only on its internal address).
 
 **Runs made before this change** had full network access through the ordinary Docker
 bridge and live web search. Their results show it: execution evidence has

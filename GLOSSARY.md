@@ -82,7 +82,13 @@ The domains the evaluated coding agent's commands may reach through the egress p
 _Avoid_: Whitelist.
 
 **Egress proxy**:
-The trusted container that is the development container's only route out of its internal Docker network. It runs in `allowlist` mode for development, or in `log` mode for the measurement.
+The trusted container that is the development container's only route out of its internal Docker network. It runs in `allowlist` mode for development, or in `log` mode for the measurement. It reaches the internet through its own per-run outside network, never the default bridge.
+
+**Never-allow list**:
+The hosts no network allowlist may contain and the egress proxy always refuses in `allowlist` mode: GitHub and services that mirror arbitrary public repositories (`NEVER_ALLOW` in `principiis/egress_proxy.py`).
+
+**Domain fronting**:
+Reaching one host through a connection addressed to another, by naming a different server in the TLS SNI or the HTTP `Host` header than in the CONNECT line. The egress proxy refuses an SNI or plain-HTTP `Host` that differs; it cannot see the `Host` inside TLS.
 
 ## Example dialogue
 
