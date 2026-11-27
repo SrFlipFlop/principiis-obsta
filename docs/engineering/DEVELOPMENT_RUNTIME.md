@@ -113,18 +113,76 @@ or published evaluator material ([ADR 0003](../adr/0003-evaluator-material-is-pu
 **The allowlist is provisional.** It lists the ChatGPT/OpenAI endpoints and the five
 package registries, but has not been measured. Build it from a logging-only run on the
 disposable fixture request
-[`fixtures/development/network_measurement_request.txt`](../../fixtures/development/network_measurement_request.txt),
-never a benchmark run:
+[`fixtures/development/network_measurement_request.txt`](../../fixtures/development/network_measurement_request.txt)
+(one pinned dependency from each ecosystem, one docs page, and a `NOTES.md` that records
+success or failure per ecosystem; never a benchmark run).
+
+### What is verified and what is not
+
+Verified, model-free, on 2026-11-27 against `principiis-development:mvp1`
+(`sha256:848b6276...`, Docker 29.10.0 Snap) by the opt-in control
+`tests/test_egress_containers.py`, which starts the internal network and proxy through
+`DevelopmentRuntime.start_egress`, as `execute` does:
+
+- a client on the internal network without the proxy has no route: direct TCP and DNS fail;
+- `pypi.org` and `files.pythonhosted.org` work through the proxy in `allowlist` mode;
+- `github.com`, ports other than 80/443, loopback, private, link-local and IP-literal
+  destinations get `403` and are logged as `refused`;
+- the log has only method, host, port, decision and time (no path, query or headers);
+- `pip install six==1.16.0` and `npm install left-pad@1.3.0` succeed with the
+  provisional allowlist. `files.pythonhosted.org` is needed besides `pypi.org`.
+
+Run it with `PO_RUNTIME_IMAGE=sha256:... PO_RUNTIME_ROOT=<dir the daemon can mount>
+PO_EGRESS_CONTROL=1 python3 -m unittest discover -s tests -p test_egress_containers.py`
+(about three minutes; it needs host internet, no login and no model).
+
+**Not verified:** whether Codex 0.169.0 sends its own model and authentication traffic
+through `HTTPS_PROXY`, and whether commands inside its nested sandbox inherit the
+variables; Composer, .NET and Go installs (the image has no such toolchains yet); the
+allowlist itself (still a guess until measured).
+
+### Owner commands for the measurement run (the Codex machine)
+
+This is a live subscription run and needs the owner's approval (AGENTS.md hard rule 3).
+Use a dedicated login file (not `~/.codex/auth.json`) and a runs directory the Docker
+daemon can mount (not `/tmp` with Snap Docker).
 
 ```bash
-python3 -m principiis.network_measurement --config RUNTIME_JSON --output NEW_DIR_OUTSIDE_CHECKOUT
+# 1. Nothing is started; calls no model and reads no login file.
+python3 -m principiis.network_measurement preflight --config RUNTIME_JSON --runs-root RUNS_ROOT
+# 2. The live run (only after the preflight says OK and you approve it).
+python3 -m principiis.network_measurement --config RUNTIME_JSON --output RUNS_ROOT/network-measurement-01
+# 3. Read the result. See "Recognising that Codex ignored the proxy" before trusting it.
+cat RUNS_ROOT/network-measurement-01/measurement.json RUNS_ROOT/network-measurement-01/egress.jsonl
+# 4. A draft allowlist that the runtime refuses until you edit it.
+python3 -m principiis.network_measurement draft-allowlist \
+    --measurement RUNS_ROOT/network-measurement-01/measurement.json --output DRAFT_ALLOWLIST.json
+# 5. Review each host, delete every TODO marker, copy it over
+#    fixtures/development/network_allowlist.json, and commit it.
+# 6. Re-run the model-free control against the new allowlist.
+PO_RUNTIME_IMAGE=sha256:... PO_RUNTIME_ROOT=RUNS_ROOT PO_EGRESS_CONTROL=1 \
+    python3 -m unittest discover -s tests -p test_egress_containers.py
 ```
 
-It prints the hosts it actually connected to (`connected_hosts`; a host that was
-allowed but never answered is not counted) and keeps `measurement.json`, `egress.jsonl` and the Codex
-logs. It is a live subscription run, so it needs the owner's approval (AGENTS.md hard
-rule 3). Review the hosts, replace `domains`, drop the `status` note, and report the
-list and method in the paper.
+The draft never contains code-hosting hosts (GitHub, GitLab, Bitbucket), `golang.org`
+hosts or IP literals; the command lists them so that you decide consciously. `connected_hosts`
+counts only destinations that answered; an allowed host that never connected is not listed.
+
+### Recognising that Codex ignored the proxy
+
+The container has no other route, so a client that ignores `HTTPS_PROXY` fails closed
+rather than leaking. Signs of that in a measurement or a later run:
+
+- `result.json` (or `measurement.json`) shows the attempt as not completed;
+- connection errors, timeouts or failed name resolution in `executor.stdout` and
+  `executor.stderr` (`codex.stdout`/`codex.stderr` for the measurement);
+- `egress.jsonl` is empty or missing, or contains no OpenAI host (`api.openai.com`,
+  `chatgpt.com`, `auth.openai.com`) even though the model answered nothing.
+
+Treat any of these as "Codex 0.169.0 does not honour the proxy for model or login
+traffic". Do not widen the network to get around it. Record the failure, keep the
+evidence, and ask for a design decision. Until a real measurement shows OpenAI hosts in
+the log, that this works at all is a hypothesis.
 
 The security-investigation reviewer (`principiis/investigation.py`) uses the same
 runtime, so it is limited by the same allowlist.
