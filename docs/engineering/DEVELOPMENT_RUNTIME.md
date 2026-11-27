@@ -125,6 +125,47 @@ or published evaluator material ([ADR 0003](../adr/0003-evaluator-material-is-pu
     request-line host and port, no `Transfer-Encoding`, and one request per connection
     (`Connection: close`; anything after the body is dropped). Otherwise `403`
     (`host-mismatch`, `unsupported-body`). `Proxy-*` headers are never forwarded.
+  - **PyPI only through the gateway.** `pypi.org` and `files.pythonhosted.org` share
+    Fastly with `raw.githubusercontent.com`, and the proxy cannot see the HTTP `Host`
+    inside TLS, so a tunnel to them reached GitHub (Known gaps). They are
+    *gateway-only* (`GATEWAY_ONLY` in `egress_proxy.py`, suffixes `pypi.org` and
+    `pythonhosted.org`): `load_allowlist` refuses them, and wildcards covering them, in
+    `domains` and `model_domains`; the proxy refuses a CONNECT to them
+    (`reason: gateway-only host: use the PyPI gateway`) even if listed.
+    Instead the proxy serves a read-only **PyPI gateway** on the same port (3128), over
+    plain HTTP, on the internal network only:
+    - `GET /pypi/simple/<project>/` → `https://pypi.org/simple/<normalised project>/`
+      (PEP 503 name, normalised; no `/simple/` root, no JSON API);
+      `GET /pypi/files/packages/<2 hex>/<2 hex>/<60 hex>/<file>` (wheel, sdist or
+      `.metadata`) → `https://files.pythonhosted.org/packages/...`. Anything else (other
+      methods or paths, `..`, percent-encoding, query strings, request bodies) gets `403`
+      and never reaches upstream.
+    - The gateway makes the upstream request itself with the standard library:
+      `ssl.create_default_context()` (certificates and host name verified), SNI and
+      `Host` fixed to the real host, only `Accept` (simple-API media types only),
+      `Accept-Encoding: identity`, a fixed `User-Agent` and `Connection: close`. No
+      client header is forwarded. Redirects, other statuses, answers with
+      `X-GitHub-Request-Id` and unexpected content types get `502`; `404` is relayed.
+    - Index pages are rewritten: HTML `href`s and JSON `url`s on
+      `files.pythonhosted.org` point at `/pypi/files/...`, keeping `#sha256=` fragments
+      and `hashes`, so pip still verifies every file; other file URLs are dropped. Index
+      pages are capped at 64 MiB; files are streamed and capped at 1 GiB.
+    - Same port with a path prefix, not a second port: the internal network already
+      reaches exactly one listener, whose address the controller checks, and nothing
+      else changes. Origin-form requests (`GET /pypi/...`) and absolute-form requests
+      naming the proxy's own address are the gateway; everything else is the proxy.
+    - Commands get `PIP_INDEX_URL=http://<proxy>:3128/pypi/simple/`,
+      `PIP_TRUSTED_HOST=<proxy>:3128`, `UV_DEFAULT_INDEX` (same URL) and
+      `NO_PROXY`/`no_proxy` with the proxy address, both in
+      `shell_environment_policy.set` and in the container environment. Tools that
+      ignore these (Poetry, pipenv, a hard-coded `--index-url https://pypi.org/simple`)
+      fail closed: the tunnel is refused.
+    - The gateway serves in `log` mode too. Each request is one JSON line with
+      `event: "gateway"`, the `route` (`simple`, `files` or `invalid`), the upstream
+      `host`, the `decision` (`allowed`, `connected` with the upstream `status`, or
+      `refused` with a `reason`), and never the path, project name, query or headers.
+      `connected_hosts` therefore lists `pypi.org` and `files.pythonhosted.org`, and
+      `draft-allowlist` never drafts them (gateway-only).
 - **Only the Codex process reaches the model hosts.** The allowlist's `model_domains`
   (`api.openai.com`, `auth.openai.com`, `chatgpt.com`) are forwarded only for requests
   with `Proxy-Authorization: Basic base64("model:<token>")` (compared with
@@ -164,10 +205,12 @@ or published evaluator material ([ADR 0003](../adr/0003-evaluator-material-is-pu
   attempt's token, so by the Codex process itself).
 - The mode, allowlist digest, proxy digest and `model_credential` scheme
   (`per-run-token-v1: ...`, never the token) are part of `runtime_version`, together with
-  `web_search`, the command environment policy (`command_environment`), the permission
-  settings and the adapter, so an existing run cannot continue under a different network
-  policy. The adapter is `docker-development-v5`: the first with both the SNI/Host
-  checks and outside network and the model credential. Two parallel branches each used
+  `web_search`, the command environment policy (`command_environment`, which now
+  includes the PyPI gateway variables), the gateway scheme (`egress.pypi_gateway`,
+  `pypi-gateway-v1: ...`), the permission settings and the adapter, so an existing run
+  cannot continue under a different network policy. The adapter is
+  `docker-development-v6`: v5 (SNI/Host checks, outside network, model credential)
+  plus the PyPI gateway, with PyPI no longer tunnelled. Two parallel branches each used
   `docker-development-v4` for one half; no run on `main` carries v4.
 - `runtime.json` (the allocation sidecar) also records the proxy container, the internal
   network and the outside network (`egress.outside_network`). `principiis cleanup`
@@ -289,6 +332,49 @@ Desktop 29.9.3 with both diagnostics:
   `raw.githubusercontent.com` are closed with `sni-mismatch`/`valid` and nothing reaches
   the sink; without the credential the CONNECT gets `403`.
 
+Verified again, model-free, on 2026-11-28 after the PyPI gateway (adapter
+`docker-development-v6`), on the same scratch image (`sha256:eeaa4f19...`, which has
+npm 9.2.0) with both diagnostics, and on stock `python:3.12-slim` (`sha256:191083cd...`,
+no npm), Docker Desktop 29.9.3. The records above that tunnel PyPI describe v5 and
+earlier.
+
+- `tests/test_egress_containers.py`, 10 tests, all pass on both images (the stock image
+  skips only the npm half):
+  - CONNECT to `pypi.org` and `files.pythonhosted.org` gets `403` (`gateway-only host`);
+    the former expected failure, a tunnel to them with `Host: raw.githubusercontent.com`,
+    now never gets a tunnel;
+  - the generic fronting control: every `domains` host (`registry.npmjs.org`,
+    `repo.packagist.org`, `packagist.org`, `api.nuget.org`), with its own SNI and
+    `GET /SrFlipFlop/principiis-obsta/main/README.md` with
+    `Host: raw.githubusercontent.com`, answers without GitHub content (`403` from npm
+    and both Packagist hosts, `421` from NuGet; no `X-GitHub-Request-Id`);
+  - `pip install six==1.16.0 requests==2.32.3` from a client on the internal network
+    installs six, requests, urllib3, idna, certifi and charset-normalizer through the
+    gateway only (gateway `connected` for `pypi.org`/`simple` and
+    `files.pythonhosted.org`/`files`; no CONNECT to either); `npm install left-pad@1.3.0`
+    still works;
+  - the gateway serves `/pypi/simple/six/` (also with `Host: raw.githubusercontent.com`,
+    a non-normalised name, and absolute-form to its own address) with file URLs
+    rewritten to `/pypi/files/`, and refuses with `403`, never GitHub content:
+    `/pypi/simple/../../...`, `/pypi/files/SrFlipFlop/...`, `/pypi/files/packages/../..`,
+    `%2e%2e`, the bare README path, a query string, `/pypi/pypi/six/json`,
+    `/pypi/simple/`, `POST`, `HEAD`, and absolute-form to `raw.githubusercontent.com` or
+    `pypi.org`;
+  - the log holds no path, query, project name or header (the log test now also sends
+    gateway requests with sentinels).
+- `tests/test_model_token_containers.py`, 5 tests, all pass. A new control runs
+  `pip install six==1.16.0 requests==2.32.3` as a command inside
+  `codex sandbox --permission-profile development`, with only the command environment
+  (`shell_environment_policy.set`): it installs through the gateway. That proxy keeps its
+  way out, but has no model token and no `domains`, so it cannot reach OpenAI.
+- `python3 -m principiis.network_measurement fronting-check` on the shipped allowlist:
+  four `PASS`, `FRONTING CHECK OK`. On a draft with `pypi.org`, `github.com` and
+  `*.example.org` it reports `REFUSED`/`REFUSED`/`UNCHECKED` and exits 1.
+- Positive control (scratch script, not in the suite): the same probe through a
+  `log`-mode proxy, which still tunnels PyPI, flags `pypi.org` and
+  `files.pythonhosted.org` as `FAIL` (`200`, `X-GitHub-Request-Id`) and passes
+  `registry.npmjs.org`. So the probe does detect Fastly fronting.
+
 **Not verified:**
 - that real model traffic works through the credentialed proxy end to end. That needs an
   owner-approved live run; the measurement run will show it, because `egress.jsonl`
@@ -299,6 +385,7 @@ Desktop 29.9.3 with both diagnostics:
   Docker). The preflight uses a tmpfs workspace; a failure would stop the attempt
   before any model request.
 - Composer, .NET and Go installs (the image has no such toolchains yet).
+- `uv` through the gateway (the image has no uv); only the variable is set.
 - the allowlist itself (still a guess until measured).
 
 ### Owner commands for the measurement run (the Codex machine)
@@ -317,12 +404,20 @@ cat RUNS_ROOT/network-measurement-01/measurement.json RUNS_ROOT/network-measurem
 # 4. A draft allowlist that the runtime refuses until you edit it.
 python3 -m principiis.network_measurement draft-allowlist \
     --measurement RUNS_ROOT/network-measurement-01/measurement.json --output DRAFT_ALLOWLIST.json
-# 5. Review each host, delete every TODO marker, copy it over
+# 5. Before approving, probe every drafted host for Host-header fronting to GitHub
+#    (model-free; starts the proxy with no model domains and no token). Every host must
+#    PASS; FAIL means GitHub answered through it, REFUSED/UNCHECKED must be resolved.
+python3 -m principiis.network_measurement fronting-check --config RUNTIME_JSON --allowlist DRAFT_ALLOWLIST.json
+# 6. Review each host, delete every TODO marker, copy it over
 #    fixtures/development/network_allowlist.json, and commit it.
-# 6. Re-run the model-free control against the new allowlist.
+# 7. Re-run the model-free control against the new allowlist (it repeats the fronting
+#    probe for every `domains` host).
 PO_RUNTIME_IMAGE=sha256:... PO_RUNTIME_ROOT=RUNS_ROOT PO_EGRESS_CONTROL=1 \
     python3 -m unittest discover -s tests -p test_egress_containers.py
 ```
+
+`pypi.org` and `files.pythonhosted.org` appear in the measurement (through the gateway)
+but are never drafted: they are gateway-only.
 
 The draft never contains code-hosting hosts (GitHub, GitLab, Bitbucket), `golang.org`
 hosts or IP literals; the command lists them so that you decide consciously. `connected_hosts`
@@ -352,23 +447,42 @@ runtime, so it is limited by the same allowlist.
 
 **Known gaps (#75 item 2).**
 
+Closed:
+
+- **Host-header fronting through Fastly to GitHub is closed for PyPI (verified on real
+  Docker, 2026-11-28).** The proxy sees the SNI but not the HTTP `Host` inside TLS.
+  `pypi.org` and `files.pythonhosted.org` share Fastly with `raw.githubusercontent.com`:
+  on 2026-11-27 a tunnel to `pypi.org` with SNI `pypi.org` and
+  `Host: raw.githubusercontent.com` returned `200` with this repository's `README.md`
+  (`X-GitHub-Request-Id`, `Via: 1.1 varnish`). The owner chose a registry gateway: PyPI
+  is now gateway-only (see *PyPI only through the gateway* above), so no tunnel to it
+  opens, and the gateway sets SNI and `Host` itself. The former expected failure is a
+  passing test
+  (`test_host_header_fronting_through_pypi_is_closed_because_pypi_is_never_tunnelled`),
+  and `test_no_allowlisted_domain_fronts_github` probes every remaining `domains` host:
+  `registry.npmjs.org` (Cloudflare) and both Packagist hosts (BunnyCDN) answer `403`,
+  `api.nuget.org` `421`.
+
+  **Adding another registry safely.** The SNI check cannot stop Host fronting, so every
+  new `domains` host must pass `python3 -m principiis.network_measurement
+  fronting-check --allowlist <candidate>` (step 5 of the measurement commands) and the
+  container control. A host that `FAIL`s (GitHub answers through it, for example
+  anything else on Fastly such as `pythonhosted.org` subdomains or `python.org`) must not
+  be allowed; it needs a gateway like PyPI's or must be added to `GATEWAY_ONLY`/
+  `NEVER_ALLOW`. A pass is a point-in-time observation: CDNs change, so re-run the
+  check whenever the allowlist or the image changes. The probe asks only for
+  `raw.githubusercontent.com`; other GitHub hosts behind the same CDN are covered only
+  because a CDN that routes by `Host` would normally serve them all.
+
 Open, to resolve before tests go public:
 
-- **Host-header fronting through Fastly reaches GitHub (verified on real Docker).** The
-  proxy sees the SNI but not the HTTP `Host` inside TLS. `pypi.org` and
-  `files.pythonhosted.org` share Fastly with `raw.githubusercontent.com`: on 2026-11-27,
-  a tunnel to `pypi.org` with SNI `pypi.org` and `Host: raw.githubusercontent.com`
-  returned `200` with this repository's `README.md` (`X-GitHub-Request-Id`, `Via: 1.1
-  varnish`), and the merged branch reproduced it on 2026-11-28. The same probe got `403`
-  from `registry.npmjs.org` (Cloudflare) and `repo.packagist.org` (BunnyCDN) and `421`
-  from `api.nuget.org`. So **while PyPI is allowed, GitHub content is reachable.** The
-  control records this as an expected failure
-  (`test_host_header_fronting_through_an_allowed_cdn_does_not_reach_github`). Closing it
-  needs an owner decision: TLS termination at the proxy for CDN-shared hosts (a per-run
-  CA in the image trust store), a registry gateway that makes its own upstream requests
-  (pip `--index-url` at the proxy), or dropping the Fastly hosts. The OpenAI hosts are on
-  Cloudflare; fronting through them was not tested, and only the Codex process can open
-  them.
+- **Model hosts are not fronting-checked.** The OpenAI hosts are on Cloudflare;
+  fronting through them was not tested (that needs the credential and contacts
+  OpenAI), and only the Codex process can open them.
+- **`log` mode still tunnels PyPI.** The measurement run forwards every destination
+  (`log` mode exists for that), so Fastly fronting is possible there; commands still
+  use the gateway by default. The measurement uses a disposable fixture request, never a
+  benchmark.
 - **Docker Desktop needs the diagnostics.** On Docker Desktop the runtime's preflight
   fails closed (`bwrap: Can't mount proc on /proc`), and `codex exec` cannot remount a
   virtiofs workspace bind read-only once the Codex home is denied. The model-free
@@ -393,7 +507,8 @@ Open, to resolve before tests go public:
 - **Hosts that serve arbitrary content.** `proxy.golang.org` is never allowed because
   it serves any public GitHub repository as a Go module, so Go module downloads fail
   until a safe option exists (a vetted module cache, for example). npm and PyPI also
-  serve anything anyone uploads; that risk is lower and accepted for now. Packagist
+  serve anything anyone uploads (the gateway does not change that: anyone could publish
+  the repository's files as a PyPI project); that risk is lower and accepted for now. Packagist
   package downloads normally come from GitHub, so Composer installs may fail too. The
   never-allow list is not exhaustive; allowlist mode is default-deny regardless.
 - **Encrypted Client Hello** is refused, including Chrome-style GREASE ECH, so a

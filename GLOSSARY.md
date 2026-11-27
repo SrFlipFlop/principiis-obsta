@@ -91,7 +91,10 @@ The trusted container that is the development container's only route out of its 
 The hosts no network allowlist may contain and the egress proxy always refuses in `allowlist` mode: GitHub and services that mirror arbitrary public repositories (`NEVER_ALLOW` in `principiis/egress_proxy.py`).
 
 **Domain fronting**:
-Reaching one host through a connection addressed to another, by naming a different server in the TLS SNI or the HTTP `Host` header than in the CONNECT line. The egress proxy refuses an SNI or plain-HTTP `Host` that differs; it cannot see the `Host` inside TLS.
+Reaching one host through a connection addressed to another, by naming a different server in the TLS SNI or the HTTP `Host` header than in the CONNECT line. The egress proxy refuses an SNI or plain-HTTP `Host` that differs; it cannot see the `Host` inside TLS. A host on a CDN shared with GitHub therefore cannot be tunnelled safely; `network_measurement fronting-check` tests every allowlist host for this before the owner approves it.
+
+**PyPI gateway**:
+The read-only Python package index that the egress proxy serves on its own port (`/pypi/simple/`, `/pypi/files/`), so that commands install from PyPI without a tunnel to it. The proxy itself fetches only project index pages from `pypi.org` and package files from `files.pythonhosted.org`, over verified HTTPS with fixed hosts, paths and headers. Those two hosts are **gateway-only**: they share Fastly with `raw.githubusercontent.com`, so no allowlist may list them.
 
 ## Example dialogue
 
