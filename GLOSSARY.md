@@ -77,6 +77,13 @@ A predefined security property, justified independently of whether the request s
 **Evaluator agent**:
 An independent agent that investigates additional vulnerabilities with reproducible evidence. Its findings are validated and reported separately from the primary scores, which come from predefined executable checks, and are never returned to the evaluated coding agent.
 
+**Network allowlist**:
+The domains the evaluated coding agent's commands may reach through the egress proxy during development. It is built from a logging-only measurement on a disposable fixture, and its digest is part of the runtime version.
+_Avoid_: Whitelist.
+
+**Egress proxy**:
+The trusted container that is the development container's only route out of its internal Docker network. It runs in `allowlist` mode for development, or in `log` mode for the measurement.
+
 ## Example dialogue
 
 Researcher: “Does this security intervention improve the generated application?”

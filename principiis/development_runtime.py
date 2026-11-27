@@ -10,12 +10,22 @@ import time
 import uuid
 
 from .codex import redact
+from .egress_proxy import normalise_host
 from .execution import execute
 from .jsonio import write_json
 
 
 CHECKOUT = Path(__file__).resolve().parents[1]
 SANDBOX_POLICY = CHECKOUT / 'fixtures/development/seccomp_profile.json'
+NETWORK_ALLOWLIST = CHECKOUT / 'fixtures/development/network_allowlist.json'
+EGRESS_PROXY = Path(__file__).resolve().with_name('egress_proxy.py')
+EGRESS_PORT = 3128
+EGRESS_MODES = ('allowlist', 'log')
+ADAPTER = 'docker-development-v3'
+NETWORK_DESCRIPTION = {
+    'allowlist':'internal Docker network; only route out is the egress proxy, limited to the network allowlist',
+    'log':'internal Docker network; only route out is the egress proxy, logging every destination without limits',
+}
 
 
 IMAGE_ID = re.compile(r'sha256:[0-9a-f]{64}\Z')
@@ -61,6 +71,11 @@ for name in ('python', 'python3', 'python'+str(sys.version_info.major)+'.'+str(s
         paths.add(str(p))
 print(json.dumps({'sandbox':'workspace-write','symlink_targets':sorted(paths)}))
 """.replace('CHECKOUT_INSTRUCTIONS', repr(str(CHECKOUT / 'AGENTS.md')))
+
+
+# Hosted search bypasses every network limit and could find later requests in the
+# public repository (#75, ADR 0003).
+WEB_SEARCH = 'disabled'
 
 
 def workspace_permission_settings():
@@ -157,6 +172,31 @@ def inspect_image(docker, image):
     return {'id': image, 'environment_names': sorted(v.split('=', 1)[0] for v in config.get('Env') or [])}
 
 
+def load_allowlist():
+    document = json.loads(NETWORK_ALLOWLIST.read_text())
+    if not isinstance(document, dict):
+        raise ValueError('network allowlist must be a JSON object')
+    domains = document.get('domains')
+    if (document.get('version') != '1' or not isinstance(domains, list)
+            or any(not isinstance(v, str) or normalise_host(v.removeprefix('*.')) != v.removeprefix('*.') for v in domains)):
+        raise ValueError('network allowlist must be version 1 with lowercase domain names')
+    return domains
+
+
+def egress_summary(log):
+    """Hosts the proxy allowed and refused, from its JSON-lines decision log."""
+    # `allowed` is the policy decision; `connected` means the upstream connection opened.
+    hosts = {'allowed': set(), 'refused': set(), 'connected': set()}
+    for line in log.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict) and event.get('decision') in hosts and isinstance(event.get('host'), str):
+            hosts[event['decision']].add(event['host'])
+    return {key + '_hosts': sorted(value) for key, value in hosts.items()}
+
+
 def runtime_user():
     uid, gid = os.getuid(), os.getgid()
     if uid == 0:
@@ -204,6 +244,12 @@ def cleanup_runtime(allocation_path, config_path, output):
     argv = docker_command(docker,['rm','-f',name])
     if allocation.get('image') != config['image'] or allocation.get('cleanup_argv') != argv:
         raise ValueError('runtime allocation image/cleanup command differs from frozen configuration')
+    # Allocations before #75 have no egress proxy or network.
+    token = name.removeprefix('po-development-')
+    egress = allocation.get('egress')
+    if egress is not None and egress != {'container':'po-development-egress-'+token, 'network':'po-development-net-'+token}:
+        raise ValueError('runtime allocation has an invalid egress identity')
+    egress_argvs = [['rm','-f',egress['container']], ['network','rm',egress['network']]] if egress else []
     output = Path(output).resolve()
     output.mkdir(parents=True,exist_ok=False)
     record = {'schema_version':1,'outcome':'cleanup_error','allocation':str(allocation_path),
@@ -220,6 +266,9 @@ def cleanup_runtime(allocation_path, config_path, output):
         record['exit_status'] = result.returncode
         missing = bool(re.fullmatch(r'(?:Error response from daemon: )?No such container: '+re.escape(name),stderr.strip()))
         if result.returncode == 0 or missing:
+            record['egress_argvs'] = [docker_command(docker, v) for v in egress_argvs]
+            for egress_argv in egress_argvs:
+                remove(docker, egress_argv)
             record.update(outcome='removed',absent_before_cleanup=missing)
         else:
             record['error'] = 'Docker cleanup failed; see retained docker.stderr'
@@ -227,7 +276,7 @@ def cleanup_runtime(allocation_path, config_path, output):
         stdout = error.stdout or ''
         stderr = error.stderr or ''
         record['error'] = 'Docker cleanup exceeded its 20s diagnostic timeout'
-    except (OSError,KeyboardInterrupt) as error:
+    except (OSError,ValueError,KeyboardInterrupt) as error:
         record['error'] = str(error) or 'cleanup controller interrupted'
     finally:
         for path, data in ((output/'docker.stdout',stdout),(output/'docker.stderr',stderr)):
@@ -238,7 +287,11 @@ def cleanup_runtime(allocation_path, config_path, output):
 
 
 class DevelopmentRuntime:
-    def __init__(self, config_path, output, source):
+    def __init__(self, config_path, output, source, *, egress='allowlist'):
+        if egress not in EGRESS_MODES:
+            raise ValueError(f'egress mode must be one of {EGRESS_MODES}')
+        self.egress = egress
+        self.allowlist = load_allowlist() if egress == 'allowlist' else []
         self.config = load_config(config_path)
         c = self.config
         output, source = Path(output).resolve(), Path(source).resolve()
@@ -281,7 +334,10 @@ class DevelopmentRuntime:
         self.version = {'sandbox_policy_sha256':hashlib.sha256(SANDBOX_POLICY.read_bytes()).hexdigest(),
                         'temporary_filesystems':'exec,nosuid,nodev',
                         'snapshot_binding':self.snapshot_binding, 'permission_settings':workspace_permission_settings(), 'codex':codex_version, 'runtime_user':runtime_user(),
-                        'image':c['image'], 'adapter':'docker-development-v2'}
+                        'image':c['image'], 'adapter':ADAPTER, 'web_search':WEB_SEARCH,
+                        'egress':{'mode':egress, 'port':EGRESS_PORT,
+                                  'allowlist_sha256':hashlib.sha256(NETWORK_ALLOWLIST.read_bytes()).hexdigest() if egress == 'allowlist' else None,
+                                  'proxy_sha256':hashlib.sha256(EGRESS_PROXY.read_bytes()).hexdigest()}}
 
     def execute(self, workspace, request, stdout, stderr):
         c = self.config
@@ -300,7 +356,9 @@ class DevelopmentRuntime:
         except (ValueError, OSError, subprocess.TimeoutExpired) as error:
             raise ValueError(f'Docker daemon cannot mount workspace {workspace}: {error}. '
                              'Choose a run root visible to the Docker daemon.') from error
-        name = 'po-development-' + uuid.uuid4().hex
+        token = uuid.uuid4().hex
+        name = 'po-development-' + token
+        egress = {'container':'po-development-egress-' + token, 'network':'po-development-net-' + token}
         boot = ('mkdir -p "$CODEX_HOME"; cp /run/subscription-auth.json "$CODEX_HOME/auth.json"; '
                 'chmod 600 "$CODEX_HOME/auth.json"; '
                 'login_status="$(codex login status 2>&1)" || '
@@ -312,19 +370,18 @@ class DevelopmentRuntime:
                  '--ignore-rules', '--skip-git-repo-check', '--json',
                  '--cd', '/workspace']
         settings = {**workspace_permission_settings(), 'approval_policy':'never',
-                    'web_search':'live', 'model_provider':'openai', 'cli_auth_credentials_store':'file'}
+                    'web_search':WEB_SEARCH, 'model_provider':'openai', 'cli_auth_credentials_store':'file'}
         codex.extend(configuration_args(settings))
         codex.append('-')
-        argv = docker_command(c['docker'], ['run', '-i', '--name', name, '--network', 'bridge',
-                    *restrictions(nested_sandbox=True), '--mount', f'type=bind,src={workspace},dst=/workspace',
-                    '--mount', f'type=bind,src={c["auth_file"]},dst=/run/subscription-auth.json,readonly',
-                    '--entrypoint', '/bin/sh', c['image'], '-eu', '-c', boot, '--', *codex])
         allocation_path = workspace.parent / 'runtime.json'
-        allocation = {'schema_version':1,'adapter':'docker-development-v2','container':name,
+        egress_log = workspace.parent / 'egress.jsonl'
+        removals = [['rm', '-f', name], ['rm', '-f', egress['container']], ['network', 'rm', egress['network']]]
+        allocation = {'schema_version':1,'adapter':ADAPTER,'container':name,'egress':egress,
                       'image':c['image'],'sandbox_policy_sha256':self.version['sandbox_policy_sha256'],'state':'allocated','allocated_at':time.time(),
                       'cleanup_argv':docker_command(c['docker'],['rm','-f',name]),
-                      'note':'If the controller dies, remove this container before retrying; original workspace/logs must remain.'}
-        # Outside the only writable bind mount, durable before starting Docker.
+                      'egress_cleanup_argvs':[docker_command(c['docker'],argv) for argv in removals[1:]],
+                      'note':'If the controller dies, remove these containers and network before retrying; original workspace/logs must remain.'}
+        # Outside the only writable bind mount, durable before creating any Docker resource.
         write_json(allocation_path,allocation)
         done, samples = threading.Event(), []
 
@@ -339,20 +396,41 @@ class DevelopmentRuntime:
                 done.wait(.5)
 
         sampler = threading.Thread(target=sample)
-        sampler.start()
-        evidence = {}
+        evidence = {'argv': None, 'exit_status': None, 'memory': {}}
         try:
-            evidence = execute(argv, workspace, request, stdout, stderr,
-                               env=docker_environment(), transform=redact)
+            try:
+                proxy = self.start_egress(egress)
+            except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+                evidence['error'] = 'egress setup failed before authentication or model: ' + str(error)
+                proxy = None
+            if proxy is not None:
+                argv = docker_command(c['docker'], ['run', '-i', '--name', name, '--network', egress['network'],
+                            *restrictions(nested_sandbox=True), *proxy_environment(proxy),
+                            '--mount', f'type=bind,src={workspace},dst=/workspace',
+                            '--mount', f'type=bind,src={c["auth_file"]},dst=/run/subscription-auth.json,readonly',
+                            '--entrypoint', '/bin/sh', c['image'], '-eu', '-c', boot, '--', *codex])
+                sampler.start()
+                evidence = execute(argv, workspace, request, stdout, stderr,
+                                   env=docker_environment(), transform=redact)
         finally:
             done.set()
-            sampler.join()
+            if sampler.is_alive():
+                sampler.join()
             try:
-                docker_run(c['docker'], ['rm', '-f', name])
-                allocation.update(state='removed',removed_at=time.time())
+                egress_log.write_text(redact(docker_run(c['docker'], ['logs', egress['container']])))
             except (OSError, ValueError, subprocess.TimeoutExpired) as error:
-                evidence['cleanup_error'] = str(error)
-                allocation.update(state='cleanup_error',error=str(error))
+                evidence['egress_log_error'] = str(error)
+            errors = []
+            for argv in removals:
+                try:
+                    remove(c['docker'], argv)
+                except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+                    errors.append(str(error))
+            if errors:
+                evidence['cleanup_error'] = '; '.join(errors)
+                allocation.update(state='cleanup_error',error=evidence['cleanup_error'])
+            else:
+                allocation.update(state='removed',removed_at=time.time())
             allocation['execution_exit_status'] = evidence.get('exit_status')
             write_json(allocation_path,allocation)
         evidence['memory']['scope'] = 'host Docker client process group only; excludes container agent/tools'
@@ -367,9 +445,47 @@ class DevelopmentRuntime:
             'requested_reasoning_effort':'default', 'settings':settings, 'hosted_model_memory':None,
             'clean_runtime_review':c['clean_runtime_review'],
             'filesystem_boundary':'disposable container; only workspace and subscription auth file are mounted'}
-        evidence['runtime'] = {'image':self.image, 'container':name, 'adapter':'docker-development-v2',
+        log = egress_log.read_text() if egress_log.is_file() else ''
+        evidence['egress'] = {'mode':self.egress, 'log':str(egress_log), **self.version['egress'],
+                              **egress_summary(log)}
+        evidence['runtime'] = {'image':self.image, 'container':name, 'adapter':ADAPTER,
                                'temporary_filesystems':self.version['temporary_filesystems'],
                                'user':runtime_user(),'sandbox_policy_sha256':self.version['sandbox_policy_sha256'],
                                'allocation':str(allocation_path),'cleanup_state':allocation['state'],
-                               'network':'bridge; ordinary development network access'}
+                               'network':NETWORK_DESCRIPTION[self.egress]}
         return evidence
+
+    def start_egress(self, egress):
+        """Create the internal network and the proxy that is its only route out; return the proxy address."""
+        c = self.config
+        docker_run(c['docker'], ['network', 'create', '--driver', 'bridge', '--internal', '--ipv6=false',
+                                 egress['network']])
+        network = json.loads(docker_run(c['docker'], ['network', 'inspect', egress['network']]))[0]
+        if network.get('Internal') is not True:
+            raise ValueError('development network is not internal')
+        docker_run(c['docker'], ['run', '--detach', '--name', egress['container'], '--network', 'bridge',
+                                 *restrictions(), '--entrypoint', 'python', c['image'],
+                                 '-I', '-S', '-c', EGRESS_PROXY.read_text(), self.egress,
+                                 json.dumps(self.allowlist), str(EGRESS_PORT)])
+        docker_run(c['docker'], ['network', 'connect', egress['network'], egress['container']])
+        status = json.loads(docker_run(c['docker'], ['inspect', egress['container']]))[0]
+        return status['NetworkSettings']['Networks'][egress['network']]['IPAddress']
+
+
+
+def proxy_environment(address):
+    url = f'http://{address}:{EGRESS_PORT}'
+    values = {'HTTPS_PROXY':url, 'HTTP_PROXY':url, 'https_proxy':url, 'http_proxy':url,
+              'NO_PROXY':'localhost,127.0.0.1,::1', 'no_proxy':'localhost,127.0.0.1,::1'}
+    return [item for key, value in values.items() for item in ('--env', f'{key}={value}')]
+
+
+def remove(docker, argv):
+    """Remove a container or network, treating one that is already gone as removed."""
+    result = subprocess.run(docker_command(docker, argv), capture_output=True, text=True,
+                            env=docker_environment(), timeout=20)
+    name = re.escape(argv[-1])
+    missing = re.fullmatch(rf'(?:Error response from daemon: )?(?:No such (?:container|network): {name}|network {name} not found)',
+                           result.stderr.strip())
+    if result.returncode and not missing:
+        raise ValueError(f'Docker {" ".join(argv[:2])} failed: {redact(result.stderr[-2000:])}')

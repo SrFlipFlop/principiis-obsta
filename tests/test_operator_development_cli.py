@@ -53,7 +53,16 @@ class OperatorDevelopmentCLI(unittest.TestCase):
                 sys.exit()
             if args[0] == 'stats':
                 print('12MiB / 4GiB');sys.exit()
-            if args[:2] == ['rm','-f']:
+            if args[:2] == ['rm','-f'] or args[:2] in (['network','create'],['network','connect'],['network','rm']):
+                sys.exit()
+            if args[:2] == ['network','inspect']:
+                print(json.dumps([{'Internal':True}]));sys.exit()
+            if args[0] == 'run' and '--detach' in args:
+                print('egress-proxy');sys.exit()
+            if args[0] == 'inspect':
+                network=args[-1].replace('po-development-egress-','po-development-net-')
+                print(json.dumps([{'NetworkSettings':{'Networks':{network:{'IPAddress':'172.30.0.2'}}}}]));sys.exit()
+            if args[0] == 'logs':
                 sys.exit()
             assert args[0] == 'run' and '-i' in args, args
             mounts=[args[index+1] for index,value in enumerate(args) if value=='--mount']

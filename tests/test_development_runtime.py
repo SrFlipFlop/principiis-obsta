@@ -44,6 +44,10 @@ if args[0] == 'inspect':
     network=next((c[-1] for c in reversed(records) if c[:2]==['network','create']),'fixture-network')
     ports={'8123/tcp':[{'HostIp':'127.0.0.1','HostPort':'58123'}]} if args[-1].startswith('po-preview-relay-') else {'8123/tcp':None}
     print(json.dumps([{'State':{'Running':True},'NetworkSettings':{'Ports':ports,'Networks':{network:{'IPAddress':'172.30.0.2'}}}}]));sys.exit()
+if args[0] == 'logs' and args[-1].startswith('po-development-egress-'):
+    print(json.dumps({'method':'CONNECT','host':'pypi.org','port':443,'decision':'allowed'}))
+    print(json.dumps({'method':'CONNECT','host':'pypi.org','port':443,'decision':'connected'}))
+    print(json.dumps({'method':'CONNECT','host':'github.com','port':443,'decision':'refused'}));sys.exit()
 if args[0] == 'logs':
     print('application startup');sys.exit()
 if args[0] == 'stats':
@@ -111,10 +115,100 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             self.assertIn('--ephemeral', launch)
             self.assertIn('--read-only', launch)
             self.assertIn('--cap-drop', launch)
-            self.assertEqual(launch[launch.index('--network')+1], 'bridge')
+            self.assertTrue(launch[launch.index('--network')+1].startswith('po-development-net-'))
             self.assertTrue(any(c[:2] == ['rm','-f'] for c in commands))
             self.assertFalse((output / 'runtime-home').exists())
             self.assertIn('Docker client', evidence['memory']['scope'])
+
+    def launch(self, base):
+        commands = [json.loads(v) for v in (base/'commands.jsonl').read_text().splitlines()]
+        return next(c for c in commands if c[0] == 'run' and '-i' in c)
+
+    def test_live_web_search_is_disabled_and_part_of_the_runtime_version(self):
+        with temporary_directory() as directory:
+            base = Path(directory)
+            config_path, config = self.configuration(base)
+            output = base / 'run'
+            runtime = DevelopmentRuntime(config_path, output, base / 'tasks')
+            workspace = output / 'workspace'; workspace.mkdir(parents=True)
+            evidence = runtime.execute(workspace, 'request', io.StringIO(), io.StringIO())
+            self.assertIn('web_search="disabled"', self.launch(base))
+            self.assertNotIn('live', repr(self.launch(base)))
+            self.assertEqual(evidence['codex']['settings']['web_search'], 'disabled')
+            self.assertEqual(runtime.version['web_search'], 'disabled')
+
+    def commands(self, base):
+        return [json.loads(v) for v in (base/'commands.jsonl').read_text().splitlines()]
+
+    def test_development_reaches_the_network_only_through_the_allowlist_proxy(self):
+        with temporary_directory() as directory:
+            base = Path(directory)
+            config_path, config = self.configuration(base)
+            output = base / 'run'
+            runtime = DevelopmentRuntime(config_path, output, base / 'tasks')
+            workspace = output / 'workspace'; workspace.mkdir(parents=True)
+            evidence = runtime.execute(workspace, 'request', io.StringIO(), io.StringIO())
+            commands = self.commands(base)
+            created = next(c for c in commands if c[:2] == ['network', 'create'])
+            network = created[-1]
+            self.assertIn('--internal', created)
+            proxy = next(c for c in commands if c[0] == 'run' and '--detach' in c)
+            proxy_name = proxy[proxy.index('--name') + 1]
+            self.assertEqual(proxy[proxy.index('--network') + 1], 'bridge')
+            self.assertIn(['network', 'connect', network, proxy_name], commands)
+            self.assertNotIn('--mount', proxy)
+            self.assertNotIn(config['auth_file'], repr(proxy))
+            self.assertIn('allowlist', proxy)
+            self.assertIn('pypi.org', proxy[proxy.index('allowlist') + 1])
+            self.assertNotIn('github.com', proxy[proxy.index('allowlist') + 1])
+            launch = self.launch(base)
+            self.assertEqual(launch[launch.index('--network') + 1], network)
+            self.assertIn('HTTPS_PROXY=http://172.30.0.2:3128', launch)
+            self.assertIn('HTTP_PROXY=http://172.30.0.2:3128', launch)
+            self.assertIn(['rm', '-f', proxy_name], commands)
+            self.assertIn(['network', 'rm', network], commands)
+            self.assertLess(commands.index(['rm', '-f', proxy_name]), commands.index(['network', 'rm', network]))
+            log = Path(evidence['egress']['log'])
+            self.assertEqual(log, output / 'egress.jsonl')
+            self.assertIn('"decision": "refused"', log.read_text())
+            self.assertEqual(evidence['egress']['mode'], 'allowlist')
+            self.assertEqual(evidence['egress']['refused_hosts'], ['github.com'])
+            self.assertEqual(evidence['egress']['connected_hosts'], ['pypi.org'])
+            self.assertIn('allowlist', evidence['runtime']['network'])
+            allocation = json.loads((output / 'runtime.json').read_text())
+            self.assertEqual(allocation['egress'], {'container': proxy_name, 'network': network})
+            self.assertEqual(allocation['state'], 'removed')
+
+    def test_log_mode_is_a_different_runtime_version(self):
+        with temporary_directory() as directory:
+            base = Path(directory)
+            config_path, config = self.configuration(base)
+            enforced = DevelopmentRuntime(config_path, base / 'run', base / 'tasks')
+            measured = DevelopmentRuntime(config_path, base / 'run', base / 'tasks', egress='log')
+            self.assertEqual(enforced.version['egress']['mode'], 'allowlist')
+            self.assertRegex(enforced.version['egress']['allowlist_sha256'], r'^[0-9a-f]{64}$')
+            self.assertRegex(enforced.version['egress']['proxy_sha256'], r'^[0-9a-f]{64}$')
+            self.assertNotEqual(enforced.version, measured.version)
+            with self.assertRaises(ValueError):
+                DevelopmentRuntime(config_path, base / 'run', base / 'tasks', egress='open')
+
+    def test_a_non_internal_network_stops_before_auth_or_model_and_is_removed(self):
+        with temporary_directory() as directory:
+            base = Path(directory)
+            config_path, config = self.configuration(base)
+            docker = Path(config['docker'])
+            docker.write_text(docker.read_text().replace("'Internal':True", "'Internal':False"))
+            output = base / 'run'
+            runtime = DevelopmentRuntime(config_path, output, base / 'tasks')
+            workspace = output / 'workspace'; workspace.mkdir(parents=True)
+            evidence = runtime.execute(workspace, 'request', io.StringIO(), io.StringIO())
+            self.assertIsNone(evidence['exit_status'])
+            self.assertIn('internal', evidence['error'])
+            commands = self.commands(base)
+            self.assertFalse(any(c[0] == 'run' and '-i' in c for c in commands))
+            network = next(c for c in commands if c[:2] == ['network', 'create'])[-1]
+            self.assertIn(['network', 'rm', network], commands)
+            self.assertEqual(json.loads((output / 'runtime.json').read_text())['state'], 'removed')
 
     def test_sandbox_failure_is_detected_without_auth_mount_or_attempt_allocation(self):
         with temporary_directory() as directory:
