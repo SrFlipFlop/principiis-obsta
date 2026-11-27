@@ -29,7 +29,7 @@ principiis --help
 | Prepared Docker images and working Codex subscription login | Your local Docker installation and the authentication file referenced by the runtime | These must work before a live `develop` or `evaluate`; `init` does not prepare them. |
 | Approval files | None | Running each command manually is the operator action. No `development.md`, `evaluation.md`, `final-review.md`, or `--authorization` flag is needed. |
 
-The two existing setup files are in ignored `private/` directories on this machine; they are not shipped in Git. From the project checkout, run:
+The two existing setup files are in ignored `private/` directories on this machine; they are not shipped in Git. #75 will move the evaluator into `benchmarks/<app>/evaluator/` and `runtime.json` out of the checkout ([ADR 0003](docs/adr/0003-evaluator-material-is-published-and-the-agent-is-network-limited.md)); until then, these paths are current. From the project checkout, run:
 
 ```bash
 export PRINCIPIIS_RUNS_ROOT=/var/tmp/principiis-operator/runs
