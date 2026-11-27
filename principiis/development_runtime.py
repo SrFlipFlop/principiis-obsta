@@ -13,6 +13,7 @@ from .codex import redact
 from .egress_proxy import normalise_host
 from .execution import execute
 from .jsonio import write_json
+from .snapshot import forbid_foreign_git
 
 
 CHECKOUT = Path(__file__).resolve().parents[1]
@@ -346,6 +347,7 @@ class DevelopmentRuntime:
             raise ValueError('workspace path cannot contain commas/newlines')
         if not workspace.is_dir():
             raise ValueError(f'development workspace does not exist: {workspace}')
+        forbid_foreign_git(workspace)
         # The controller and Docker daemon can have different mount namespaces
         # (notably Snap Docker's private /tmp). Probe this exact bind without
         # credentials or a model request before allocating an attempt.

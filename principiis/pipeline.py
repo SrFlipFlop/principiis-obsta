@@ -13,7 +13,7 @@ import uuid
 
 from .candidate_dependencies import inventory as candidate_dependency_inventory
 from .run_store import MAX_ATTEMPTS, controller, digest
-from .snapshot import preserve, validate
+from .snapshot import forbid_foreign_git, preserve, validate
 
 OUTCOMES = ('joint_pass', 'candidate_failure', 'unassessable', 'evaluator_error')
 # An assessment that cannot be scored; never counted as a pass.
@@ -55,6 +55,7 @@ def develop(store, step, *, retry, runtime):
     prior = store.completed(store.step_ids[index - 1]) if index else None
     if prior is not None:
         validate(prior.snapshot, runtime_image=binding['image'] if binding else None)
+        forbid_foreign_git(prior.snapshot)
     request = store.request_text(index)
     task = store.sequence['steps'][index]
     attempt = store.allocate_attempt(step)
