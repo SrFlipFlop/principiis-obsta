@@ -31,7 +31,13 @@ Follow the [baseline command sequence](README.md#baseline-command-sequence): `in
 
 ## Where hidden material lives
 
-Hidden checks, evaluator bundles, release manifests and private evidence live in the git-ignored `private/` directory of the operator's checkout. Runs are stored under `$PRINCIPIIS_RUNS_ROOT`, outside the checkout. Public `benchmarks/` packages contain only the developer-visible requests and design notes. Keep the research checkout, and any directory with `AGENTS.md` or researcher config in its ancestors, out of development workspaces.
+Today, hidden checks, evaluator bundles, release manifests and private evidence live in the git-ignored `private/` directory of the operator's checkout. Runs are stored under `$PRINCIPIIS_RUNS_ROOT`, outside the checkout. Public `benchmarks/` packages contain the developer-visible requests and design notes. Keep the research checkout, and any directory with `AGENTS.md` or researcher config in its ancestors, out of development workspaces.
+
+The target layout is in [ADR 0003](docs/adr/0003-evaluator-material-is-published-and-the-agent-is-network-limited.md), and #75 implements it:
+
+- tests and controls move to `benchmarks/<app>/evaluator/` and `benchmarks/<app>/controls/`, but only after the evaluated coding agent's network is limited;
+- Docker images are published after the paper;
+- the Codex login, `runtime.json` and personal paths stay private, outside Git.
 
 ## Benchmark packages
 
@@ -62,3 +68,9 @@ Status lives in GitHub issues. Read the current issue body, comments and blocker
 - 2026-11-24: The #59 three-step portal audit closed. Its closing comment cites `docs/reviews/ISSUE_59_THREE_STEP_AUDIT_20261124.md`, but that report was never committed, so the comment itself is the record.
 - 2026-11-25: #44 accepted: the first-three evaluator was applied to retained Codex checkpoints ([record](docs/archive/reviews/ISSUE_44_ACCEPTANCE_20261125.md)).
 - 2026-11-26: Simplification (#62): agents follow only the four hard rules in [AGENTS.md](AGENTS.md). Control tests (safe, violating, reject-all, alternative-valid) decide whether an evaluator version is usable. The owner approves milestones, not bundle hashes ([ADR 0002](docs/adr/0002-control-tests-qualify-evaluator-versions.md)).
+- 2026-11-26: Live web search is turned off for the evaluated coding agent. The repo is public, so search could find later requests. Implemented by #75.
+- 2026-11-27: Evaluator material will be published (#72, #73, [ADR 0003](docs/adr/0003-evaluator-material-is-published-and-the-agent-is-network-limited.md)):
+  - tests and controls go public in this repo once the evaluated coding agent's network is limited to an allowlist, built from a logging-only measurement;
+  - Docker images are published after the paper;
+  - only credentials and personal paths stay private.
+  - Open: whether run results are public during the experiment or after the paper.
