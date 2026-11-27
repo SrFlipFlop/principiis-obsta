@@ -6,7 +6,7 @@ Read [`PROJECT.md`](PROJECT.md) before working.
 
 ## Hard rules
 
-1. Hidden checks, evaluator material (`private/`) and future requests must never reach the evaluated coding agent's context, public Git, issues or PRs.
+1. Hidden checks, evaluator material and future requests must never reach the evaluated coding agent's context. Credentials, `runtime.json` and personal paths must never reach public Git, issues or PRs. Keep evaluator material in git-ignored `private/` until the network limits in #75 are in place ([ADR 0003](docs/adr/0003-evaluator-material-is-published-and-the-agent-is-network-limited.md)).
 2. No paid API runs.
 3. No live Codex subscription runs without asking the owner.
 4. Don't push or publish (PRs, issues, comments, releases) unless the owner asked for it in the session.
