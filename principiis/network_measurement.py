@@ -5,7 +5,9 @@
 Runs one ordinary Codex development session on a disposable fixture request, with
 the egress proxy in `log` mode: every destination is recorded and forwarded, except
 GitHub and its mirrors, tunnels to the gateway-only PyPI hosts and non-public addresses,
-which are refused (and recorded). The output keeps the workspace, Codex logs, `egress.jsonl` and `measurement.json`, whose
+which are refused (and recorded). Model-provider hosts (OpenAI/ChatGPT) are forwarded only
+with the per-run model credential, so only the Codex process reaches them; the hosts it
+requested with it are `credentialed_hosts`. The output keeps the workspace, Codex logs, `egress.jsonl` and `measurement.json`, whose
 `connected_hosts` (destinations that actually answered) are the candidate allowlist. This is a live subscription run; it
 needs the owner's approval (AGENTS.md hard rule 3) and never uses a benchmark request.
 """
@@ -20,7 +22,7 @@ import uuid
 
 from .development_runtime import (CHECKOUT, NETWORK_ALLOWLIST, DevelopmentRuntime, docker_run, inspect_image,
                                   load_allowlist, load_config, preflight_run, remove, restrictions)
-from .egress_proxy import gateway_only, never_allowed, unsafe_entry
+from .egress_proxy import gateway_only, model_provider, never_allowed, unsafe_entry
 from .jsonio import write_json
 
 REQUEST = CHECKOUT / 'fixtures/development/network_measurement_request.txt'
@@ -36,7 +38,8 @@ def measure(config, output, request=REQUEST):
     record = {'schema_version': 1, 'request': str(request), 'runtime_version': runtime.version,
               'connected_hosts': evidence['egress']['connected_hosts'],
               'allowed_hosts': evidence['egress']['allowed_hosts'],
-              'refused_hosts': evidence['egress']['refused_hosts'], 'execution': evidence}
+              'refused_hosts': evidence['egress']['refused_hosts'],
+              'credentialed_hosts': evidence['egress'].get('credentialed_hosts', []), 'execution': evidence}
     write_json(output / 'measurement.json', record)
     return record
 
@@ -65,13 +68,22 @@ def exclusion(host):
             return reason
 
 
-# Measured hosts of these families go to the owner as model hosts, never into `domains`:
-# commands must not reach the model API (it offers hosted web search).
-MODEL_FAMILIES = ('openai.com', 'chatgpt.com')
+# Measured model-provider hosts (egress_proxy.MODEL_PROVIDER) and every host the Codex
+# process reached with the model credential go to the owner as model hosts, never into
+# `domains`: commands must not reach the model API (it offers hosted web search).
+model_host = model_provider
 
 
-def model_host(host):
-    return any(host == suffix or host.endswith('.' + suffix) for suffix in MODEL_FAMILIES)
+def credentialed_hosts(document):
+    """Hosts requested with the model credential (by the Codex process); older records keep them in `execution`."""
+    hosts = document.get('credentialed_hosts')
+    if hosts is None:
+        execution = document.get('execution')
+        egress = execution.get('egress') if isinstance(execution, dict) else None
+        hosts = egress.get('credentialed_hosts', []) if isinstance(egress, dict) else []
+    if not isinstance(hosts, list) or any(not isinstance(v, str) for v in hosts):
+        raise ValueError('measurement has a malformed credentialed_hosts list')
+    return set(hosts)
 
 
 def draft_allowlist(measurement, output):
@@ -87,8 +99,9 @@ def draft_allowlist(measurement, output):
     refused = document.get('refused_hosts', [])
     if not isinstance(refused, list) or any(not isinstance(v, str) for v in refused):
         raise ValueError('measurement has a malformed refused_hosts list')
-    models = sorted({v for v in hosts if model_host(v)})
-    kept = sorted({v for v in hosts if not exclusion(v) and not model_host(v)})
+    credentialed = credentialed_hosts(document)
+    models = sorted({v for v in hosts if model_host(v) or (v in credentialed and not exclusion(v))})
+    kept = sorted({v for v in hosts if not exclusion(v) and v not in models})
     excluded = {v: exclusion(v) for v in sorted(set(hosts)) if exclusion(v)}
     draft = {'version': '1',
              'status': 'TODO-OWNER: DRAFT from a measurement (sha256 %s). Review each host, then replace this '
@@ -317,6 +330,9 @@ def helper(argv):
     print(f"Draft written to {summary['draft']} ({len(summary['hosts'])} hosts). It is REJECTED until you edit it.")
     for host, reason in summary['excluded'].items():
         print(f'NOT drafted, decide consciously: {host} ({reason})')
+    for host in summary['model_hosts']:
+        print(f'model_domains_measured (Codex process, with the model credential): {host} '
+              '(never in domains; add to model_domains only if Codex needs it)')
     for host in summary['refused']:
         print(f'REFUSED during the measurement: {host} (the reason is in egress.jsonl; never drafted)')
 

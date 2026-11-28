@@ -14,9 +14,11 @@ IMAGE = 'sha256:' + 'a' * 64
 OTHER = 'sha256:' + 'b' * 64
 
 
-def write_measurement(path, hosts, refused=()):
-    path.write_text(json.dumps({'schema_version': 1, 'connected_hosts': hosts, 'allowed_hosts': hosts,
-                                'refused_hosts': list(refused)}))
+def write_measurement(path, hosts, refused=(), credentialed=None):
+    record = {'schema_version': 1, 'connected_hosts': hosts, 'allowed_hosts': hosts, 'refused_hosts': list(refused)}
+    if credentialed is not None:
+        record['credentialed_hosts'] = list(credentialed)
+    path.write_text(json.dumps(record))
     return path
 
 
@@ -63,6 +65,40 @@ class DraftAllowlist(unittest.TestCase):
             self.assertEqual(summary['model_hosts'], ['ab.chatgpt.com', 'api.openai.com', 'chatgpt.com'])
             # A measured model host that is not yet a model domain is for the owner to decide.
             self.assertIn('ab.chatgpt.com', document['model_domains_measured'])
+
+    def test_hosts_the_codex_process_reached_with_the_credential_are_model_hosts_for_the_owner(self):
+        # In log mode only the Codex process holds the model credential, so whatever it
+        # reached with it goes to model_domains_measured, never to the ordinary domains (#75).
+        with temporary_directory() as directory:
+            base = Path(directory)
+            measurement = write_measurement(base / 'm.json',
+                                            ['registry.npmjs.org', 'chatgpt.com', 'telemetry.example.net'],
+                                            credentialed=['chatgpt.com', 'telemetry.example.net', 'github.com'])
+            summary = network_measurement.draft_allowlist(measurement, base / 'draft.json')
+            document = json.loads((base / 'draft.json').read_text())
+            self.assertEqual(document['domains'], ['registry.npmjs.org'])
+            self.assertEqual(document['model_domains_measured'], ['chatgpt.com', 'telemetry.example.net'])
+            self.assertEqual(summary['model_hosts'], ['chatgpt.com', 'telemetry.example.net'])
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                network_measurement.main(['draft-allowlist', '--measurement', str(measurement),
+                                          '--output', str(base / 'second.json')])
+            self.assertIn('model_domains_measured (Codex process, with the model credential): telemetry.example.net',
+                          output.getvalue())
+
+    def test_the_measurement_records_the_credentialed_hosts(self):
+        class Runtime:
+            version = {'egress': {'mode': 'log'}}
+
+            def __init__(self, config, output, source, *, egress):
+                assert egress == 'log'
+
+            def execute(self, workspace, request, stdout, stderr):
+                return {'egress': {'connected_hosts': ['chatgpt.com', 'registry.npmjs.org'],
+                                   'allowed_hosts': ['chatgpt.com', 'registry.npmjs.org'], 'refused_hosts': ['api.openai.com'],
+                                   'credentialed_hosts': ['chatgpt.com']}}
+        with temporary_directory() as directory, patch.object(network_measurement, 'DevelopmentRuntime', Runtime):
+            record = network_measurement.measure(Path(directory) / 'config.json', Path(directory) / 'out')
+        self.assertEqual(record['credentialed_hosts'], ['chatgpt.com'])
 
     def test_code_hosting_and_ip_literals_are_never_drafted(self):
         with temporary_directory() as directory:

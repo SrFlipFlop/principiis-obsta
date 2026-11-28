@@ -73,6 +73,21 @@ NEVER_ALLOW = (
 GATEWAY_ONLY = ('pypi.org', 'pythonhosted.org')
 # The only upstreams the gateway contacts, and the route each serves.
 GATEWAY_UPSTREAMS = ('pypi.org', 'files.pythonhosted.org')
+# The proxy's stable name on the internal network (a Docker network alias, resolved by
+# Docker's embedded DNS there). Commands use it for the proxy and the PyPI gateway, so
+# lockfiles that record the index URL (uv.lock, poetry.lock) stay valid across attempts.
+GATEWAY_NAME = 'egress-proxy'
+
+# Model-provider hosts: the registrable domains OpenAI serves Codex, ChatGPT and the API
+# from (api/auth/platform/cdn.openai.com, chatgpt.com and its subdomains such as
+# ab.chatgpt.com, the chat.com alias, oaistatic.com static assets, oaiusercontent.com
+# user files). Any of them may lead to the model, and the model offers hosted web search,
+# which ignores every network limit. So in every mode they are forwarded only with the
+# per-run model credential, which only the Codex process holds; in `allowlist` mode only
+# if also listed in `model_domains`. The loader refuses them in `domains`. A suffix also
+# covers its subdomains. Not exhaustive (other providers or resellers would need their own
+# key, which commands do not have); `allowlist` mode is default-deny regardless.
+MODEL_PROVIDER = ('openai.com', 'chatgpt.com', 'chat.com', 'oaistatic.com', 'oaiusercontent.com')
 
 
 def never_allowed(host):
@@ -83,6 +98,11 @@ def never_allowed(host):
 def gateway_only(host):
     host = normalise_host(host)
     return host is not None and any(host == suffix or host.endswith('.' + suffix) for suffix in GATEWAY_ONLY)
+
+
+def model_provider(host):
+    host = normalise_host(host)
+    return host is not None and any(host == suffix or host.endswith('.' + suffix) for suffix in MODEL_PROVIDER)
 
 
 def unsafe_entry(entry):
@@ -129,19 +149,22 @@ def listed(host, domains):
 def allowed(host, port, mode, allowlist, model_domains=(), credential=False):
     """Whether the proxy may open a connection to `host:port`.
 
-    A model host needs the model credential even if it is also in `allowlist`.
+    A model host (`model_domains` or any `MODEL_PROVIDER` host) needs the model
+    credential in every mode, even if it is also in `allowlist`; in `allowlist` mode a
+    provider host must also be a model domain.
     """
     host = normalise_host(host)
     if host is None or not isinstance(port, int) or not 0 < port < 65536:
         return False
+    model = listed(host, model_domains) or model_provider(host)
     if mode == 'log':
         # Addresses are checked after resolution (`public_address`).
-        return not never_allowed(host) and not gateway_only(host)
+        return not never_allowed(host) and not gateway_only(host) and (not model or credential is True)
     if mode != 'allowlist' or port not in WEB_PORTS or never_allowed(host):
         return False
     if listed(host, model_domains):
         return credential is True
-    return listed(host, allowlist)
+    return not model and listed(host, allowlist)
 
 
 def refusal_reason(host):
@@ -337,6 +360,23 @@ def tunnel_refusal(host, hello):
     return None
 
 
+def log_tunnel_refusal(hello, presented, model_domains):
+    """Why a log-mode tunnel must not carry this ClientHello, or None.
+
+    Log mode records SNI mismatches instead of refusing them, except where they could
+    reach the model without the credential: an SNI naming a model host (fronting through
+    another host on the same CDN), and Encrypted Client Hello, which hides the real SNI.
+    """
+    if hello is None:
+        return None
+    if hello['ech']:
+        return 'ech'
+    sni = normalise_host(hello['sni'] or '')
+    if sni and (model_provider(sni) or listed(sni, model_domains)) and presented != 'valid':
+        return 'model host in SNI without the model credential'
+    return None
+
+
 def plain_refusal(host, port, headers):
     """Why an allowlist-mode plain-HTTP request must not be forwarded, or None."""
     names = [line.split(':', 1)[0].strip().lower() for line in headers]
@@ -351,6 +391,17 @@ def plain_refusal(host, port, headers):
     if 'transfer-encoding' in names or len(lengths) > 1 or (lengths and not lengths[0].isdigit()):
         return 'unsupported-body'
     return None
+
+
+def host_header_names_model(headers, model_domains):
+    """Whether a plain-HTTP request's Host header names a model host (log mode: fronting by Host)."""
+    for line in headers:
+        name, _, value = line.partition(':')
+        if name.strip().lower() == 'host':
+            host = normalise_host(value.strip().rsplit(':', 1)[0] if value.strip().count(':') == 1 else value.strip())
+            if host and (model_provider(host) or listed(host, model_domains)):
+                return True
+    return False
 
 
 def discard(source, target):
@@ -550,9 +601,10 @@ def serve_gateway(client, method, target, headers):
 
 
 def own_target(target, address):
-    """The origin-form target of an absolute-form request to the proxy's own address, or None."""
+    """The origin-form target of an absolute-form request to the proxy's own address or alias, or None."""
     match = re.fullmatch(r'http://([^/:]+)(?::\d+)?(/.*)?', target)
-    return (match[2] or '/') if address and match and match[1] == address else None
+    own = match and ((address and match[1] == address) or match[1].lower() == GATEWAY_NAME)
+    return (match[2] or '/') if own else None
 
 
 def handle(client, mode, policy, token='', address=None):
@@ -571,7 +623,7 @@ def handle(client, mode, policy, token='', address=None):
         host, port, path = destination(method, target)
         name = normalise_host(host)
         presented = credential(lines[1:], token)
-        model = listed(name or '', policy.get('model_domains', ()))
+        model = listed(name or '', policy.get('model_domains', ())) or model_provider(name or '')
         decision = allowed(host, port, mode, policy.get('domains', ()), policy.get('model_domains', ()),
                            credential=presented == 'valid')
         reason, address = None, name
@@ -579,18 +631,28 @@ def handle(client, mode, policy, token='', address=None):
             reason = always
         elif not decision and model and presented != 'valid':
             reason = 'model host without the model credential'
+        elif not decision and model and mode == 'allowlist' and port in WEB_PORTS:
+            reason = 'model-provider host not in model_domains'
+        if (decision and mode == 'log' and method != 'CONNECT' and presented != 'valid'
+                and host_header_names_model(lines[1:], policy.get('model_domains', ()))):
+            decision, reason = False, 'model host in Host header without the model credential'
         if decision and mode == 'allowlist' and method != 'CONNECT':
             reason = plain_refusal(name, port, lines[1:])
             decision = reason is None
+        unresolved = False
         if decision and mode == 'log':
-            address = public_address(name, port)
+            try:
+                address = public_address(name, port)
+            except OSError:  # still one logged decision, with its credential
+                address, unresolved = None, True
             if address is None:
-                decision, reason = False, 'non-public address'
+                decision, reason = False, 'name does not resolve' if unresolved else 'non-public address'
         log(method=method, host=name or host, port=port, decision='allowed' if decision else 'refused',
             credential=presented, **({'reason': reason} if reason else {}))
         if not decision:
             answered = True
-            client.sendall(b'HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
+            client.sendall(b'HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n' if unresolved
+                           else b'HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
             return
         upstream = socket.create_connection((address, port), timeout=30)
         upstream.settimeout(None)
@@ -603,7 +665,9 @@ def handle(client, mode, policy, token='', address=None):
                 reply.start()  # never delay a protocol in which the server speaks first
             data, hello = read_client_hello(client, 30 if mode == 'allowlist' else 5, rest)
             sni = hello and hello['sni']
-            if mode == 'allowlist' and (refusal := tunnel_refusal(name, hello)):
+            refusal = tunnel_refusal(name, hello) if mode == 'allowlist' else log_tunnel_refusal(
+                hello, presented, policy.get('model_domains', ()))
+            if refusal:
                 log(method=method, host=name, port=port, decision='refused', reason=refusal, sni=sni,
                     credential=presented)
                 return

@@ -12,16 +12,16 @@ from unittest.mock import patch
 from support import temporary_directory
 from principiis import egress_proxy
 from principiis.development_runtime import load_allowlist
-from principiis.egress_proxy import allowed, client_hello, credential, never_allowed, unsafe_entry
+from principiis.egress_proxy import MODEL_PROVIDER, allowed, client_hello, credential, model_provider, never_allowed, unsafe_entry
 
 
-ALLOWLIST = ['registry.npmjs.org', '*.nuget.org', 'chatgpt.com']
+ALLOWLIST = ['registry.npmjs.org', '*.nuget.org', 'docs.example.net']
 
 
 class EgressPolicyTests(unittest.TestCase):
     def test_allowlist_mode_admits_listed_hosts_on_web_ports(self):
         for host, port in (('registry.npmjs.org', 443), ('Registry.NPMjs.org.', 443), ('api.nuget.org', 443),
-                           ('chatgpt.com', 80)):
+                           ('docs.example.net', 80)):
             self.assertTrue(allowed(host, port, 'allowlist', ALLOWLIST), (host, port))
 
     def test_allowlist_mode_refuses_everything_else(self):
@@ -414,7 +414,7 @@ class ModelCredentialTests(unittest.TestCase):
     def test_log_mode_forwards_everything_but_records_whether_the_credential_came(self):
         with patch.object(egress_proxy.socket, 'create_connection', side_effect=OSError('no route in test')), \
                 patch.object(egress_proxy, 'resolve', lambda name, port: [PUBLIC]):
-            reply, events = self.request('CONNECT chatgpt.com:443 HTTP/1.1\r\n\r\n', mode='log')
+            reply, events = self.request('CONNECT registry.npmjs.org:443 HTTP/1.1\r\n\r\n', mode='log')
         self.assertIn(b' 502 ', reply)
         self.assertEqual((events[0]['decision'], events[0]['credential']), ('allowed', 'absent'))
 
@@ -763,3 +763,138 @@ class GatewayUpstreamTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+# Hosts of the model provider that a command must never reach, in either mode (#75).
+PROVIDER_HOSTS = ('chatgpt.com', 'api.openai.com', 'auth.openai.com', 'ab.chatgpt.com', 'platform.openai.com',
+                  'cdn.openai.com', 'cdn.oaistatic.com', 'files.oaiusercontent.com', 'chat.com', 'API.OpenAI.com.')
+SHIPPED = {'domains': [], 'model_domains': ['api.openai.com', 'auth.openai.com', 'chatgpt.com']}
+
+
+class ModelProviderTests(unittest.TestCase):
+    """Commands must not reach any model-provider host, also in the measurement's log mode."""
+
+    def test_the_model_provider_hosts_are_kept_in_one_place(self):
+        for suffix in ('openai.com', 'chatgpt.com', 'oaistatic.com', 'oaiusercontent.com'):
+            self.assertIn(suffix, MODEL_PROVIDER)
+        for host in PROVIDER_HOSTS:
+            self.assertTrue(model_provider(host), host)
+        for host in ('registry.npmjs.org', 'notopenai.com', 'openai.com.attacker.example', 'chatgpt.co'):
+            self.assertFalse(model_provider(host), host)
+
+    def test_log_mode_forwards_model_provider_hosts_only_with_the_credential(self):
+        for host in PROVIDER_HOSTS:
+            with self.subTest(host=host):
+                self.assertFalse(allowed(host, 443, 'log', [], SHIPPED['model_domains']))
+                self.assertTrue(allowed(host, 443, 'log', [], SHIPPED['model_domains'], credential=True))
+                # Even with no model_domains at all.
+                self.assertFalse(allowed(host, 443, 'log', []))
+        self.assertTrue(allowed('registry.npmjs.org', 443, 'log', [], SHIPPED['model_domains']))
+
+    def test_allowlist_mode_never_forwards_a_provider_host_outside_model_domains(self):
+        for host in ('ab.chatgpt.com', 'cdn.oaistatic.com', 'platform.openai.com'):
+            with self.subTest(host=host):
+                self.assertFalse(allowed(host, 443, 'allowlist', [host], SHIPPED['model_domains'], credential=True))
+                self.assertFalse(allowed(host, 443, 'allowlist', [host], SHIPPED['model_domains']))
+        self.assertTrue(allowed('chatgpt.com', 443, 'allowlist', [], SHIPPED['model_domains'], credential=True))
+
+    def test_the_loader_refuses_provider_hosts_in_domains(self):
+        for entry in ('ab.chatgpt.com', 'cdn.oaistatic.com', '*.openai.com', 'files.oaiusercontent.com'):
+            with self.subTest(entry=entry), self.assertRaisesRegex(ValueError, 'model'):
+                AllowlistLoaderTests.load(self, ['registry.npmjs.org', entry])
+
+    exchange = HandleTests.exchange
+
+    def test_a_command_gets_403_for_any_provider_host_in_log_mode(self):
+        for host in ('chatgpt.com', 'ab.chatgpt.com', 'cdn.oaistatic.com'):
+            with self.subTest(host=host):
+                head = f'CONNECT {host}:443 HTTP/1.1\r\nHost: {host}:443\r\n\r\n'.encode()
+                reply, forwarded, events = self.exchange('log', head, hello(host), policy=SHIPPED, token=TOKEN)
+                self.assertIn(b' 403 ', reply)
+                self.assertEqual(forwarded, b'')
+                refused = [e for e in events if e.get('decision') == 'refused']
+                self.assertEqual((refused[0]['reason'], refused[0]['credential']),
+                                 ('model host without the model credential', 'absent'))
+        reply, forwarded, events = self.exchange(
+            'log', b'GET http://chatgpt.com/ HTTP/1.1\r\nHost: chatgpt.com\r\n\r\n', policy=SHIPPED, token=TOKEN)
+        self.assertIn(b' 403 ', reply)
+        self.assertEqual(forwarded, b'')
+
+    def test_the_codex_process_reaches_any_provider_host_in_log_mode_and_it_is_logged(self):
+        for host in ('chatgpt.com', 'ab.chatgpt.com'):
+            with self.subTest(host=host):
+                head = (f'CONNECT {host}:443 HTTP/1.1\r\nHost: {host}:443\r\n'
+                        f'Proxy-Authorization: {basic("model", TOKEN)}\r\n\r\n').encode()
+                data = hello(host)
+                reply, forwarded, events = self.exchange('log', head, data, policy=SHIPPED, token=TOKEN)
+                self.assertIn(b' 200 ', reply)
+                self.assertEqual(forwarded, data)
+                self.assertEqual([(e['decision'], e.get('credential')) for e in events if 'decision' in e],
+                                 [('allowed', 'valid'), ('connected', None)])
+
+    def test_log_mode_closes_a_tunnel_whose_sni_names_a_provider_host_without_the_credential(self):
+        # Fronting by SNI: CONNECT to an ordinary host on the same CDN, SNI of the model API.
+        for name in ('api.openai.com', 'chatgpt.com', 'cdn.oaistatic.com'):
+            with self.subTest(sni=name):
+                reply, forwarded, events = self.exchange('log', HandleTests.CONNECT, hello(name), policy=SHIPPED,
+                                                         token=TOKEN)
+                self.assertEqual(forwarded, b'')
+                refused = [e for e in events if e.get('decision') == 'refused']
+                self.assertEqual(refused[-1]['reason'], 'model host in SNI without the model credential')
+        # Any other SNI is still only recorded (log mode measures, it does not enforce SNI).
+        data = hello('docs.example.net')
+        reply, forwarded, events = self.exchange('log', HandleTests.CONNECT, data, policy=SHIPPED, token=TOKEN)
+        self.assertEqual(forwarded, data)
+
+    def test_log_mode_closes_a_tunnel_offering_encrypted_client_hello(self):
+        # ECH would hide a provider host behind an outer SNI.
+        reply, forwarded, events = self.exchange(
+            'log', HandleTests.CONNECT, synthetic_hello(server_name(b'registry.npmjs.org'), (0xfe0d, b'\x00')),
+            policy=SHIPPED, token=TOKEN)
+        self.assertEqual(forwarded, b'')
+        self.assertEqual([e for e in events if e.get('decision') == 'refused'][-1]['reason'], 'ech')
+
+    def test_log_mode_refuses_plain_http_whose_host_header_names_a_provider_host(self):
+        reply, forwarded, events = self.exchange(
+            'log', b'GET http://registry.npmjs.org/v1/responses HTTP/1.1\r\nHost: api.openai.com\r\n\r\n',
+            policy=SHIPPED, token=TOKEN)
+        self.assertIn(b' 403 ', reply)
+        self.assertEqual(forwarded, b'')
+        refused = [e for e in events if e.get('decision') == 'refused']
+        self.assertEqual(refused[-1]['reason'], 'model host in Host header without the model credential')
+
+
+class GatewayAliasTests(unittest.TestCase):
+    serve = GatewayHandleTests.serve
+
+    def test_absolute_form_to_the_proxys_stable_alias_is_the_gateway(self):
+        response = FakeResponse(200, {'Content-Type': JSON_TYPE}, b'{"files": []}')
+        status, reply, calls, events = self.serve(
+            b'GET http://egress-proxy:3128/pypi/simple/six/ HTTP/1.1\r\nHost: egress-proxy:3128\r\n\r\n',
+            response, address='172.30.0.2')
+        self.assertIn(b' 200 ', status)
+        self.assertEqual(calls[0][:2], ('pypi.org', '/simple/six/'))
+        self.assertEqual(egress_proxy.GATEWAY_NAME, 'egress-proxy')
+
+
+class LogModeResolutionTests(unittest.TestCase):
+    def test_a_name_that_does_not_resolve_is_still_a_logged_decision_with_its_credential(self):
+        # The measurement must record every request, also one whose name does not resolve.
+        def unresolvable(name, port):
+            raise socket.gaierror('no such name')
+        head = (f'CONNECT chatgpt.com:443 HTTP/1.1\r\nProxy-Authorization: {basic("model", TOKEN)}\r\n\r\n').encode()
+        upstream, events = Upstream(), []
+        client, proxy_side = socket.socketpair()
+        with patch.object(egress_proxy.socket, 'create_connection', upstream.connect), \
+                patch.object(egress_proxy, 'resolve', unresolvable), \
+                patch.object(egress_proxy, 'log', lambda **event: events.append(event)):
+            worker = threading.Thread(target=egress_proxy.handle, args=(proxy_side, 'log', SHIPPED, TOKEN))
+            worker.start()
+            client.sendall(head)
+            reply = client.recv(4096)
+            client.close()
+            worker.join(10)
+        self.assertIn(b' 502 ', reply)
+        self.assertEqual(upstream.connections, [])
+        decisions = [(e['host'], e['decision'], e['credential'], e.get('reason')) for e in events if 'decision' in e]
+        self.assertEqual(decisions, [('chatgpt.com', 'refused', 'valid', 'name does not resolve')])

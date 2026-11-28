@@ -9,6 +9,7 @@ from unittest.mock import patch
 import subprocess
 import uuid
 
+from principiis.egress_proxy import MODEL_PROVIDER
 from principiis.development_runtime import ADAPTER, CODEX_HOME, LOG_POLICY, MODEL_CREDENTIAL, NETWORK_DESCRIPTION, PYPI_GATEWAY, SANDBOX_PROBE, DevelopmentRuntime, cleanup_runtime, docker_command, load_config, preflight_run, configuration_args, workspace_permission_settings, restrictions
 
 
@@ -238,10 +239,15 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             self.assertNotIn('github.com', proxy[proxy.index('allowlist') + 1])
             launch = self.launch(base)
             self.assertEqual(launch[launch.index('--network') + 1], network)
-            self.assertIn('HTTPS_PROXY=http://172.30.0.2:3128', launch)
-            self.assertIn('HTTP_PROXY=http://172.30.0.2:3128', launch)
-            self.assertIn('PIP_INDEX_URL=http://172.30.0.2:3128/pypi/simple/', launch)
-            self.assertIn('NO_PROXY=localhost,127.0.0.1,::1,172.30.0.2', launch)
+            # Commands name the proxy by its stable alias on the internal network, never its
+            # per-attempt address, so lockfiles that record the index URL stay valid (#75).
+            self.assertEqual(proxy[proxy.index('--network-alias') + 1], 'egress-proxy')
+            self.assertLess(proxy.index('--network-alias'), proxy.index(config['image']))
+            self.assertIn('HTTPS_PROXY=http://egress-proxy:3128', launch)
+            self.assertIn('HTTP_PROXY=http://egress-proxy:3128', launch)
+            self.assertIn('PIP_INDEX_URL=http://egress-proxy:3128/pypi/simple/', launch)
+            self.assertIn('NO_PROXY=localhost,127.0.0.1,::1,egress-proxy', launch)
+            self.assertNotIn('172.30.0.2', json.dumps(launch))
             self.assertIn(['rm', '-f', proxy_name], commands)
             self.assertIn(['network', 'rm', network], commands)
             self.assertLess(commands.index(['rm', '-f', proxy_name]), commands.index(['network', 'rm', network]))
@@ -259,7 +265,7 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             self.assertEqual([v[-3:] for v in allocation['egress_cleanup_argvs']],
                              [['rm', '-f', proxy_name], ['network', 'rm', network], ['network', 'rm', outside_network]])
             self.assertEqual(allocation['state'], 'removed')
-            self.assertEqual(runtime.version['adapter'], 'docker-development-v6')
+            self.assertEqual(runtime.version['adapter'], 'docker-development-v7')
 
     def egress_failure(self, replace):
         with temporary_directory() as directory:
@@ -321,12 +327,12 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             self.assertIn('unset PO_MODEL_TOKEN', boot)
             self.assertLess(boot.index('unset PO_MODEL_TOKEN'), boot.index('exec "$@"'))
             # Commands get the token-less proxy and cannot read the Codex home (login, shell snapshots).
-            plain = 'http://172.30.0.2:3128'
+            plain = 'http://egress-proxy:3128'
             policy_arg = next(v for v in launch if v.startswith('shell_environment_policy.set='))
             for name in ('HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy'):
                 self.assertIn(f'{name}="{plain}"', policy_arg)
             self.assertIn(f'PIP_INDEX_URL="{plain}/pypi/simple/"', policy_arg)
-            self.assertIn('PIP_TRUSTED_HOST="172.30.0.2:3128"', policy_arg)
+            self.assertIn('PIP_TRUSTED_HOST="egress-proxy:3128"', policy_arg)
             self.assertIn('shell_environment_policy.exclude=["PO_MODEL_TOKEN"]', launch)
             self.assertIn('permissions.development.filesystem={"' + CODEX_HOME + '"="none"}', launch)
             retained = [json.dumps(self.commands(base)), json.dumps(evidence), stdout.getvalue(), stderr.getvalue(),
@@ -357,20 +363,23 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             base = Path(directory)
             config_path, config = self.configuration(base)
             runtime = DevelopmentRuntime(config_path, base / 'run', base / 'tasks')
-            self.assertEqual(ADAPTER, 'docker-development-v6')
+            self.assertEqual(ADAPTER, 'docker-development-v7')
             self.assertEqual(runtime.version['adapter'], ADAPTER)
             self.assertEqual(runtime.version['egress']['model_credential'], MODEL_CREDENTIAL)
             self.assertIn('proxy-authorization', MODEL_CREDENTIAL)
             commands = runtime.version['command_environment']
             self.assertEqual(commands['exclude'], ['PO_MODEL_TOKEN'])
-            self.assertEqual(commands['set']['HTTPS_PROXY'], 'http://<egress proxy>:3128')
+            # The proxy's stable alias on the internal network: the same in every attempt.
+            self.assertEqual(commands['set']['HTTPS_PROXY'], 'http://egress-proxy:3128')
             # Python package installs go through the proxy's PyPI gateway, never a tunnel to PyPI.
-            self.assertEqual(commands['set']['PIP_INDEX_URL'], 'http://<egress proxy>:3128/pypi/simple/')
-            self.assertEqual(commands['set']['PIP_TRUSTED_HOST'], '<egress proxy>:3128')
-            self.assertEqual(commands['set']['UV_DEFAULT_INDEX'], 'http://<egress proxy>:3128/pypi/simple/')
+            self.assertEqual(commands['set']['PIP_INDEX_URL'], 'http://egress-proxy:3128/pypi/simple/')
+            self.assertEqual(commands['set']['PIP_TRUSTED_HOST'], 'egress-proxy:3128')
+            self.assertEqual(commands['set']['UV_DEFAULT_INDEX'], 'http://egress-proxy:3128/pypi/simple/')
             # Codex's sandbox leaves the home read-only; uv refuses to start without a writable cache.
             self.assertEqual(commands['set']['UV_CACHE_DIR'], '/tmp/uv-cache')
-            self.assertEqual(commands['set']['NO_PROXY'], 'localhost,127.0.0.1,::1,<egress proxy>')
+            # The cache and the environment are on different file systems; copy without a warning.
+            self.assertEqual(commands['set']['UV_LINK_MODE'], 'copy')
+            self.assertEqual(commands['set']['NO_PROXY'], 'localhost,127.0.0.1,::1,egress-proxy')
             self.assertEqual(runtime.version['egress']['pypi_gateway'], PYPI_GATEWAY)
             for needle in ('pypi.org', 'files.pythonhosted.org', '/pypi/simple/', 'Fastly'):
                 self.assertIn(needle, PYPI_GATEWAY)
@@ -401,11 +410,37 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             enforced = DevelopmentRuntime(config_path, base / 'run', base / 'tasks')
             measured = DevelopmentRuntime(config_path, base / 'run', base / 'tasks', egress='log')
             self.assertEqual(measured.version['egress']['log_policy'], LOG_POLICY)
-            for needle in ('log-refusals-v1', 'NEVER_ALLOW', 'GATEWAY_ONLY', 'non-public'):
+            for needle in ('log-refusals-v2', 'NEVER_ALLOW', 'GATEWAY_ONLY', 'non-public', 'MODEL_PROVIDER',
+                           'model credential'):
                 self.assertIn(needle, LOG_POLICY)
             self.assertNotIn('log_policy', enforced.version['egress'])
+            # Both modes name the model-provider hosts that only the Codex process may reach.
+            for runtime in (enforced, measured):
+                self.assertEqual(runtime.version['egress']['model_provider_hosts'], list(MODEL_PROVIDER))
+            self.assertEqual(measured.version['egress']['model_domains'], ['api.openai.com', 'auth.openai.com', 'chatgpt.com'])
             self.assertNotIn('without limits', NETWORK_DESCRIPTION['log'])
             self.assertIn('GitHub', NETWORK_DESCRIPTION['log'])
+
+    def test_log_mode_still_requires_the_model_credential_for_model_hosts(self):
+        # The measurement run (log mode) must not let a command reach the model API with
+        # hosted web search: the proxy gets the shipped model_domains and this attempt's
+        # token, exactly as in allowlist mode, and no ordinary domains (#75).
+        with temporary_directory() as directory:
+            base = Path(directory)
+            config_path, config = self.configuration(base)
+            output = base / 'run'
+            runtime = DevelopmentRuntime(config_path, output, base / 'tasks', egress='log')
+            workspace = output / 'workspace'; workspace.mkdir(parents=True)
+            runtime.execute(workspace, 'request', io.StringIO(), io.StringIO())
+            proxy = next(c for c in self.commands(base) if c[0] == 'run' and '--detach' in c)
+            policy = json.loads(proxy[proxy.index('log') + 1])
+            self.assertEqual(policy, {'domains': [], 'model_domains': ['api.openai.com', 'auth.openai.com', 'chatgpt.com']})
+            self.assertEqual(proxy[proxy.index('PO_MODEL_TOKEN') - 1], '--env')
+            received = {('proxy' if '--detach' in v['argv'] else 'codex' if '-i' in v['argv'] else 'preflight'): v['token']
+                        for v in self.tokens(base)}
+            self.assertRegex(received['proxy'], r'^[0-9a-f]{64}$')
+            self.assertEqual(received['codex'], received['proxy'])
+            self.assertIn('http://model:${PO_MODEL_TOKEN}@', self.launch(base)[self.launch(base).index('-c') + 1])
 
     def test_a_non_internal_network_stops_before_auth_or_model_and_is_removed(self):
         with temporary_directory() as directory:

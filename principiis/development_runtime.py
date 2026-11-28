@@ -15,7 +15,7 @@ import time
 import uuid
 
 from .codex import redact
-from .egress_proxy import MODEL_TOKEN_VARIABLE, normalise_host, unsafe_entry
+from .egress_proxy import GATEWAY_NAME, MODEL_PROVIDER, MODEL_TOKEN_VARIABLE, model_provider, normalise_host, unsafe_entry
 from .execution import execute
 from .jsonio import write_json
 from .snapshot import forbid_foreign_git
@@ -33,7 +33,12 @@ EGRESS_MODES = ('allowlist', 'log')
 # proxy token, held only by the Codex process). Neither v4 enforced both.
 # v6 (#75): PyPI is no longer tunnelled (Fastly Host fronting reached GitHub); commands
 # install Python packages through the proxy's PyPI gateway.
-ADAPTER = 'docker-development-v6'
+# v7 (#75): the first adapter enforcing all of it together: v6, the Docker Desktop host
+# settings (unmasked /proc for the nested sandbox, volume workspace), log mode refusing
+# GitHub, PyPI tunnels and non-public addresses, model-provider hosts needing the model
+# credential in both modes, and the proxy named by its stable alias `egress-proxy` in the
+# command environment (uv/pip/Poetry settings included).
+ADAPTER = 'docker-development-v7'
 CODEX_HOME = '/home/developer/.codex'
 # Model hosts serve hosted web search, which ignores every network limit. Only the Codex
 # process may reach them: each attempt gets a fresh token that the proxy requires for
@@ -51,12 +56,14 @@ PYPI_GATEWAY = ('pypi-gateway-v1: plain HTTP at http://<egress proxy>:3128/pypi/
                 'file URLs to /pypi/files/ keeping their hashes; CONNECT to PyPI hosts is refused because they '
                 'share Fastly with raw.githubusercontent.com')
 # What `log` mode (the one measurement run) still refuses, and logs (#75).
-LOG_POLICY = ('log-refusals-v1: log mode forwards and logs every destination except NEVER_ALLOW hosts (GitHub and '
+LOG_POLICY = ('log-refusals-v2: log mode forwards and logs every destination except NEVER_ALLOW hosts (GitHub and '
               'mirrors), GATEWAY_ONLY hosts (PyPI, only through its gateway) and names resolving to any non-public '
-              'address (loopback, private, link-local, metadata), which are refused and logged')
+              'address (loopback, private, link-local, metadata), which are refused and logged; the shipped '
+              'model_domains and every MODEL_PROVIDER host (OpenAI/ChatGPT) need the per-run model credential, as '
+              'does an SNI or Host header naming one; Encrypted Client Hello is refused')
 NETWORK_DESCRIPTION = {
     'allowlist':'internal Docker network; only route out is the egress proxy (own per-run outside network), limited to the network allowlist with SNI/Host checks; PyPI only through its read-only gateway',
-    'log':'internal Docker network; only route out is the egress proxy (own per-run outside network), logging every destination; GitHub and its mirrors, PyPI tunnels and non-public addresses refused; PyPI only through its read-only gateway',
+    'log':'internal Docker network; only route out is the egress proxy (own per-run outside network), logging every destination; GitHub and its mirrors, PyPI tunnels and non-public addresses refused; model-provider hosts only with the model credential; PyPI only through its read-only gateway',
 }
 
 
@@ -141,23 +148,30 @@ def workspace_permission_settings():
             'permissions.development.filesystem':{CODEX_HOME:'none'}}
 
 
-def package_environment(address):
-    """Proxy and package-index variables for commands: the token-less proxy and the PyPI gateway."""
+def package_environment(address=GATEWAY_NAME):
+    """Proxy and package-index variables for commands: the token-less proxy and the PyPI gateway.
+
+    The proxy is named by its stable network alias, not its per-attempt address, so the
+    index URL that uv.lock and poetry.lock record is the same in every attempt.
+    """
     url = f'http://{address}:{EGRESS_PORT}'
     index = url + '/pypi/simple/'
     no_proxy = 'localhost,127.0.0.1,::1,' + address
     return {**{name: url for name in PROXY_VARIABLES}, 'NO_PROXY': no_proxy, 'no_proxy': no_proxy,
             'PIP_INDEX_URL': index, 'PIP_TRUSTED_HOST': f'{address}:{EGRESS_PORT}', 'UV_DEFAULT_INDEX': index,
             # Codex's sandbox keeps the home read-only; uv will not start without a writable cache.
-            'UV_CACHE_DIR': '/tmp/uv-cache'}
+            'UV_CACHE_DIR': '/tmp/uv-cache',
+            # The cache (/tmp) and the project (/workspace) are different file systems, so uv
+            # cannot hard-link; copying is what it falls back to, without the warning.
+            'UV_LINK_MODE': 'copy'}
 
 
-def command_environment(address):
+def command_environment(address=GATEWAY_NAME):
     """Environment policy for the commands Codex runs: the proxy without the model token, and the PyPI gateway."""
     return {'set': package_environment(address), 'exclude': [MODEL_TOKEN_VARIABLE]}
 
 
-def command_settings(address):
+def command_settings(address=GATEWAY_NAME):
     policy = command_environment(address)
     return {'shell_environment_policy.set': policy['set'], 'shell_environment_policy.exclude': policy['exclude']}
 
@@ -355,6 +369,8 @@ def model_domains(document, domains):
         parent = entry.removeprefix('*.')
         if any(m == entry or (entry.startswith('*.') and (m == parent or m.endswith('.' + parent))) for m in models):
             raise ValueError(f'{entry} in domains would let commands reach a model domain')
+        if model_provider(parent) or (entry.startswith('*.') and any(p.endswith('.' + parent) for p in MODEL_PROVIDER)):
+            raise ValueError(f'{entry} in domains would let commands reach a model-provider host (egress_proxy.MODEL_PROVIDER)')
     return models
 
 
@@ -482,7 +498,11 @@ class DevelopmentRuntime:
         if egress not in EGRESS_MODES:
             raise ValueError(f'egress mode must be one of {EGRESS_MODES}')
         self.egress = egress
-        self.allowlist = load_allowlist() if egress == 'allowlist' else {'domains': [], 'model_domains': []}
+        # Log mode (the measurement) forwards every other destination, but the shipped
+        # model_domains still need the per-run model credential, as every MODEL_PROVIDER
+        # host does in both modes: commands never reach the model (#75).
+        self.allowlist = (load_allowlist() if egress == 'allowlist'
+                          else {'domains': [], 'model_domains': load_allowlist()['model_domains']})
         self.config = load_config(config_path)
         c = self.config
         output, source = Path(output).resolve(), Path(source).resolve()
@@ -533,13 +553,15 @@ class DevelopmentRuntime:
                         'temporary_filesystems':'exec,nosuid,nodev',
                         'docker_host':{'proc':c['proc'], 'workspace_mount':c['workspace_mount']},
                         'snapshot_binding':self.snapshot_binding, 'permission_settings':workspace_permission_settings(), 'codex':codex_version, 'runtime_user':runtime_user(),
-                        'command_environment':command_environment('<egress proxy>'),
+                        'command_environment':command_environment(),
                         'image':c['image'], 'adapter':ADAPTER, 'web_search':WEB_SEARCH,
                         'egress':{'mode':egress, 'port':EGRESS_PORT,
                                   'allowlist_sha256':hashlib.sha256(NETWORK_ALLOWLIST.read_bytes()).hexdigest() if egress == 'allowlist' else None,
                                   'proxy_sha256':hashlib.sha256(EGRESS_PROXY.read_bytes()).hexdigest(),
                                   'model_credential':MODEL_CREDENTIAL, 'pypi_gateway':PYPI_GATEWAY,
-                                  **({'log_policy':LOG_POLICY} if egress == 'log' else {})}}
+                                  'model_provider_hosts':list(MODEL_PROVIDER), 'proxy_alias':GATEWAY_NAME,
+                                  **({'log_policy':LOG_POLICY, 'model_domains':self.allowlist['model_domains']}
+                                     if egress == 'log' else {})}}
 
     def execute(self, workspace, request, stdout, stderr):
         c = self.config
@@ -629,13 +651,14 @@ class DevelopmentRuntime:
                 except (OSError, ValueError, subprocess.TimeoutExpired) as error:
                     evidence['error'] = 'egress setup failed before authentication or model: ' + str(error)
             if proxy is not None:
-                settings.update(command_settings(proxy))
+                # Commands and Codex name the proxy by its alias; `proxy` (its checked address) is evidence.
+                settings.update(command_settings())
                 argv = docker_command(c['docker'], ['run', '-i', '--name', name, '--network', egress['network'],
-                            *restrictions(nested_sandbox=True, proc=c['proc']), *proxy_environment(proxy), '--env', MODEL_TOKEN_VARIABLE,
+                            *restrictions(nested_sandbox=True, proc=c['proc']), *proxy_environment(), '--env', MODEL_TOKEN_VARIABLE,
                             '--mount', workspace_mount,
                             '--mount', f'type=bind,src={c["auth_file"]},dst=/run/subscription-auth.json,readonly',
                             '--entrypoint', '/bin/sh', c['image'], '-eu', '-c', boot, '--',
-                            *codex[:-1], *configuration_args(command_settings(proxy)), codex[-1]])
+                            *codex[:-1], *configuration_args(command_settings()), codex[-1]])
                 sampler.start()
                 evidence = execute(argv, workspace, request, stdout, stderr,
                                    env={**docker_environment(), MODEL_TOKEN_VARIABLE: model_token}, transform=redact)
@@ -754,8 +777,10 @@ class DevelopmentRuntime:
         if network.get('EnableIPv6'):
             raise ValueError('development network has IPv6 enabled')
         docker_run(c['docker'], ['network', 'create', '--driver', 'bridge', '--ipv6=false', egress['outside_network']])
+        # The alias exists on the internal network only (Docker's embedded DNS there); the
+        # outside network joined below does not carry it.
         docker_run(c['docker'], ['run', '--detach', '--name', egress['container'], '--network', egress['network'],
-                                 *restrictions(), '--env', MODEL_TOKEN_VARIABLE, '--entrypoint', 'python', c['image'],
+                                 '--network-alias', GATEWAY_NAME, *restrictions(), '--env', MODEL_TOKEN_VARIABLE, '--entrypoint', 'python', c['image'],
                                  '-I', '-S', '-c', EGRESS_PROXY.read_text(), self.egress,
                                  json.dumps(self.allowlist), str(EGRESS_PORT), 'own-address'],
                    env={**docker_environment(), MODEL_TOKEN_VARIABLE: model_token})
@@ -869,7 +894,7 @@ def remove_tree(path):
     shutil.rmtree(path, onerror=writable)
 
 
-def proxy_environment(address):
+def proxy_environment(address=GATEWAY_NAME):
     return [item for key, value in package_environment(address).items() for item in ('--env', f'{key}={value}')]
 
 

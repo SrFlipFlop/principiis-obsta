@@ -256,11 +256,11 @@ class ModelTokenContainerTests(unittest.TestCase):
                 + 'echo "PO-CODEX-PROCESS $(python -c "$1" ' + ' '.join(MODEL_HOSTS) + ')"; shift; exec "$@"')
         output = docker_run(self.docker, [
             'run', '--rm', '--network', egress['network'], *runtime_module.restrictions(nested_sandbox=True, proc=self.proc),
-            *proxy_environment(proxy), '--env', MODEL_TOKEN_VARIABLE,
+            *proxy_environment(), '--env', MODEL_TOKEN_VARIABLE,
             '--tmpfs', '/workspace:rw,exec,nosuid,nodev,size=64m,mode=1777',
             '--entrypoint', '/bin/sh', self.image, '-eu', '-c', boot, 'po-model-token-control', CONNECT_PROBE,
             'codex', '--no-daemon', 'sandbox', '--permission-profile', 'development',
-            *configuration_args({**workspace_permission_settings(), **command_settings(proxy)}),
+            *configuration_args({**workspace_permission_settings(), **command_settings()}),
             '--cd', '/workspace', '--', 'python', '-c', COMMAND_PROBE],
             timeout=180, env={**docker_environment(), MODEL_TOKEN_VARIABLE: token})
         lines = {line.split(' ', 1)[0]: line.split(' ', 1)[1] for line in output.splitlines() if line.startswith('PO-')}
@@ -308,21 +308,25 @@ class ModelTokenContainerTests(unittest.TestCase):
                    '/workspace/venv/bin/pip install -q --no-cache-dir uv==0.13.8 2>&1 | grep -v notice ; '
                    '/workspace/venv/bin/uv venv -q /workspace/uv-app 2>&1 ; /workspace/venv/bin/uv pip install '
                    '--python /workspace/uv-app/bin/python idna==3.10 2>&1 | tail -4 ; '
-                   'env | grep -E "^(PIP_INDEX_URL|PIP_TRUSTED_HOST|UV_DEFAULT_INDEX|UV_CACHE_DIR)=" | sort')
+                   'env | grep -E "^(PIP_INDEX_URL|PIP_TRUSTED_HOST|UV_DEFAULT_INDEX|UV_CACHE_DIR|UV_LINK_MODE)=" | sort')
         output = docker_run(self.docker, [
             'run', '--rm', '--network', egress['network'], *runtime_module.restrictions(nested_sandbox=True, proc=self.proc),
             '--tmpfs', '/workspace:rw,exec,nosuid,nodev,size=256m,mode=1777',
             '--entrypoint', '/bin/sh', self.image, '-eu', '-c', 'mkdir -p "$CODEX_HOME"; exec "$@"', 'po-gateway-control',
             'codex', '--no-daemon', 'sandbox', '--permission-profile', 'development',
-            *configuration_args({**workspace_permission_settings(), **command_settings(proxy)}),
+            *configuration_args({**workspace_permission_settings(), **command_settings()}),
             '--cd', '/workspace', '--', '/bin/sh', '-c', install], timeout=300)
         print('\ncommand in the Codex sandbox (command environment only):', output.strip())
         self.assertIn('Successfully installed', output)
         for package in ('six-1.16.0', 'requests-2.32.3', 'urllib3-'):
             self.assertIn(package, output)
-        self.assertIn(f'PIP_INDEX_URL=http://{proxy}:3128/pypi/simple/', output)
+        # The proxy's stable alias, resolved by Docker's DNS inside the Codex sandbox.
+        self.assertIn('PIP_INDEX_URL=http://egress-proxy:3128/pypi/simple/', output)
         self.assertIn(' + idna==3.10', output)  # installed by uv inside the Codex sandbox
         self.assertIn('UV_CACHE_DIR=/tmp/uv-cache', output)
+        # The cache (/tmp) and the venv (/workspace) are different file systems: copy, no warning.
+        self.assertIn('UV_LINK_MODE=copy', output)
+        self.assertNotIn('Failed to hardlink', output)
         events = self.log(egress['container'])
         print('proxy decisions:', sorted({(e.get('event'), e.get('host'), e.get('route'), e['decision'])
                                           for e in events if 'decision' in e}))
@@ -330,6 +334,46 @@ class ModelTokenContainerTests(unittest.TestCase):
         self.assertEqual(routes, {('pypi.org', 'simple'), ('files.pythonhosted.org', 'files')})
         self.assertFalse({e.get('host') for e in events if e.get('method') == 'CONNECT'} & {'pypi.org', 'files.pythonhosted.org'})
         self.assertNotIn('connected', {e['decision'] for e in events if e.get('host') in MODEL_HOSTS})
+
+    def test_in_log_mode_commands_get_403_for_every_model_provider_host(self):
+        # The measurement's proxy (log mode) with the shipped model_domains and a token,
+        # isolated as every proxy here: commands get 403 for any OpenAI/ChatGPT host, the
+        # Codex process's credentialed CONNECT is allowed (then no way out) (#75).
+        token = secrets.token_hex(32)
+        self.runtime.egress = 'log'
+        try:
+            egress, proxy = self.egress({'domains': [], 'model_domains': load_allowlist()['model_domains']}, token)
+        finally:
+            self.runtime.egress = 'allowlist'
+        hosts = (*MODEL_HOSTS, 'ab.chatgpt.com', 'platform.openai.com', 'cdn.oaistatic.com', 'files.oaiusercontent.com')
+        boot = ('mkdir -p "$CODEX_HOME"; ' + MODEL_PROXY_BOOT
+                + 'echo "PO-CODEX-PROCESS $(python -c "$1" ' + ' '.join(hosts) + ')"; shift; exec "$@"')
+        output = docker_run(self.docker, [
+            'run', '--rm', '--network', egress['network'], *runtime_module.restrictions(nested_sandbox=True, proc=self.proc),
+            *proxy_environment(), '--env', MODEL_TOKEN_VARIABLE,
+            '--tmpfs', '/workspace:rw,exec,nosuid,nodev,size=64m,mode=1777',
+            '--entrypoint', '/bin/sh', self.image, '-eu', '-c', boot, 'po-log-mode-control', CONNECT_PROBE,
+            'codex', '--no-daemon', 'sandbox', '--permission-profile', 'development',
+            *configuration_args({**workspace_permission_settings(), **command_settings()}),
+            '--cd', '/workspace', '--', 'python', '-c', CONNECT_PROBE, *hosts],
+            timeout=180, env={**docker_environment(), MODEL_TOKEN_VARIABLE: token})
+        lines = output.strip().splitlines()
+        codex_process = json.loads(next(v for v in lines if v.startswith('PO-CODEX-PROCESS ')).split(' ', 1)[1])
+        command = json.loads(lines[-1])
+        events = [e for e in self.log(egress['container']) if 'decision' in e]
+        print('\nlog mode, Codex process:', codex_process, '\nlog mode, command:', command)
+        print('proxy decisions:', sorted({(e['host'], e['decision'], e['credential'], e.get('reason')) for e in events}))
+        for host in hosts:
+            self.assertIn(' 403 ', command[host])
+            self.assertNotIn(' 403 ', codex_process[host])
+            self.assertIn((host, 'refused', 'absent', 'model host without the model credential'),
+                          [(e['host'], e['decision'], e['credential'], e.get('reason')) for e in events])
+            # Allowed by policy; the isolated proxy cannot even resolve the name, and says so.
+            self.assertIn((host, 'refused', 'valid', 'name does not resolve'),
+                          [(e['host'], e['decision'], e['credential'], e.get('reason')) for e in events])
+        self.assertNotIn('connected', {e['decision'] for e in events})
+        for value in secrets_of(token):
+            self.assertNotIn(value, output + json.dumps(self.log(egress['container'])))
 
     def test_the_codex_process_credentialed_tunnel_still_passes_the_sni_check(self):
         # chatgpt.com resolves, for the isolated proxy only, to a sink on the internal

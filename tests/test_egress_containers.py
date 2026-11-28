@@ -138,6 +138,17 @@ with urllib.request.urlopen(request, timeout=60) as response:
                       'url': files[0]['url'], 'hashes': sorted(files[0]['hashes']),
                       'foreign': [f['url'] for f in body['files'] if not f['url'].startswith('/pypi/files/')]}))
 '''
+# getaddrinfo for each name: its IPv4 addresses, or 'failed'.
+RESOLVE_PROBE = r'''
+import json, socket, sys
+result = {}
+for name in sys.argv[1:]:
+    try:
+        result[name] = sorted({info[4][0] for info in socket.getaddrinfo(name, 3128, socket.AF_INET)})
+    except OSError:
+        result[name] = 'failed'
+print(json.dumps(result))
+'''
 UV_VERSION = '0.13.8'
 POETRY_VERSION = '2.5.1'
 LOG_KEYS = {'method', 'host', 'port', 'decision', 'time', 'event', 'mode', 'allowlist', 'error', 'address',
@@ -196,7 +207,7 @@ class EgressContainerTests(unittest.TestCase):
 
     def client(self, *command, proxied=True, timeout=120, network=None):
         argv = ['run', '--rm', '--network', network or self.egress['network'], *restrictions(nested_sandbox=True),
-                *(proxy_environment(self.proxy) if proxied else []), '--entrypoint', command[0], self.image, *command[1:]]
+                *(proxy_environment() if proxied else []), '--entrypoint', command[0], self.image, *command[1:]]
         return docker_run(self.docker, argv, timeout=timeout)
 
     def python(self, code, *args, **options):
@@ -219,6 +230,59 @@ class EgressContainerTests(unittest.TestCase):
         result = self.python(DIRECT_PROBE, self.github_ip, proxied=False)
         self.assertEqual(result, {'tcp': 'failed', 'tcp_github': 'failed', 'tcp_ipv6': 'failed',
                                   'dns': 'failed', 'dns_github': 'failed', 'global_ipv6': []})
+
+    def test_the_proxy_alias_resolves_on_the_internal_network_only_and_external_names_do_not(self):
+        # Commands name the proxy `egress-proxy`; Docker's embedded DNS answers that alias
+        # on the internal network, still resolves no external name there, and the alias
+        # does not exist on the proxy's outside network.
+        result = self.python(RESOLVE_PROBE, 'egress-proxy', 'pypi.org', 'github.com', 'chatgpt.com', proxied=False)
+        self.assertEqual(result['egress-proxy'], [self.proxy])
+        for name in ('pypi.org', 'github.com', 'chatgpt.com'):
+            self.assertEqual(result[name], 'failed', name)
+        outside = self.python(RESOLVE_PROBE, 'egress-proxy', proxied=False, network=self.egress['outside_network'])
+        self.assertEqual(outside['egress-proxy'], 'failed')
+        # The controller still checks the proxy's listening address against Docker's view.
+        self.assertEqual([e['address'] for e in self.log() if e.get('event') == 'listening'], [self.proxy])
+
+    def test_a_uv_lock_from_one_attempt_is_valid_unchanged_with_a_fresh_proxy(self):
+        # Step 1 locks with this proxy; a later step runs `uv sync --locked` on the same
+        # files in a new container behind a new proxy on a new internal network (#75).
+        script = f'''
+            python -m venv /tmp/tools && /tmp/tools/bin/pip install -q --no-cache-dir uv=={UV_VERSION} >/dev/null 2>&1
+            uv=/tmp/tools/bin/uv; mkdir /tmp/project && cd /tmp/project
+            if [ -n "${{1:-}}" ]; then printf %s "$1" | base64 -d | tar -xzf -; else
+              $uv init -q --no-workspace --python /usr/local/bin/python && $uv add -q six==1.16.0 2>&1; fi
+            before=$(sha256sum uv.lock | cut -c1-64)
+            $uv sync --locked 2>&1 && echo "sync locked ok"
+            echo "lock $before $(sha256sum uv.lock | cut -c1-64)"
+            /tmp/project/.venv/bin/python -c "import six; print('six', six.__version__)" 2>&1 || echo "six not importable"
+            grep -c egress-proxy uv.lock | sed "s/^/alias lines /"
+            echo "archive $(tar -czf - --exclude=./.venv . | base64 -w0)"'''
+        first = self.client('/bin/sh', '-eu', '-c', script, 'uv-step', timeout=300)
+        archive = next(v for v in first.splitlines() if v.startswith('archive ')).split(' ', 1)[1]
+        token = uuid.uuid4().hex
+        egress = {'container': 'po-development-egress-' + token, 'network': 'po-development-net-' + token,
+                  'outside_network': 'po-development-out-' + token}
+        try:
+            proxy = self.runtime.start_egress(egress)
+            second = docker_run(self.docker, [
+                'run', '--rm', '--network', egress['network'], *restrictions(nested_sandbox=True), *proxy_environment(),
+                '--entrypoint', '/bin/sh', self.image, '-eu', '-c', script, 'uv-step', archive], timeout=300)
+        finally:
+            for argv in (['rm', '-f', egress['container']], ['network', 'rm', egress['network']],
+                         ['network', 'rm', egress['outside_network']]):
+                remove(self.docker, argv)
+        shown = lambda output: '\n'.join(v for v in output.splitlines() if not v.startswith('archive '))
+        print('\nuv step 1 (proxy %s):' % self.proxy, shown(first))
+        print('uv step 2 (proxy %s):' % proxy, shown(second))
+        for output in (first, second):
+            self.assertIn('sync locked ok', output)
+            self.assertIn('six 1.16.0', output)
+            before, after = next(v for v in output.splitlines() if v.startswith('lock ')).split()[1:]
+            self.assertEqual(before, after)
+        lock = lambda output: next(v for v in output.splitlines() if v.startswith('lock ')).split()[1]
+        self.assertEqual(lock(first), lock(second))
+        self.assertNotIn(self.proxy, first.replace(archive, ''))
 
     def test_the_proxy_is_on_its_own_networks_only_and_listens_only_on_its_internal_address(self):
         proxy = json.loads(docker_run(self.docker, ['inspect', self.egress['container']]))[0]
@@ -354,7 +418,7 @@ class EgressContainerTests(unittest.TestCase):
         print('\nuv:', output.strip())
         self.assertIn(f'uv {UV_VERSION}', output)
         for line in ('+ requests==2.32.3', '+ urllib3==', '+ idna==', 'imported requests 2.32.3', 'uv add ok',
-                     f'registry = "http://{self.proxy}:3128/pypi/simple/"'):
+                     'registry = "http://egress-proxy:3128/pypi/simple/"'):
             self.assertIn(line, output)
         gateway, tunnels = self.pypi_traffic()
         self.assertEqual(gateway, {('pypi.org', 'simple'), ('files.pythonhosted.org', 'files')})
@@ -405,7 +469,8 @@ class EgressContainerTests(unittest.TestCase):
                   'outside_network': 'po-development-out-' + token}
         runtime = DevelopmentRuntime.__new__(DevelopmentRuntime)
         runtime.config, runtime.egress = self.runtime.config, 'log'
-        runtime.allowlist = {'domains': [], 'model_domains': []}
+        # As `DevelopmentRuntime(egress='log')`: the shipped model_domains, no ordinary domains.
+        runtime.allowlist = {'domains': [], 'model_domains': load_allowlist()['model_domains']}
         try:
             proxy = runtime.start_egress(egress)
 
@@ -419,7 +484,10 @@ class EgressContainerTests(unittest.TestCase):
                        'pypi.org': 'gateway-only host', 'files.pythonhosted.org': 'gateway-only host',
                        **{host: 'non-public address' for host in (
                            '127.0.0.1', 'localhost', '10.0.0.1', '172.17.0.1', '192.168.1.1', '169.254.169.254',
-                           '2130706433', proxy, egress['container'])}}
+                           '2130706433', proxy, egress['container'], 'egress-proxy')},
+                       # No model token here, so no credential is ever valid: nothing reaches OpenAI.
+                       **{host: 'model host without the model credential' for host in (
+                           'chatgpt.com', 'api.openai.com', 'auth.openai.com', 'ab.chatgpt.com', 'cdn.oaistatic.com')}}
             for host in refused:
                 with self.subTest(host=host):
                     self.assertIn(' 403 ', connect(host))
