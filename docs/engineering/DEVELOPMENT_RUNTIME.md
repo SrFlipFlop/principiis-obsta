@@ -204,6 +204,9 @@ mismatch. Model and reasoning remain at harness defaults.
 
 The repository is public, so the evaluated coding agent must not reach later requests
 or published evaluator material ([ADR 0003](../adr/0003-evaluator-material-is-published-and-the-agent-is-network-limited.md)).
+[NETWORK_SANDBOX.md](NETWORK_SANDBOX.md) explains the layers below and the attacks tried
+against them for readers new to this repository; [ADR 0004](../adr/0004-command-egress-pypi-gateway-codex-only-model-credential-docker-desktop-settings.md)
+records the PyPI gateway, model credential and Docker Desktop decisions.
 
 - **Web search is disabled** (`web_search = "disabled"`). Hosted search ignores every
   network limit below.
