@@ -124,6 +124,20 @@ for case in sys.argv[2:]:
                     'files_host': b'files.pythonhosted.org' in body, 'gateway_files': b'/pypi/files/packages/' in body})
 print(json.dumps(results))
 '''
+# Index pages as PEP 691 JSON (what pip and uv ask for first): content type, relative file URLs, hashes.
+JSON_INDEX_PROBE = r'''
+import json, os, urllib.request
+request = urllib.request.Request(os.environ['PIP_INDEX_URL'] + 'requests/',
+                                 headers={'Accept': 'application/vnd.pypi.simple.v1+json'})
+with urllib.request.urlopen(request, timeout=60) as response:
+    body = json.load(response)
+    files = [f for f in body['files'] if f['filename'] == 'requests-2.32.3-py3-none-any.whl']
+    print(json.dumps({'type': response.headers['Content-Type'], 'api': body['meta']['api-version'],
+                      'url': files[0]['url'], 'hashes': sorted(files[0]['hashes']),
+                      'foreign': [f['url'] for f in body['files'] if not f['url'].startswith('/pypi/files/')]}))
+'''
+UV_VERSION = '0.13.8'
+POETRY_VERSION = '2.5.1'
 LOG_KEYS = {'method', 'host', 'port', 'decision', 'time', 'event', 'mode', 'allowlist', 'error', 'address',
             'reason', 'sni', 'credential', 'model_domains', 'model_token', 'route', 'status'}
 README = '/SrFlipFlop/principiis-obsta/main/README.md'
@@ -315,6 +329,117 @@ class EgressContainerTests(unittest.TestCase):
         text = json.dumps(events)
         for sentinel in ('secret-path-sentinel', 'query-sentinel', 'header-value-sentinel'):
             self.assertNotIn(sentinel, text)
+
+    def pypi_traffic(self):
+        events = self.log()
+        gateway = {(e['host'], e['route']) for e in events if e.get('event') == 'gateway' and e.get('decision') == 'connected'}
+        tunnels = {e['host'] for e in events if e.get('method') == 'CONNECT' and e.get('decision') in ('allowed', 'connected')}
+        return gateway, tunnels & {'pypi.org', 'files.pythonhosted.org'}
+
+    def test_uv_installs_through_the_gateway_with_only_the_command_environment(self):
+        # No uv in the image: pip installs a pinned uv through the gateway, then uv resolves
+        # and installs a package with a dependency from UV_DEFAULT_INDEX alone (plain http,
+        # no UV_INSECURE_HOST needed), into a uv venv and into a uv project (`uv add`).
+        output = self.client('/bin/sh', '-eu', '-c', f'''
+            python -m venv /tmp/tools && /tmp/tools/bin/pip install -q --no-cache-dir uv=={UV_VERSION} >/dev/null 2>&1
+            uv=/tmp/tools/bin/uv; $uv --version
+            $uv venv -q /tmp/app && $uv pip install --no-cache --python /tmp/app/bin/python requests==2.32.3 2>&1
+            /tmp/app/bin/python -c "import requests; print('imported requests', requests.__version__)"
+            mkdir /tmp/project && cd /tmp/project && $uv init -q --no-workspace --python /usr/local/bin/python
+            $uv add -q --no-cache six==1.16.0 2>&1 && echo "uv add ok" && grep -m1 registry uv.lock''', timeout=300)
+        print('\nuv:', output.strip())
+        self.assertIn(f'uv {UV_VERSION}', output)
+        for line in ('+ requests==2.32.3', '+ urllib3==', '+ idna==', 'imported requests 2.32.3', 'uv add ok',
+                     f'registry = "http://{self.proxy}:3128/pypi/simple/"'):
+            self.assertIn(line, output)
+        gateway, tunnels = self.pypi_traffic()
+        self.assertEqual(gateway, {('pypi.org', 'simple'), ('files.pythonhosted.org', 'files')})
+        self.assertFalse(tunnels)
+
+    def test_pip_download_sdist_builds_and_json_index_pages_work_through_the_gateway(self):
+        output = self.client('/bin/sh', '-eu', '-c', '''
+            python -m venv /tmp/venv && pip=/tmp/venv/bin/pip
+            $pip download -q --no-cache-dir -d /tmp/downloads six==1.16.0 requests==2.32.3 2>&1 | grep -v notice || true
+            ls /tmp/downloads
+            # The sdist build also fetches its build backend (setuptools) through the gateway.
+            $pip install --no-cache-dir --no-binary :all: six==1.16.0 2>&1 | grep -E "Building wheel for six|Successfully" || true''',
+            timeout=300)
+        print('\npip download / sdist:', output.strip())
+        for name in ('six-1.16.0-py2.py3-none-any.whl', 'requests-2.32.3-py3-none-any.whl', 'urllib3-', 'certifi-',
+                     'Building wheel for six', 'Successfully installed six-1.16.0'):
+            self.assertIn(name, output)
+        index = self.python(JSON_INDEX_PROBE)
+        self.assertEqual(index['type'], 'application/vnd.pypi.simple.v1+json')
+        self.assertTrue(index['url'].startswith('/pypi/files/packages/'), index)
+        self.assertEqual(index['hashes'], ['sha256'])
+        self.assertEqual(index['foreign'], [])
+        self.assertFalse(self.pypi_traffic()[1])
+
+    def test_poetry_fails_closed_by_default_and_works_with_the_gateway_as_primary_source(self):
+        # Poetry ignores PIP_INDEX_URL and asks https://pypi.org itself; the tunnel is refused.
+        # A benchmark that uses Poetry must add the gateway as its primary source.
+        output = self.client('/bin/sh', '-u', '-c', f'''
+            python -m venv /tmp/tools && /tmp/tools/bin/pip install -q --no-cache-dir poetry=={POETRY_VERSION} >/dev/null 2>&1
+            poetry=/tmp/tools/bin/poetry; $poetry --version; cd /tmp && $poetry new -q project && cd project
+            $poetry add --no-cache requests==2.32.3 >/dev/null 2>&1 && echo "default: installed" || echo "default: failed"
+            $poetry source add --priority=primary gateway "$PIP_INDEX_URL" >/dev/null
+            $poetry add --no-cache requests==2.32.3 2>&1 | grep -E "Installing requests" && echo "gateway: installed"''',
+            timeout=420)
+        print('\npoetry:', output.strip())
+        self.assertIn(f'Poetry (version {POETRY_VERSION})', output)
+        self.assertIn('default: failed', output)
+        self.assertIn('gateway: installed', output)
+        refused = [e for e in self.log() if e.get('host') == 'pypi.org' and e.get('decision') == 'refused' and 'route' not in e]
+        self.assertTrue(refused)
+        self.assertIn('gateway', refused[-1]['reason'])
+        self.assertFalse(self.pypi_traffic()[1])
+
+    def test_log_mode_refuses_github_pypi_tunnels_and_non_public_addresses(self):
+        # The measurement's proxy (log mode) on its own networks; nothing here contacts a model host.
+        token = uuid.uuid4().hex
+        egress = {'container': 'po-development-egress-' + token, 'network': 'po-development-net-' + token,
+                  'outside_network': 'po-development-out-' + token}
+        runtime = DevelopmentRuntime.__new__(DevelopmentRuntime)
+        runtime.config, runtime.egress = self.runtime.config, 'log'
+        runtime.allowlist = {'domains': [], 'model_domains': []}
+        try:
+            proxy = runtime.start_egress(egress)
+
+            def connect(host, port=443):
+                return json.loads(docker_run(self.docker, [
+                    'run', '--rm', '--network', egress['network'], *restrictions(nested_sandbox=True), '--entrypoint',
+                    'python', self.image, '-c', CONNECT_PROBE, host, str(port), proxy]))['status']
+
+            self.assertIn(' 200 ', connect('registry.npmjs.org'))
+            refused = {**{host: 'never-allowed host' for host in GITHUB},
+                       'pypi.org': 'gateway-only host', 'files.pythonhosted.org': 'gateway-only host',
+                       **{host: 'non-public address' for host in (
+                           '127.0.0.1', 'localhost', '10.0.0.1', '172.17.0.1', '192.168.1.1', '169.254.169.254',
+                           '2130706433', proxy, egress['container'])}}
+            for host in refused:
+                with self.subTest(host=host):
+                    self.assertIn(' 403 ', connect(host))
+            # Docker Desktop resolves it to the host (refused); elsewhere it may not resolve (502).
+            self.assertNotIn(' 200 ', connect('host.docker.internal'))
+            fronting = json.loads(docker_run(self.docker, [
+                'run', '--rm', '--network', egress['network'], *restrictions(), '--entrypoint', 'python', self.image,
+                '-c', FRONTING_PROBE, proxy, 'pypi.org', 'files.pythonhosted.org']).strip().splitlines()[-1])
+            for host, result in fronting.items():
+                self.assertIn(' 403 ', result['connect'], result)
+                self.assertNotEqual(fronting_verdict(result)[0], 'FAIL', result)
+            events = [json.loads(line) for line in docker_run(self.docker, ['logs', egress['container']]).splitlines()
+                      if line.strip()]
+            reasons = {e['host']: e.get('reason', '') for e in events if e.get('decision') == 'refused'}
+            print('\nlog-mode refusals:', reasons)
+            for host, reason in refused.items():
+                self.assertTrue(reasons.get(host, '').startswith(reason), (host, reasons.get(host)))
+            self.assertIn(reasons.get('host.docker.internal'), (None, 'non-public address'))
+            connected = {e['host'] for e in events if e.get('decision') == 'connected' and 'route' not in e}
+            self.assertEqual(connected, {'registry.npmjs.org'})
+        finally:
+            for argv in (['rm', '-f', egress['container']], ['network', 'rm', egress['network']],
+                         ['network', 'rm', egress['outside_network']]):
+                remove(self.docker, argv)
 
     def test_registry_installs_work_through_the_allowlist(self):
         # pip finds the gateway through PIP_INDEX_URL (set by proxy_environment, as for commands).

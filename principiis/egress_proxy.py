@@ -3,8 +3,11 @@
 This file is also the program the trusted egress container runs, as
 `python -I -S -c <this source> MODE POLICY_JSON PORT [BIND]`, so it imports only the
 standard library. POLICY_JSON is `{"domains": [...], "model_domains": [...]}`.
-`log` mode forwards every well-formed destination and records it (the measurement
-that builds the allowlist); `allowlist` mode forwards `domains` on web ports, and
+`log` mode forwards and records every well-formed destination (the measurement that
+builds the allowlist) except GitHub and its mirrors (`NEVER_ALLOW`), the gateway-only
+PyPI hosts (`GATEWAY_ONLY`) and names that resolve to a non-public address (loopback,
+private, link-local, metadata, ...), which it refuses and logs; `allowlist` mode
+forwards `domains` on web ports, and
 `model_domains` only for requests carrying the per-run model credential
 (`Proxy-Authorization: Basic base64("model:<token>")`, token from the environment
 variable named by MODEL_TOKEN_VARIABLE). Only the Codex process holds that token;
@@ -26,6 +29,7 @@ the index's file URLs back at itself. It serves in both modes.
 import base64
 import hmac
 import http.client
+import ipaddress
 import json
 import os
 import re
@@ -131,12 +135,46 @@ def allowed(host, port, mode, allowlist, model_domains=(), credential=False):
     if host is None or not isinstance(port, int) or not 0 < port < 65536:
         return False
     if mode == 'log':
-        return True
+        # Addresses are checked after resolution (`public_address`).
+        return not never_allowed(host) and not gateway_only(host)
     if mode != 'allowlist' or port not in WEB_PORTS or never_allowed(host):
         return False
     if listed(host, model_domains):
         return credential is True
     return listed(host, allowlist)
+
+
+def refusal_reason(host):
+    """Why `host` is refused in every mode, or None."""
+    if never_allowed(host):
+        return 'never-allowed host: serves GitHub content or mirrors arbitrary repositories'
+    if gateway_only(host):
+        return 'gateway-only host: use the PyPI gateway'
+    return None
+
+
+def resolve(name, port):
+    """Every address `name` resolves to (literals and shorthand forms such as `127.1` included)."""
+    return [info[4][0] for info in socket.getaddrinfo(name, port, type=socket.SOCK_STREAM)]
+
+
+def public(address):
+    try:
+        ip = ipaddress.ip_address(address.split('%', 1)[0])
+    except ValueError:
+        return False
+    if ip.version == 6 and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip.is_global and not ip.is_multicast
+
+
+def public_address(name, port):
+    """The address to connect to if every address `name` resolves to is public, else None.
+
+    `log` mode connects to this address, not the name, so a second lookup cannot change it.
+    """
+    addresses = resolve(name, port)
+    return addresses[0] if addresses and all(public(a) for a in addresses) else None
 
 
 def credential(lines, token):
@@ -536,21 +574,25 @@ def handle(client, mode, policy, token='', address=None):
         model = listed(name or '', policy.get('model_domains', ()))
         decision = allowed(host, port, mode, policy.get('domains', ()), policy.get('model_domains', ()),
                            credential=presented == 'valid')
-        reason = None
-        if not decision and model and presented != 'valid':
+        reason, address = None, name
+        if not decision and name and (always := refusal_reason(name)):
+            reason = always
+        elif not decision and model and presented != 'valid':
             reason = 'model host without the model credential'
-        elif not decision and mode == 'allowlist' and gateway_only(host):
-            reason = 'gateway-only host: use the PyPI gateway'
         if decision and mode == 'allowlist' and method != 'CONNECT':
             reason = plain_refusal(name, port, lines[1:])
             decision = reason is None
+        if decision and mode == 'log':
+            address = public_address(name, port)
+            if address is None:
+                decision, reason = False, 'non-public address'
         log(method=method, host=name or host, port=port, decision='allowed' if decision else 'refused',
             credential=presented, **({'reason': reason} if reason else {}))
         if not decision:
             answered = True
             client.sendall(b'HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
             return
-        upstream = socket.create_connection((name, port), timeout=30)
+        upstream = socket.create_connection((address, port), timeout=30)
         upstream.settimeout(None)
         log(method=method, host=name, port=port, decision='connected')
         answered = True

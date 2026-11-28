@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 import subprocess
 
-from principiis.development_runtime import ADAPTER, CODEX_HOME, MODEL_CREDENTIAL, PYPI_GATEWAY, SANDBOX_PROBE, DevelopmentRuntime, cleanup_runtime, docker_command, load_config, preflight_run, configuration_args, workspace_permission_settings, restrictions
+from principiis.development_runtime import ADAPTER, CODEX_HOME, LOG_POLICY, MODEL_CREDENTIAL, NETWORK_DESCRIPTION, PYPI_GATEWAY, SANDBOX_PROBE, DevelopmentRuntime, cleanup_runtime, docker_command, load_config, preflight_run, configuration_args, workspace_permission_settings, restrictions
 
 
 IMAGE = 'sha256:' + 'a' * 64
@@ -320,6 +320,8 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             self.assertEqual(commands['set']['PIP_INDEX_URL'], 'http://<egress proxy>:3128/pypi/simple/')
             self.assertEqual(commands['set']['PIP_TRUSTED_HOST'], '<egress proxy>:3128')
             self.assertEqual(commands['set']['UV_DEFAULT_INDEX'], 'http://<egress proxy>:3128/pypi/simple/')
+            # Codex's sandbox leaves the home read-only; uv refuses to start without a writable cache.
+            self.assertEqual(commands['set']['UV_CACHE_DIR'], '/tmp/uv-cache')
             self.assertEqual(commands['set']['NO_PROXY'], 'localhost,127.0.0.1,::1,<egress proxy>')
             self.assertEqual(runtime.version['egress']['pypi_gateway'], PYPI_GATEWAY)
             for needle in ('pypi.org', 'files.pythonhosted.org', '/pypi/simple/', 'Fastly'):
@@ -341,6 +343,21 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             self.assertNotEqual(enforced.version, measured.version)
             with self.assertRaises(ValueError):
                 DevelopmentRuntime(config_path, base / 'run', base / 'tasks', egress='open')
+
+    def test_log_mode_names_what_it_refuses_in_its_runtime_version(self):
+        # Log mode refuses GitHub, its mirrors, the gateway-only PyPI hosts and non-public
+        # addresses (#75); a measurement made before that is a different runtime.
+        with temporary_directory() as directory:
+            base = Path(directory)
+            config_path, config = self.configuration(base)
+            enforced = DevelopmentRuntime(config_path, base / 'run', base / 'tasks')
+            measured = DevelopmentRuntime(config_path, base / 'run', base / 'tasks', egress='log')
+            self.assertEqual(measured.version['egress']['log_policy'], LOG_POLICY)
+            for needle in ('log-refusals-v1', 'NEVER_ALLOW', 'GATEWAY_ONLY', 'non-public'):
+                self.assertIn(needle, LOG_POLICY)
+            self.assertNotIn('log_policy', enforced.version['egress'])
+            self.assertNotIn('without limits', NETWORK_DESCRIPTION['log'])
+            self.assertIn('GitHub', NETWORK_DESCRIPTION['log'])
 
     def test_a_non_internal_network_stops_before_auth_or_model_and_is_removed(self):
         with temporary_directory() as directory:
