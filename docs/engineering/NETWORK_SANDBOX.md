@@ -249,6 +249,7 @@ Dated results are in [DEVELOPMENT_RUNTIME.md](DEVELOPMENT_RUNTIME.md#what-is-ver
 | The Codex process fronts another host through its credentialed model tunnel | Model token `test_the_codex_process_credentialed_tunnel_still_passes_the_sni_check` (sink on the internal network, no way out) | SNI `chatgpt.com` forwarded; SNI `pypi.org` and `raw.githubusercontent.com` closed (`sni-mismatch`, credential `valid`). |
 | Real `codex exec` reaches the model hosts only with the credential | Model token `test_codex_exec_presents_the_model_credential_to_a_refusing_proxy` (FAKE login, refuse-everything proxy) | Codex's `chatgpt.com` requests carry `credential: valid`. |
 | **Log mode** (measurement): GitHub, PyPI tunnels, private and metadata addresses, model hosts without the credential | Egress `test_log_mode_refuses_github_pypi_tunnels_and_non_public_addresses`; Model token `test_in_log_mode_commands_get_403_for_every_model_provider_host` | All `403` with a reason; only `registry.npmjs.org` connects. **Found before the fix:** the old `log` mode forwarded every destination (its `allowed` returned true for any host in `log` mode), so the same control got `200` for the GitHub `CONNECT`s, and loopback, private and metadata addresses were forwarded too. |
+| Host fronting through the model hosts (Cloudflare): tunnel with the model credential to `api.openai.com`, `auth.openai.com`, `chatgpt.com`, `Host: raw.githubusercontent.com` inside TLS | `network_measurement fronting-check` (real Docker, 2026-11-28) | No GitHub content: all three `403`. |
 | A docs host shares Fastly with GitHub | `fronting-check` on the measured draft (live, 2026-11-28) | **Found:** `docs.python.org` returned this repository's README for `Host: raw.githubusercontent.com`. Now never-allowed, with `pkg.go.dev`. |
 
 ### Other findings
@@ -287,9 +288,6 @@ not read these settings yet.
 
 From the Known gaps list in [DEVELOPMENT_RUNTIME.md](DEVELOPMENT_RUNTIME.md#what-is-verified-and-what-is-not):
 
-- **Model hosts are not fronting-checked.** The OpenAI hosts are on Cloudflare; whether a
-  tunnel to them reaches GitHub by Host fronting was not tested, because that needs the
-  credential and contacts OpenAI. Only the Codex process can open them.
 - **Host fronting to OpenAI inside TLS in `log` mode.** A command could open a tunnel to
   another host on OpenAI's CDN with that host's SNI and send `Host: api.openai.com` inside
   TLS. Whether Cloudflare routes that across zones is untested. The command would still
@@ -359,8 +357,10 @@ That runs all three controls together. To run one, use `-p test_egress_container
 the Codex preflight, so any image with `python` works for it; the other two need the
 development image with Codex.
 
-The fronting check probes every `domains` host of an allowlist (draft or shipped) for
-Host-header fronting to GitHub. It starts the proxy with no model domains and no token.
+The fronting check probes every `domains` and `model_domains` host of an allowlist
+(draft or shipped) for Host-header fronting to GitHub. Model hosts are tunnelled with a
+throwaway model credential made for the check, passed by environment, never in an argv;
+the request inside asks for a GitHub path and carries no login, so no model is called.
 Every host must `PASS`:
 
 ```bash

@@ -383,8 +383,8 @@ class FrontingCheck(unittest.TestCase):
             return '172.30.0.2'
 
         def run(docker, argv, **kwargs):
-            seen['argv'] = argv
-            hosts = argv[argv.index('172.30.0.2') + 1:]
+            seen['argv'], seen['env'] = argv, kwargs.get('env') or {}
+            hosts = [h.removeprefix('model:') for h in argv[argv.index('172.30.0.2') + 1:]]
             return json.dumps({h: answers[h] for h in hosts}) + '\n'
         removed = []
         with patch.object(network_measurement.DevelopmentRuntime, 'start_egress', start), \
@@ -393,10 +393,10 @@ class FrontingCheck(unittest.TestCase):
             report = network_measurement.fronting_check(config, allowlist)
         return report, seen, removed
 
-    def test_every_domain_is_probed_model_domains_never_and_resources_are_removed(self):
+    def test_every_domain_is_probed_and_resources_are_removed(self):
         with temporary_directory() as directory:
             base = Path(directory)
-            document = {'version': '1', 'status': 'TODO-OWNER: draft', 'model_domains': ['chatgpt.com', 'api.openai.com'],
+            document = {'version': '1', 'status': 'TODO-OWNER: draft', 'model_domains': [],
                         'domains': ['registry.npmjs.org', 'api.nuget.org', '*.example.org', 'github.com', 'pypi.org']}
             report, seen, removed = self.run_check(base, document, {'registry.npmjs.org': CDN_REFUSAL,
                                                                    'api.nuget.org': GITHUB_ANSWER})
@@ -405,11 +405,37 @@ class FrontingCheck(unittest.TestCase):
                                         '*.example.org': 'UNCHECKED', 'github.com': 'REFUSED', 'pypi.org': 'REFUSED'})
             self.assertEqual(seen['policy'], {'domains': ['registry.npmjs.org', 'api.nuget.org'], 'model_domains': []})
             self.assertEqual(seen['token'], '')
-            self.assertNotIn('chatgpt.com', json.dumps(seen['argv']))
-            self.assertNotIn('openai', json.dumps(seen['argv']))
             self.assertEqual(seen['argv'][seen['argv'].index('--network') + 1], seen['egress']['network'])
             self.assertEqual(removed, [['rm', '-f', seen['egress']['container']], ['network', 'rm', seen['egress']['network']],
                                        ['network', 'rm', seen['egress']['outside_network']]])
+
+    def test_model_domains_are_probed_with_a_throwaway_credential_kept_out_of_argv(self):
+        with temporary_directory() as directory:
+            base = Path(directory)
+            document = {'version': '1', 'status': 'TODO-OWNER: draft',
+                        'model_domains': ['chatgpt.com', 'api.openai.com', 'github.com'],
+                        'domains': ['registry.npmjs.org']}
+            report, seen, removed = self.run_check(base, document, {
+                'registry.npmjs.org': CDN_REFUSAL, 'chatgpt.com': CDN_REFUSAL, 'api.openai.com': GITHUB_ANSWER})
+            statuses = {item['host']: item['status'] for item in report}
+            self.assertEqual(statuses, {'registry.npmjs.org': 'PASS', 'chatgpt.com': 'PASS',
+                                        'api.openai.com': 'FAIL', 'github.com': 'REFUSED'})
+            self.assertEqual(seen['policy'], {'domains': ['registry.npmjs.org'],
+                                              'model_domains': ['chatgpt.com', 'api.openai.com']})
+            token = seen['token']
+            self.assertRegex(token, r'^[0-9a-f]{32}$')
+            hosts = seen['argv'][seen['argv'].index('172.30.0.2') + 1:]
+            self.assertEqual(hosts, ['registry.npmjs.org', 'model:chatgpt.com', 'model:api.openai.com'])
+            self.assertNotIn(token, json.dumps(seen['argv']))
+            self.assertIn('PO_FRONTING_TOKEN', seen['argv'])  # bare --env: the value comes from the environment
+            self.assertEqual(seen['env'].get('PO_FRONTING_TOKEN'), token)
+            self.assertEqual(len(removed), 3)
+
+    def test_the_probe_authenticates_only_model_hosts(self):
+        probe = network_measurement.FRONTING_PROBE
+        self.assertIn("removeprefix('model:')", probe)
+        self.assertIn('Proxy-Authorization: Basic', probe)
+        self.assertIn("os.environ.get('PO_FRONTING_TOKEN'", probe)
 
     def test_command_line_reports_and_exits_nonzero_unless_every_domain_passes(self):
         with temporary_directory() as directory:

@@ -23,8 +23,9 @@ import re
 import sys
 import uuid
 
-from .development_runtime import (CHECKOUT, NETWORK_ALLOWLIST, DevelopmentRuntime, docker_run, inspect_image,
-                                  load_allowlist, load_config, preflight_run, remove, restrictions)
+from .development_runtime import (CHECKOUT, NETWORK_ALLOWLIST, DevelopmentRuntime, docker_environment, docker_run,
+                                  inspect_image, load_allowlist, load_config, preflight_run, remove,
+                                  restrictions)
 from .egress_proxy import gateway_only, model_provider, never_allowed, unsafe_entry
 from .jsonio import write_json
 
@@ -191,14 +192,19 @@ def preflight(runtime_config, runs_root):
 # before approving any allowlist: every `domains` host must PASS.
 FRONTING_PATH = '/SrFlipFlop/principiis-obsta/main/README.md'
 # Executed in a client container on the internal network: `python -c PROBE PROXY HOST...`.
+# A `model:` host is tunnelled with the check's throwaway model credential, read from the
+# environment so it never appears in an argv.
+FRONTING_TOKEN_VARIABLE = 'PO_FRONTING_TOKEN'
 FRONTING_PROBE = r'''
-import json, socket, ssl, sys
+import base64, json, os, socket, ssl, sys
 proxy, results = sys.argv[1], {}
-for host in sys.argv[2:]:
-    result = {}
+credential = base64.b64encode(('model:' + os.environ.get('PO_FRONTING_TOKEN', '')).encode()).decode()
+for argument in sys.argv[2:]:
+    host, result = argument.removeprefix('model:'), {}
+    auth = f'Proxy-Authorization: Basic {credential}\r\n' if argument.startswith('model:') else ''
     try:
         sock = socket.create_connection((proxy, 3128), timeout=20)
-        sock.sendall(f'CONNECT {host}:443 HTTP/1.1\r\nHost: {host}:443\r\n\r\n'.encode())
+        sock.sendall(f'CONNECT {host}:443 HTTP/1.1\r\nHost: {host}:443\r\n{auth}\r\n'.encode())
         reply = b''
         while b'\r\n\r\n' not in reply and (chunk := sock.recv(4096)):
             reply += chunk
@@ -238,17 +244,21 @@ def fronting_verdict(result):
 
 
 def fronting_check(config, allowlist):
-    """Probe each `domains` host of an allowlist (draft or approved) for Host-header fronting to GitHub.
+    """Probe each `domains` and `model_domains` host of an allowlist for Host-header fronting to GitHub.
 
-    Starts the egress proxy as `execute` does, with `model_domains` empty and no model token,
-    so nothing can reach the model hosts. Calls no model and reads no login.
+    Starts the egress proxy as `execute` does. Model hosts are tunnelled with a throwaway
+    model credential made for this check; the request inside asks for a GitHub path with
+    `Host: raw.githubusercontent.com` and carries no login. Calls no model and reads no login.
     """
     document = json.loads(Path(allowlist).read_text())
     domains = document.get('domains') if isinstance(document, dict) else None
     if not isinstance(domains, list) or any(not isinstance(v, str) for v in domains):
         raise ValueError('allowlist has no domains list')
-    report, probed = [], []
-    for entry in domains:
+    models = document.get('model_domains') or []
+    if not isinstance(models, list) or any(not isinstance(v, str) for v in models):
+        raise ValueError('allowlist model_domains is not a list of hosts')
+    report, probed, probed_models = [], [], []
+    for entry in domains + models:
         reason = unsafe_entry(entry)
         if reason:
             report.append({'host': entry, 'status': 'REFUSED', 'detail': reason})
@@ -256,30 +266,33 @@ def fronting_check(config, allowlist):
             report.append({'host': entry, 'status': 'UNCHECKED',
                            'detail': 'a wildcard cannot be probed; list each concrete host instead'})
         else:
-            probed.append(entry)
+            (probed if entry in domains else probed_models).append(entry)
     runtime = DevelopmentRuntime.__new__(DevelopmentRuntime)
     runtime.config, runtime.egress = load_config(config), 'allowlist'
-    runtime.allowlist = {'domains': probed, 'model_domains': []}
+    runtime.allowlist = {'domains': probed, 'model_domains': probed_models}
     token = uuid.uuid4().hex
+    model_token = uuid.uuid4().hex if probed_models else ''
     egress = {'container': 'po-development-egress-' + token, 'network': 'po-development-net-' + token,
               'outside_network': 'po-development-out-' + token}
     output = '{}'
     try:
-        if probed:
-            proxy = runtime.start_egress(egress)
+        if probed or probed_models:
+            proxy = runtime.start_egress(egress, model_token)
+            hosts = probed + ['model:' + host for host in probed_models]
             output = docker_run(runtime.config['docker'], [
-                'run', '--rm', '--network', egress['network'], *restrictions(), '--entrypoint', 'python',
-                runtime.config['image'], '-c', FRONTING_PROBE, proxy, *probed], timeout=60 + 30 * len(probed))
+                'run', '--rm', '--network', egress['network'], *restrictions(), '--env', FRONTING_TOKEN_VARIABLE,
+                '--entrypoint', 'python', runtime.config['image'], '-c', FRONTING_PROBE, proxy, *hosts],
+                timeout=60 + 30 * len(hosts), env={**docker_environment(), FRONTING_TOKEN_VARIABLE: model_token})
     finally:
-        if probed:
+        if probed or probed_models:
             for argv in (['rm', '-f', egress['container']], ['network', 'rm', egress['network']],
                          ['network', 'rm', egress['outside_network']]):
                 remove(runtime.config['docker'], argv)
     results = json.loads(output.strip().splitlines()[-1])
-    for host in probed:
+    for host in probed + probed_models:
         status, detail = fronting_verdict(results.get(host, {}))
         report.append({'host': host, 'status': status, 'detail': detail})
-    order = {entry: index for index, entry in enumerate(domains)}
+    order = {entry: index for index, entry in enumerate(domains + models)}
     return sorted(report, key=lambda item: order[item['host']])
 
 

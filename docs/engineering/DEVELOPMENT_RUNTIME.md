@@ -851,9 +851,6 @@ was verified.
 
 Open, to resolve before tests go public:
 
-- **Model hosts are not fronting-checked.** The OpenAI hosts are on Cloudflare; whether
-  a tunnel to them reaches GitHub by Host fronting was not tested (that needs the
-  credential and contacts OpenAI). Only the Codex process can open them.
 - **Host fronting to OpenAI inside TLS in `log` mode.** The proxy sees the CONNECT
   host and the SNI, not the HTTP `Host` inside TLS. A command could open a tunnel to some
   other host on the same CDN as OpenAI, with that host's SNI, and send
@@ -910,6 +907,11 @@ Open, to resolve before tests go public:
 
 Closed:
 
+- **Model hosts were not fronting-checked (closed 2026-11-28).** `fronting-check` now
+  probes `model_domains` too, tunnelling with a throwaway model credential made for the
+  check and sending `Host: raw.githubusercontent.com` with no login inside. On real
+  Docker, `api.openai.com`, `auth.openai.com` and `chatgpt.com` (Cloudflare) each answered
+  `403` with no GitHub content; the ten `domains` hosts passed again. `FRONTING CHECK OK`.
 - **Real model traffic through the credentialed proxy (verified 2026-11-28).** Two live
   sessions (measurement and enforced allowlist) carried every Codex model request through
   the proxy with `credential: valid`; see [Live measurement](#live-measurement-2026-11-28).
