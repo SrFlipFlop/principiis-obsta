@@ -4,7 +4,7 @@
   "controls_checksums": {
     "note": "documentary pin, checked by tests; not read by the controller",
     "path": "../../controls/first-three-2026-11-27/SHA256SUMS",
-    "sha256": "e728a829ced343e38a79e72ae495667abed205e5a0788057bc88dd69d1e0858f"
+    "sha256": "30ea3af9f2e3acfbaed69b586229bddd665287bd76225d13ce842b77098b093a"
   },
   "dependency_manifest": "dependencies.json",
   "evaluator_images": {

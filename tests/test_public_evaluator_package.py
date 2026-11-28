@@ -244,6 +244,9 @@ class RunMatrixPlan(unittest.TestCase):
             self.assertEqual(argv[argv.index('--control') + 1], cell['mode'])
             self.assertTrue(Path(argv[argv.index('--check-contract') + 1]).is_file())
             self.assertNotIn('--app-command', argv)
+            # The evaluation CLI requires it; the manifest's command, or the controller's default.
+            command = manifest.get('evaluator_command', ['node', '/oracle/check.cjs'])
+            self.assertEqual(json.loads(argv[argv.index('--evaluator-command') + 1]), command)
 
     def test_expected_outcomes_cover_every_mode(self):
         self.assertEqual(self.module.EXPECTED, {'safe': ('pass', 'pass'), 'alternative': ('pass', 'pass'),

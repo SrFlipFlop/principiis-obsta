@@ -28,7 +28,7 @@ file it depends on.
 | `seccomp_profile.json` | Restricted-runtime seccomp profile (identical to `fixtures/evaluation/seccomp_profile.json`) |
 | `dependencies.json` | Complete package inventory of the four pinned images, with preparation receipts |
 | `receipts/` | Image-to-source attestations and inventory receipts the dependency file points to |
-| `images/checker.Dockerfile`, `images/control-runtime.Dockerfile` | Image recipes (reconstructed, see header comments; not rebuilt) |
+| `images/checker.Dockerfile`, `images/control-runtime.Dockerfile` | Image recipes (reconstructed, see header comments; rebuilt and control-tested 2026-11-28, not pinned) |
 | `continuation/` | Supplemental, unscored step-2 to step-3 saved-data continuation controller and probe |
 | `provenance/` | Rubric (property map and ambiguity rulings) and technical review notes, text sanitised |
 | `SANITISATION.json` | Audit record: original sha256 to new sha256 per file, with the rule applied |
@@ -107,6 +107,9 @@ seccomp pins are unchanged.
   signed session cookies) that is not diagnosed; reruns can differ.
 * The continuation probe is supplemental and unscored, with one generated candidate plus one
   destructive-data control; it is not a qualified oracle.
-* The reconstructed Dockerfiles are untested; the control-runtime base layers were verified identical to
-  `python:3.12.12-slim`.
+* The reconstructed Dockerfiles were rebuilt on 2026-11-28 (Docker Desktop, linux/arm64; the pinned images are
+  from another host). Each rebuilt checker holds the attested `/oracle/check.cjs` bytes, and the 12-cell control
+  matrix (`run_matrix.py`, steps 1-3, four modes) gave the expected outcome in every cell, with check vectors and
+  snapshot digests identical to the recorded ones. The rebuilt images have new IDs, so they do not bind to this
+  manifest until the owner pins and re-attests them.
 * Retained run records from earlier runs embed absolute paths and are not part of this package.

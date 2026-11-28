@@ -67,7 +67,7 @@
       "published": "controls/SHA256SUMS",
       "source": null,
       "original_sha256": null,
-      "new_sha256": "e728a829ced343e38a79e72ae495667abed205e5a0788057bc88dd69d1e0858f",
+      "new_sha256": "30ea3af9f2e3acfbaed69b586229bddd665287bd76225d13ce842b77098b093a",
       "change": "new",
       "rules": [
         "N1 new file"
@@ -623,10 +623,11 @@
       "published": "controls/run_matrix.py",
       "source": "<v3-root>/<qualification runner, rewritten>",
       "original_sha256": null,
-      "new_sha256": "42f929f476f09b91e0e39017c810fc1a085c5d6b3bf405c9dfcbfd831b58bf92",
+      "new_sha256": "ad98ed6afbdd8afb11d5ded64ca2ec4e5c7069850a2a115dbe1b5f1ce5786bf9",
       "change": "new",
       "rules": [
-        "N2 new runner derived from the private qualification runners; parameterised, no host paths"
+        "N2 new runner derived from the private qualification runners; parameterised, no host paths",
+        "2026-11-28: passes --evaluator-command (the manifest's, else the controller default), which the evaluation CLI requires"
       ]
     },
     {
@@ -651,7 +652,7 @@
       "published": "evaluator/README.md",
       "source": null,
       "original_sha256": null,
-      "new_sha256": "100924995bc77582dd25df4152438c263b34a42fa68588e19fad26fa55e92c17",
+      "new_sha256": "bd24a2617a843d5d28a9bbc5325d1db20719bc6333f06e58217a332d9af2c4f6",
       "change": "new",
       "rules": [
         "N1 new file"
@@ -718,7 +719,7 @@
       "published": "evaluator/manifest.json",
       "source": "<release-candidate>/manifest-ready-for-approval.json",
       "original_sha256": "59d3ed41f702b5c2557571202c95f17e4b6d0955d74b9d66eadfb7b5c9c0425c",
-      "new_sha256": "a7c32620af42f437af9a034c3d2212714a83e8715ac23e8d7d3227f152d8b5c1",
+      "new_sha256": "2086e11909f009a30d2147afcf739f8b8986e5b84c05befaa21db65b57c6a6ea",
       "change": "sanitised",
       "rules": [
         "M1 regenerated: new version label, owner_review set to pending, paths re-rooted, technical_bundle_sha256 dropped, canary and checksum pin added"
