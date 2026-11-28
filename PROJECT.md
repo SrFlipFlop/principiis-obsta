@@ -27,7 +27,7 @@ We test interventions that aim to improve how securely coding agents write code.
 
 ## How to run
 
-Follow the [baseline command sequence](README.md#baseline-command-sequence): `init`, then `develop` and `evaluate` once per step, then `report`. The engineering docs cover the [development commands](docs/engineering/MVP_DEVELOPMENT_CLI.md), [evaluation commands](docs/engineering/MVP_EVALUATION_CLI.md), the [development runtime](docs/engineering/DEVELOPMENT_RUNTIME.md) and [restricted evaluation](docs/RESTRICTED_EVALUATION.md).
+Follow the [baseline command sequence](README.md#baseline-command-sequence): `init`, then `develop` and `evaluate` once per step, then `report`. The engineering docs cover the [development commands](docs/engineering/MVP_DEVELOPMENT_CLI.md), [evaluation commands](docs/engineering/MVP_EVALUATION_CLI.md), the [development runtime](docs/engineering/DEVELOPMENT_RUNTIME.md), the [network sandbox](docs/engineering/NETWORK_SANDBOX.md) that keeps the evaluated coding agent away from GitHub and hosted search, and [restricted evaluation](docs/RESTRICTED_EVALUATION.md).
 
 ## Where hidden material lives
 
@@ -74,3 +74,4 @@ Status lives in GitHub issues. Read the current issue body, comments and blocker
   - Docker images are published after the paper;
   - only credentials and personal paths stay private.
   - Open: whether run results are public during the experiment or after the paper.
+- 2026-11-28: Commands reach PyPI only through a read-only gateway in the egress proxy, because a tunnel to PyPI reached GitHub through Fastly Host fronting ([ADR 0004](docs/adr/0004-command-egress-pypi-gateway-codex-only-model-credential-docker-desktop-settings.md)).

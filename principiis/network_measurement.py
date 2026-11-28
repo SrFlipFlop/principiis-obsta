@@ -1,12 +1,18 @@
 """Logging-only network measurement that builds the development allowlist (#75).
 
-    python3 -m principiis.network_measurement --config RUNTIME_JSON --output NEW_DIR
+    python3 -m principiis.network_measurement --config RUNTIME_JSON --output NEW_DIR [--egress allowlist]
 
 Runs one ordinary Codex development session on a disposable fixture request, with
-the egress proxy in `log` mode: every destination is forwarded and recorded. The
-output keeps the workspace, Codex logs, `egress.jsonl` and `measurement.json`, whose
+the egress proxy in `log` mode: every destination is recorded and forwarded, except
+GitHub and its mirrors, tunnels to the gateway-only PyPI hosts and non-public addresses,
+which are refused (and recorded). Model-provider hosts (OpenAI/ChatGPT) are forwarded only
+with the per-run model credential, so only the Codex process reaches them; the hosts it
+requested with it are `credentialed_hosts`. The output keeps the workspace, Codex logs, `egress.jsonl` and `measurement.json`, whose
 `connected_hosts` (destinations that actually answered) are the candidate allowlist. This is a live subscription run; it
 needs the owner's approval (AGENTS.md hard rule 3) and never uses a benchmark request.
+
+`--egress allowlist` is the follow-up session: the same request under the enforced
+allowlist (as every development run), so its NOTES.md shows what the allowlist breaks.
 """
 import argparse
 import hashlib
@@ -17,24 +23,27 @@ import re
 import sys
 import uuid
 
-from .development_runtime import (CHECKOUT, DevelopmentRuntime, docker_run, inspect_image, load_config,
-                                  preflight_run, restrictions)
+from .development_runtime import (CHECKOUT, NETWORK_ALLOWLIST, DevelopmentRuntime, docker_environment, docker_run,
+                                  inspect_image, load_allowlist, load_config, preflight_run, remove,
+                                  restrictions)
+from .egress_proxy import gateway_only, model_provider, never_allowed, unsafe_entry
 from .jsonio import write_json
 
 REQUEST = CHECKOUT / 'fixtures/development/network_measurement_request.txt'
 
 
-def measure(config, output, request=REQUEST):
+def measure(config, output, request=REQUEST, egress='log'):
     output = Path(output).resolve()
-    runtime = DevelopmentRuntime(config, output, Path(request).resolve().parent, egress='log')
+    runtime = DevelopmentRuntime(config, output, Path(request).resolve().parent, egress=egress)
     workspace = output / 'workspace'
     workspace.mkdir(parents=True)
     with (output / 'codex.stdout').open('w') as stdout, (output / 'codex.stderr').open('w') as stderr:
         evidence = runtime.execute(workspace, Path(request).read_text(), stdout, stderr)
-    record = {'schema_version': 1, 'request': str(request), 'runtime_version': runtime.version,
+    record = {'schema_version': 1, 'request': str(request), 'egress_mode': egress, 'runtime_version': runtime.version,
               'connected_hosts': evidence['egress']['connected_hosts'],
               'allowed_hosts': evidence['egress']['allowed_hosts'],
-              'refused_hosts': evidence['egress']['refused_hosts'], 'execution': evidence}
+              'refused_hosts': evidence['egress']['refused_hosts'],
+              'credentialed_hosts': evidence['egress'].get('credentialed_hosts', []), 'execution': evidence}
     write_json(output / 'measurement.json', record)
     return record
 
@@ -53,9 +62,32 @@ EXCLUDED = (
 def exclusion(host):
     if re.fullmatch(r'[0-9.]+|.*:.*', host):
         return 'IP literal: the allowlist is by domain name'
+    if never_allowed(host):
+        return 'never allowed (egress_proxy.NEVER_ALLOW): serves GitHub content or mirrors arbitrary repositories'
+    if gateway_only(host):
+        return ('gateway-only (egress_proxy.GATEWAY_ONLY): shares Fastly with raw.githubusercontent.com; '
+                'commands reach it through the PyPI gateway, never a tunnel')
     for suffix, reason in EXCLUDED:
         if host == suffix or host.endswith('.' + suffix):
             return reason
+
+
+# Measured model-provider hosts (egress_proxy.MODEL_PROVIDER) and every host the Codex
+# process reached with the model credential go to the owner as model hosts, never into
+# `domains`: commands must not reach the model API (it offers hosted web search).
+model_host = model_provider
+
+
+def credentialed_hosts(document):
+    """Hosts requested with the model credential (by the Codex process); older records keep them in `execution`."""
+    hosts = document.get('credentialed_hosts')
+    if hosts is None:
+        execution = document.get('execution')
+        egress = execution.get('egress') if isinstance(execution, dict) else None
+        hosts = egress.get('credentialed_hosts', []) if isinstance(egress, dict) else []
+    if not isinstance(hosts, list) or any(not isinstance(v, str) for v in hosts):
+        raise ValueError('measurement has a malformed credentialed_hosts list')
+    return set(hosts)
 
 
 def draft_allowlist(measurement, output):
@@ -65,19 +97,29 @@ def draft_allowlist(measurement, output):
         raise ValueError(f'refusing to overwrite {output}')
     raw = measurement.read_bytes()
     document = json.loads(raw)
+    if isinstance(document, dict) and document.get('egress_mode', 'log') != 'log':
+        raise ValueError('a draft comes only from a log-mode measurement, not from the enforced-allowlist session')
     hosts = document.get('connected_hosts') if isinstance(document, dict) else None
     if not isinstance(hosts, list) or any(not isinstance(v, str) for v in hosts):
         raise ValueError('measurement has no connected_hosts list')
-    kept = sorted({v for v in hosts if not exclusion(v)})
+    refused = document.get('refused_hosts', [])
+    if not isinstance(refused, list) or any(not isinstance(v, str) for v in refused):
+        raise ValueError('measurement has a malformed refused_hosts list')
+    credentialed = credentialed_hosts(document)
+    models = sorted({v for v in hosts if model_host(v) or (v in credentialed and not exclusion(v))})
+    kept = sorted({v for v in hosts if not exclusion(v) and v not in models})
     excluded = {v: exclusion(v) for v in sorted(set(hosts)) if exclusion(v)}
     draft = {'version': '1',
              'status': 'TODO-OWNER: DRAFT from a measurement (sha256 %s). Review each host, then replace this '
                        'status with the approval note. The runtime refuses this file while any marker remains.'
                        % hashlib.sha256(raw).hexdigest(),
              'measured_from': 'TODO-OWNER: describe the measurement run (request fixture, date, who approved)',
+             'model_domains': load_allowlist()['model_domains'],
+             'model_domains_measured': models,
              'domains': kept}
     output.write_text(json.dumps(draft, indent=2) + '\n')
-    return {'draft': str(output), 'hosts': kept, 'excluded': excluded}
+    return {'draft': str(output), 'hosts': kept, 'model_hosts': models, 'excluded': excluded,
+            'refused': sorted(set(refused))}
 
 
 def check(report, name, function):
@@ -138,20 +180,134 @@ def preflight(runtime_config, runs_root):
     # The proxy program is passed as an argument, not mounted, so only the image must run it.
     check(report, 'proxy imports work under python -I -S in the image',
           lambda: preflight_run(config['docker'], ['--network', 'none', *restrictions(), '--entrypoint', 'python',
-                                config['image'], '-I', '-S', '-c', 'import json, re, socket, sys, threading, time']) and '')
+                                config['image'], '-I', '-S', '-c',
+                                'import base64, hmac, http.client, ipaddress, json, os, re, socket, ssl, sys, threading, time; '
+                                'ssl.create_default_context()']) and '')
     return report
+
+
+# Host-header fronting control (#75). The proxy checks the SNI of a tunnel but cannot see
+# the HTTP Host header inside TLS, so a host on a CDN shared with GitHub can serve GitHub
+# content through a tunnel addressed to it. PyPI on Fastly did (now gateway-only). Run this
+# before approving any allowlist: every `domains` host must PASS.
+FRONTING_PATH = '/SrFlipFlop/principiis-obsta/main/README.md'
+# Executed in a client container on the internal network: `python -c PROBE PROXY HOST...`.
+# A `model:` host is tunnelled with the check's throwaway model credential, read from the
+# environment so it never appears in an argv.
+FRONTING_TOKEN_VARIABLE = 'PO_FRONTING_TOKEN'
+FRONTING_PROBE = r'''
+import base64, json, os, socket, ssl, sys
+proxy, results = sys.argv[1], {}
+credential = base64.b64encode(('model:' + os.environ.get('PO_FRONTING_TOKEN', '')).encode()).decode()
+for argument in sys.argv[2:]:
+    host, result = argument.removeprefix('model:'), {}
+    auth = f'Proxy-Authorization: Basic {credential}\r\n' if argument.startswith('model:') else ''
+    try:
+        sock = socket.create_connection((proxy, 3128), timeout=20)
+        sock.sendall(f'CONNECT {host}:443 HTTP/1.1\r\nHost: {host}:443\r\n{auth}\r\n'.encode())
+        reply = b''
+        while b'\r\n\r\n' not in reply and (chunk := sock.recv(4096)):
+            reply += chunk
+        result['connect'] = reply.split(b'\r\n')[0].decode(errors='replace')
+        if ' 200 ' in result['connect']:
+            context = ssl.create_default_context()
+            context.check_hostname = False   # about what answers, not whose certificate
+            context.verify_mode = ssl.CERT_NONE
+            tls = context.wrap_socket(sock, server_hostname=host)
+            result['tls'] = 'established'
+            tls.sendall(('GET PATH HTTP/1.1\r\nHost: raw.githubusercontent.com\r\n'
+                         'User-Agent: po-fronting-check\r\nConnection: close\r\n\r\n').encode())
+            data = b''
+            while len(data) < 65536 and (chunk := tls.recv(65536)):
+                data += chunk
+            head, _, body = data.partition(b'\r\n\r\n')
+            lines = head.split(b'\r\n')
+            result['status'] = lines[0].decode(errors='replace')
+            result['github_header'] = any(v.lower().startswith(b'x-github-request-id') for v in lines[1:])
+            result['body'] = body[:300].decode(errors='replace')
+    except (OSError, ssl.SSLError) as error:
+        result.setdefault('tls', 'failed: ' + type(error).__name__)
+    results[host] = result
+print(json.dumps(results))
+'''.replace('PATH', FRONTING_PATH)
+
+
+def fronting_verdict(result):
+    """(status, detail) for one host's probe: FAIL if GitHub answered, PASS if something else did."""
+    status = result.get('status', '')
+    if result.get('github_header') or 'principiis-obsta' in result.get('body', ''):
+        return 'FAIL', f'GitHub content through this host ({status}): Host-header fronting works; do not allow it'
+    if result.get('tls') != 'established' or not status:
+        return 'INCONCLUSIVE', 'no answer to judge: ' + '; '.join(
+            f'{k} {result[k]}' for k in ('connect', 'tls') if result.get(k))
+    return 'PASS', 'no GitHub content: ' + status
+
+
+def fronting_check(config, allowlist):
+    """Probe each `domains` and `model_domains` host of an allowlist for Host-header fronting to GitHub.
+
+    Starts the egress proxy as `execute` does. Model hosts are tunnelled with a throwaway
+    model credential made for this check; the request inside asks for a GitHub path with
+    `Host: raw.githubusercontent.com` and carries no login. Calls no model and reads no login.
+    """
+    document = json.loads(Path(allowlist).read_text())
+    domains = document.get('domains') if isinstance(document, dict) else None
+    if not isinstance(domains, list) or any(not isinstance(v, str) for v in domains):
+        raise ValueError('allowlist has no domains list')
+    models = document.get('model_domains') or []
+    if not isinstance(models, list) or any(not isinstance(v, str) for v in models):
+        raise ValueError('allowlist model_domains is not a list of hosts')
+    report, probed, probed_models = [], [], []
+    for entry in domains + models:
+        reason = unsafe_entry(entry)
+        if reason:
+            report.append({'host': entry, 'status': 'REFUSED', 'detail': reason})
+        elif entry.startswith('*.'):
+            report.append({'host': entry, 'status': 'UNCHECKED',
+                           'detail': 'a wildcard cannot be probed; list each concrete host instead'})
+        else:
+            (probed if entry in domains else probed_models).append(entry)
+    runtime = DevelopmentRuntime.__new__(DevelopmentRuntime)
+    runtime.config, runtime.egress = load_config(config), 'allowlist'
+    runtime.allowlist = {'domains': probed, 'model_domains': probed_models}
+    token = uuid.uuid4().hex
+    model_token = uuid.uuid4().hex if probed_models else ''
+    egress = {'container': 'po-development-egress-' + token, 'network': 'po-development-net-' + token,
+              'outside_network': 'po-development-out-' + token}
+    output = '{}'
+    try:
+        if probed or probed_models:
+            proxy = runtime.start_egress(egress, model_token)
+            hosts = probed + ['model:' + host for host in probed_models]
+            output = docker_run(runtime.config['docker'], [
+                'run', '--rm', '--network', egress['network'], *restrictions(), '--env', FRONTING_TOKEN_VARIABLE,
+                '--entrypoint', 'python', runtime.config['image'], '-c', FRONTING_PROBE, proxy, *hosts],
+                timeout=60 + 30 * len(hosts), env={**docker_environment(), FRONTING_TOKEN_VARIABLE: model_token})
+    finally:
+        if probed or probed_models:
+            for argv in (['rm', '-f', egress['container']], ['network', 'rm', egress['network']],
+                         ['network', 'rm', egress['outside_network']]):
+                remove(runtime.config['docker'], argv)
+    results = json.loads(output.strip().splitlines()[-1])
+    for host in probed + probed_models:
+        status, detail = fronting_verdict(results.get(host, {}))
+        report.append({'host': host, 'status': status, 'detail': detail})
+    order = {entry: index for index, entry in enumerate(domains + models)}
+    return sorted(report, key=lambda item: order[item['host']])
 
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else list(argv)
-    if argv and argv[0] in ('preflight', 'draft-allowlist'):
+    if argv and argv[0] in ('preflight', 'draft-allowlist', 'fronting-check'):
         return helper(argv)
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     parser.add_argument('--config', required=True, help='development runtime JSON')
     parser.add_argument('--output', required=True, help='new directory outside the checkout')
     parser.add_argument('--request', default=str(REQUEST), help='disposable fixture request')
+    parser.add_argument('--egress', choices=('log', 'allowlist'), default='log',
+                        help='log: the measurement; allowlist: the follow-up session under the enforced allowlist')
     args = parser.parse_args(argv)
-    record = measure(args.config, args.output, args.request)
+    record = measure(args.config, args.output, args.request, args.egress)
     print('\n'.join(record['connected_hosts']))
 
 
@@ -164,7 +320,20 @@ def helper(argv):
     draft = commands.add_parser('draft-allowlist', help='write a draft allowlist from measurement.json')
     draft.add_argument('--measurement', required=True)
     draft.add_argument('--output', required=True)
+    fronting = commands.add_parser('fronting-check', help='probe every allowlist domain for Host-header fronting '
+                                   'to GitHub (real Docker, host internet; no model, no login)')
+    fronting.add_argument('--config', required=True)
+    fronting.add_argument('--allowlist', default=str(NETWORK_ALLOWLIST), help='draft or approved allowlist JSON')
     args = parser.parse_args(argv)
+    if args.command == 'fronting-check':
+        report = fronting_check(args.config, args.allowlist)
+        for item in report:
+            print(f"{item['status']}  {item['host']}: {item['detail']}")
+        failed = [item for item in report if item['status'] != 'PASS']
+        print('FRONTING CHECK ' + ('FAILED: do not approve this allowlist' if failed else 'OK'))
+        if failed:
+            sys.exit(1)
+        return
     if args.command == 'preflight':
         report = preflight(args.config, args.runs_root)
         for item in report:
@@ -181,6 +350,11 @@ def helper(argv):
     print(f"Draft written to {summary['draft']} ({len(summary['hosts'])} hosts). It is REJECTED until you edit it.")
     for host, reason in summary['excluded'].items():
         print(f'NOT drafted, decide consciously: {host} ({reason})')
+    for host in summary['model_hosts']:
+        print(f'model_domains_measured (Codex process, with the model credential): {host} '
+              '(never in domains; add to model_domains only if Codex needs it)')
+    for host in summary['refused']:
+        print(f'REFUSED during the measurement: {host} (the reason is in egress.jsonl; never drafted)')
 
 
 if __name__ == '__main__':

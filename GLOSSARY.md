@@ -78,11 +78,30 @@ A predefined security property, justified independently of whether the request s
 An independent agent that investigates additional vulnerabilities with reproducible evidence. Its findings are validated and reported separately from the primary scores, which come from predefined executable checks, and are never returned to the evaluated coding agent.
 
 **Network allowlist**:
-The domains the evaluated coding agent's commands may reach through the egress proxy during development. It is built from a logging-only measurement on a disposable fixture, and its digest is part of the runtime version.
+The domains the evaluated coding agent's commands may reach through the egress proxy during development. It is built from a logging-only measurement on a disposable fixture, and its digest is part of the runtime version. Its separate **model domains** are reachable only with the model credential.
 _Avoid_: Whitelist.
 
+**Model credential**:
+A per-attempt token that the egress proxy requires before it forwards to the model domains (the OpenAI/ChatGPT hosts). Only the Codex process gets it; the commands Codex runs get the proxy without it, so they cannot call the model API (and its hosted web search) themselves. It is never logged; only its scheme is part of the runtime version.
+
 **Egress proxy**:
-The trusted container that is the development container's only route out of its internal Docker network. It runs in `allowlist` mode for development, or in `log` mode for the measurement.
+The trusted container that is the development container's only route out of its internal Docker network. It runs in `allowlist` mode for development, or in `log` mode for the measurement. It reaches the internet through its own per-run outside network, never the default bridge.
+
+**Never-allow list**:
+The hosts no network allowlist may contain and the egress proxy always refuses in `allowlist` mode: GitHub and services that mirror arbitrary public repositories (`NEVER_ALLOW` in `principiis/egress_proxy.py`).
+
+**Domain fronting**:
+Reaching one host through a connection addressed to another, by naming a different server in the TLS SNI or the HTTP `Host` header than in the CONNECT line. The egress proxy refuses an SNI or plain-HTTP `Host` that differs; it cannot see the `Host` inside TLS. A host on a CDN shared with GitHub therefore cannot be tunnelled safely; `network_measurement fronting-check` tests every allowlist host for this before the owner approves it.
+
+**PyPI gateway**:
+The read-only Python package index that the egress proxy serves on its own port (`/pypi/simple/`, `/pypi/files/`), so that commands install from PyPI without a tunnel to it. The proxy itself fetches only project index pages from `pypi.org` and package files from `files.pythonhosted.org`, over verified HTTPS with fixed hosts, paths and headers. Those two hosts are **gateway-only**: they share Fastly with `raw.githubusercontent.com`, so no allowlist may list them.
+
+**Model-provider host**:
+A host under the registrable domains OpenAI serves Codex, ChatGPT and the API from (`MODEL_PROVIDER` in `principiis/egress_proxy.py`). The egress proxy forwards it only with the model credential, in every mode; no network allowlist may list it in its ordinary domains.
+
+**Network measurement**:
+The one logging-only Codex session, on a disposable fixture request, that records which destinations development actually needs. Its egress proxy runs in `log` mode, which still refuses the never-allow list, tunnels to gateway-only hosts, non-public addresses and model-provider hosts without the model credential. Its draft network allowlist is refused until the owner has reviewed it.
+_Avoid_: Using a benchmark request for it.
 
 ## Example dialogue
 
