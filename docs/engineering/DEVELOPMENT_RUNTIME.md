@@ -8,8 +8,10 @@ subscription access or an actual generated portal. Live Codex runs follow the ha
 rules in [AGENTS.md](../../AGENTS.md).
 
 `DevelopmentRuntime` uses the local Docker daemon at
-`unix:///var/run/docker.sock`. It never inherits a Docker context, API credentials,
-host home or user Docker configuration. The development image must be a prepared
+`unix:///var/run/docker.sock`, or at the Unix socket that `runtime.json` names in
+`docker_socket` (see [Docker host settings](#docker-host-settings-docker-desktop)). It
+never inherits a Docker context, `DOCKER_HOST`, API credentials, host home or user
+Docker configuration. The development image must be a prepared
 local image identified by its complete `sha256:` ID. Its dependency/toolchain versions
 are fixed by that image; build preparation may use the network, runtime never pulls.
 
@@ -31,7 +33,7 @@ applications, user configuration or credentials in the build context. Installed 
 0.169.0 help and package metadata were inspected locally on 2026-11-16; this is the
 version selected for this recipe, not a claim that it is the latest release.
 
-A runtime JSON has exactly these fields:
+A runtime JSON has exactly these fields, plus the optional Docker host settings below:
 
 ```json
 {
@@ -42,6 +44,123 @@ A runtime JSON has exactly these fields:
   "clean_runtime_review": "PATH_OR_IDENTIFIER_OF_THE_RUNTIME_REVIEW"
 }
 ```
+
+### Docker host settings (Docker Desktop)
+
+Three optional fields adapt the runtime to Docker Desktop. Leave them out on a Linux
+Docker Engine: each default is the behaviour before they existed.
+
+```json
+{
+  "docker_socket": "/Users/OPERATOR/.docker/run/docker.sock",
+  "proc": "unmasked-for-nested-sandbox",
+  "workspace_mount": "volume"
+}
+```
+
+- **`docker_socket`** (default `/var/run/docker.sock`): the absolute path of the local
+  daemon's Unix socket; `docker context inspect` shows it (Desktop:
+  `$HOME/.docker/run/docker.sock`). The socket was hard-coded so that a `DOCKER_HOST`,
+  Docker context or CLI configuration can never send the login and workspace to another
+  (possibly remote) daemon. That still holds: the controller passes
+  `--host unix://<path>` on every call with a cleaned environment, and the value must be
+  an existing Unix socket, never a URL (`tcp://`, `ssh://`, `unix://...` are refused),
+  so it can only name a local daemon. It is resolved, used for every Docker call made
+  with the loaded configuration (including `principiis cleanup` and the measurement
+  commands), saved in `runtime.json`'s cleanup argvs, and recorded in execution evidence
+  (`runtime.docker_socket`). It is not part of `runtime_version`: it selects the daemon,
+  not the policy, and it is a personal path.
+- **`proc`** (default `docker-default`): `unmasked-for-nested-sandbox` adds
+  `--security-opt systempaths=unconfined` to the containers that run the Codex sandbox
+  (the two preflights and the development container), never to the egress proxy, the
+  probes or the loader. See *Why /proc must be unmasked* below for the trade-off.
+- **`workspace_mount`** (default `bind`): `volume` gives each attempt its own Docker
+  volume instead of a bind of the host workspace. See *Volume workspace* below.
+
+`proc` and `workspace_mount` are part of `runtime_version` (`docker_host`) and of the
+execution evidence (`runtime.docker_host`, `runtime.workspace`), so a run cannot
+continue under different settings.
+
+**Why /proc must be unmasked.** Codex 0.169.0 runs each command under bubblewrap with
+`--unshare-pid` and a fresh `/proc`; that `/proc` is what hides the Codex process (and
+its model token) from commands. The kernel allows a new `proc` mount in an unprivileged
+user namespace only if the existing `/proc` is fully visible: every mount over it is
+locked when bubblewrap enters its user namespace, and any locked mount that hides part
+of it (anything but an empty directory) makes the new mount "too revealing" (`EPERM`).
+Docker's default masks (`/dev/null` over `/proc/kcore`, `/proc/keys`,
+`/proc/timer_list`, `/proc/interrupts`; tmpfs over `/proc/scsi`, `/proc/acpi`;
+read-only binds of `/proc/sys`, `/proc/bus`, `/proc/fs`, `/proc/irq`,
+`/proc/sysrq-trigger`) are such mounts, so bubblewrap fails with
+`bwrap: Can't mount proc on /proc: Operation not permitted` and the preflight stops the
+attempt. This is a kernel rule, not a Desktop one; it was observed on Docker Desktop's
+LinuxKit kernel (7.0.14). The Linux Snap Docker runs predate the `/proc` probe, so
+whether they used a fresh `/proc` is unverified (Codex has a `--no-proc` mode "for
+restrictive container environments", which the probe now refuses). If the owner's
+Linux preflight fails the same way, the same setting applies there.
+
+No narrower option was found: Docker refuses any mount under `/proc`
+(`--mount ...,dst=/proc/kcore`, `--tmpfs /proc/scsi`: "cannot be mounted because it is
+inside /proc"), and any re-masking would itself make the new `proc` mount too
+revealing again. Codex's `--no-proc` would show commands the Codex process's
+environment. The trade-off, measured on Docker Desktop as the runtime UID with no
+capabilities (`tests/test_development_runtime_containers.py` checks it on every run
+with this setting):
+
+- Commands see nothing more than before: inside bubblewrap they get a fresh, unmasked
+  `/proc` on any host where the sandbox works at all. The masks only ever covered the
+  outer processes (the boot script and the Codex process).
+- In the outer container, newly readable: `/proc/interrupts`, `/proc/scsi`, `/proc/keys`
+  (only keys the runtime UID may view; the seccomp profile still denies `keyctl`, so no
+  key contents) and `/sys/firmware` (the VM's firmware tables). Still
+  unreadable: `/proc/kcore`, `/proc/timer_list` (root-only, `EACCES`);
+  `/proc/sysrq-trigger` cannot be opened for writing.
+- `/proc/sys` becomes a read-write mount, but no file in it can be written: writing each
+  file's own current value back fails for all of them (only
+  `/proc/sys/kernel/ns_last_pid` opens for writing; the write needs `CAP_SYS_ADMIN`).
+  Inside the sandbox, commands can write only sysctls of bubblewrap's own IPC and PID
+  namespaces (`kernel.shm*`, `msg*`, `sem`, `fs.mqueue.*`, `kernel.pid_max`,
+  `ns_last_pid`, `cad_pid`), as on any host where the sandbox works.
+- On a Linux host with the operator's UID, `/proc/keys` in the outer container would
+  list that user's key descriptions; Docker Desktop's VM holds none.
+
+**Volume workspace.** On Docker Desktop, `codex exec` with the Codex-home denial failed
+at session start on a bind-mounted workspace that already held a repository directory
+(`Can't remount readonly on /workspace/.git`; again in a scratch check as
+`bwrap: Can't mount tmpfs on /workspace/.agents: No such file or directory` from the
+AGENTS.md loader's filesystem sandbox helper). Desktop shares host directories through
+its `fakeowner`/virtiofs file system, where bubblewrap's create-then-mount of protected
+paths (`.git`, `.agents`, `.codex`) is unreliable; with the same seeded workspace the
+failure did not always reproduce. The same steps always worked on a Docker volume
+(ext4 in the VM) and on a tmpfs. With `workspace_mount: volume`, `execute`:
+
+1. creates the volume `po-development-ws-<token>` and a loader container
+   `po-development-load-<token>` that is created but never started (no network,
+   read-only root, no capabilities, the runtime UID), mounting the volume root;
+2. copies the workspace in as a tar archive (`docker cp -a`, so files belong to the
+   runtime UID; symlinks are not followed);
+3. mounts only the volume's `workspace` subdirectory at `/workspace`
+   (`volume-subpath`, Docker Engine 26 or later), so `/workspace` itself belongs to the
+   runtime UID; the host workspace is never mounted;
+4. after the container exits (any status), copies `/workspace` back through the loader
+   and replaces the host workspace with it, so deletions come back too. The controller
+   extracts only directories, regular files, symlinks (byte for byte, never followed),
+   hard links inside the tree and FIFOs; it refuses absolute names, `..` and any path
+   under a symlink, and drops set-ID and sticky bits. It extracts into a fresh
+   `.workspace-copy-<token>` beside the workspace and swaps it in only when complete;
+5. removes the development container, the proxy, both networks, then the loader and the
+   volume (`principiis cleanup` does the same from `runtime.json`, which records
+   `workspace_volume` and `workspace_cleanup_argvs`).
+
+If the copy back fails, the attempt is not completed (`exit_status` is null,
+`process_exit_status` keeps Codex's, `error` says why), the host workspace stays as it
+was before the attempt, and the loader and volume are kept (`runtime.json` state
+`cleanup_error`) for inspection until `principiis cleanup` removes them. The pipeline
+snapshots the copied-back workspace exactly as it snapshots a bind-mounted one, and no
+bind-visibility probe is needed. Differences from a bind: the volume has no
+`nosuid`/`nodev` (no capabilities and `no-new-privileges` still apply), and Codex's
+empty protected-path mount points (`.agents`, `.aws`, `.codex`) come back as empty
+directories (on Desktop's file sharing they disappeared; on a Linux ext4 bind they are
+expected to stay, unverified).
 
 The authentication file must be a separately provisioned regular file. The controller
 does not read its contents. It mounts only that file and the current application's
@@ -265,9 +384,11 @@ the control skips the Codex preflight, so any image with `python` works):
 Run it with `PO_RUNTIME_IMAGE=sha256:... PO_RUNTIME_ROOT=<dir the daemon can mount>
 PO_EGRESS_CONTROL=1 python3 -m unittest discover -s tests -p test_egress_containers.py`
 (under a minute with a stock image; it needs host internet, no login and no model).
-`PO_DOCKER` names the Docker CLI. The controller always talks to
-`unix:///var/run/docker.sock`; on Docker Desktop without that socket, point `PO_DOCKER`
-at a wrapper that swaps in the Desktop socket.
+`PO_DOCKER` names the Docker CLI. On Docker Desktop, set the host settings the
+controls write into their runtime config (`tests/support.py`, `runtime_host_settings`):
+`PO_DOCKER_SOCKET=$HOME/.docker/run/docker.sock`,
+`PO_RUNTIME_PROC=unmasked-for-nested-sandbox` and `PO_RUNTIME_WORKSPACE_MOUNT=volume`
+(see [Docker host settings](#docker-host-settings-docker-desktop)). No wrapper is needed.
 
 Verified, model-free, on 2026-11-27 by the opt-in control
 `tests/test_model_token_containers.py`. It ran against a local image
@@ -304,17 +425,12 @@ credentialed proxy URL and Codex's shell snapshot under
 `$CODEX_HOME/shell_snapshots/` containing it.
 
 Run it with `PO_RUNTIME_IMAGE=sha256:... PO_RUNTIME_ROOT=<dir the daemon can mount>
-PO_EGRESS_CONTROL=1 python3 -m unittest discover -s tests -p test_model_token_containers.py`.
-On Docker Desktop, also set:
-- `PO_DIAGNOSTIC_UNMASK_PROC=1`: bubblewrap cannot mount its fresh `/proc` under Docker
-  Desktop's masked `/proc` paths. The runtime's preflight fails closed there with
-  `bwrap: Can't mount proc on /proc`.
-- `PO_DIAGNOSTIC_TMPFS_WORKSPACE=1`: with the Codex-home denial, `codex exec` cannot
-  remount a virtiofs workspace bind read-only (`Can't remount readonly on
-  /workspace/.git`). It fails closed before any model request. A Docker volume
-  (ext4) workspace worked in a scratch check.
-
-The runtime never uses either switch.
+PO_EGRESS_CONTROL=1 python3 -m unittest discover -s tests -p test_model_token_containers.py`,
+with the Docker Desktop host settings above on Desktop. The records below up to the
+Docker host settings used two diagnostic switches instead (`PO_DIAGNOSTIC_UNMASK_PROC`,
+which added `systempaths=unconfined` to every container, and
+`PO_DIAGNOSTIC_TMPFS_WORKSPACE`, which replaced the workspace bind with a tmpfs); the
+host settings replaced both.
 
 Verified again, model-free, on 2026-11-28 after merging the hardening and the model
 credential (adapter `docker-development-v5`), on the same scratch image and Docker
@@ -375,6 +491,37 @@ earlier.
   `files.pythonhosted.org` as `FAIL` (`200`, `X-GitHub-Request-Id`) and passes
   `registry.npmjs.org`. So the probe does detect Fastly fronting.
 
+Verified, model-free, on 2026-11-28 with the [Docker host settings](#docker-host-settings-docker-desktop)
+(`docker_socket` = the Desktop socket, `proc: unmasked-for-nested-sandbox`,
+`workspace_mount: volume`) instead of any diagnostic switch or socket wrapper, on Docker
+Desktop 29.9.3 (LinuxKit 7.0.14, arm64), the scratch image `sha256:eeaa4f19...` and stock
+`python:3.12-slim` (`sha256:191083cd...`):
+
+- `tests/test_development_runtime_containers.py`: 1 test, OK (scratch image). The
+  constructor preflight (with the `/proc` token probe) and the sandbox probe pass; the
+  development container has empty masked/read-only path lists; the `/proc` exposure
+  check above finds no writable `/proc/sys` file and unreadable `/proc/kcore`.
+  Without `proc` (default) the same control still fails closed in its preflight with
+  `bwrap: Can't mount proc on /proc: Operation not permitted`.
+- `tests/test_egress_containers.py`: 10 tests, OK on the scratch image; 10 tests, OK
+  (skipped=1, no npm) on `python:3.12-slim`.
+- `tests/test_model_token_containers.py`: 5 tests, OK. Its two `codex exec` controls go
+  through the real `DevelopmentRuntime.execute`, now with the volume workspace (proxy cut
+  from its outside network, FAKE login, loopback stand-in model): commands get `403` for
+  the three model hosts, see PIDs 1 and 2 only, no token, `PermissionError` for
+  `auth.json`; Codex sends `credential: valid` for `chatgpt.com`.
+- A scratch two-step check (not in the suite; same isolation, FAKE login, stand-in
+  model): step 1 starts from a workspace holding a repository directory, its command
+  writes a file and a `venv/bin/python -> /usr/local/bin/python` link; step 2 starts
+  from a copy of step 1's result, deletes and creates files. Both `exit_status` 0,
+  `copied_out: true`, `cleanup_state: removed`; the host workspace afterwards has the
+  deletion, the new file and the byte-exact link. The same check with
+  `workspace_mount: bind` also passed this time, which is why the bind failure is
+  described as unreliable rather than certain.
+- `python3 -m principiis.network_measurement preflight` with that runtime config:
+  `PREFLIGHT OK` (no login read, nothing started).
+- No `po-` container, network or volume remained afterwards.
+
 **Not verified:**
 - that real model traffic works through the credentialed proxy end to end. That needs an
   owner-approved live run; the measurement run will show it, because `egress.jsonl`
@@ -383,7 +530,13 @@ earlier.
   offered that tool).
 - that the Codex-home denial works with a Linux host bind mount (the owner's Snap
   Docker). The preflight uses a tmpfs workspace; a failure would stop the attempt
-  before any model request.
+  before any model request. `workspace_mount: volume` avoids the question there too.
+- that the runtime's nested sandbox still gets a fresh `/proc` on the owner's Linux
+  Docker without `proc: unmasked-for-nested-sandbox` (expected to fail the same way;
+  see *Why /proc must be unmasked*).
+- preview, restricted evaluation and evaluation cleanup on Docker Desktop: they still
+  use `/var/run/docker.sock` and binds (only the development runtime reads the host
+  settings).
 - Composer, .NET and Go installs (the image has no such toolchains yet).
 - `uv` through the gateway (the image has no uv); only the variable is set.
 - the allowlist itself (still a guess until measured).
@@ -392,7 +545,10 @@ earlier.
 
 This is a live subscription run and needs the owner's approval (AGENTS.md hard rule 3).
 Use a dedicated login file (not `~/.codex/auth.json`) and a runs directory the Docker
-daemon can mount (not `/tmp` with Snap Docker).
+daemon can mount (not `/tmp` with Snap Docker). On Docker Desktop, add the three
+[Docker host settings](#docker-host-settings-docker-desktop) to `RUNTIME_JSON`; the
+login file must still be in a directory Desktop shares with its VM (it is bind-mounted
+read-only).
 
 ```bash
 # 1. Nothing is started; calls no model and reads no login file.
@@ -483,14 +639,14 @@ Open, to resolve before tests go public:
   (`log` mode exists for that), so Fastly fronting is possible there; commands still
   use the gateway by default. The measurement uses a disposable fixture request, never a
   benchmark.
-- **Docker Desktop needs the diagnostics.** On Docker Desktop the runtime's preflight
-  fails closed (`bwrap: Can't mount proc on /proc`), and `codex exec` cannot remount a
-  virtiofs workspace bind read-only once the Codex home is denied. The model-free
-  controls pass there only with `PO_DIAGNOSTIC_UNMASK_PROC=1` and
-  `PO_DIAGNOSTIC_TMPFS_WORKSPACE=1`, which the runtime never uses; for the same reason
-  `tests/test_development_runtime_containers.py` (no diagnostics) fails closed in its
-  preflight there. Real runs need a Linux Docker host, where neither has been rechecked
-  since the model credential (the owner's Snap Docker).
+- **Docker Desktop runs with explicit host settings.** The runtime works on Docker
+  Desktop only with the three [Docker host settings](#docker-host-settings-docker-desktop);
+  without them it fails closed in its preflight, as before. What still differs from a
+  Linux Docker Engine with the defaults: the outer container's `/proc` is unmasked (the
+  trade-off is documented there), the workspace is a copied volume instead of a bind
+  (no `nosuid`/`nodev`; Codex's empty mount-point directories come back), and
+  preview/evaluation do not read the settings. Neither setting has been tried on the
+  owner's Linux Docker.
 - **Real model traffic through the credentialed proxy is unverified.** Nothing has yet
   carried real model or login traffic through the credentialed, SNI-checked proxy end
   to end. That needs an owner-approved live run; the measurement run will show it,

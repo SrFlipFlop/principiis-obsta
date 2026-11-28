@@ -2,13 +2,46 @@
 import json
 import os
 from pathlib import Path
-from support import temporary_directory
+from support import runtime_host_settings, temporary_directory
 import time
 import unittest
 import uuid
 
 from principiis.development_runtime import (DevelopmentRuntime, SANDBOX_PROBE,
-    configuration_args, docker_command, docker_run, restrictions, runtime_user, workspace_permission_settings)
+    configuration_args, docker_command, docker_run, load_config, restrictions, runtime_user, workspace_permission_settings)
+
+# Run as the runtime user in the outer container when /proc is unmasked: nothing Docker
+# would have masked or made read-only may become writable or reveal kernel memory.
+PROC_EXPOSURE = r'''
+import json, os
+written, opened = [], []
+for directory, _, names in os.walk('/proc/sys'):
+    for name in names:
+        path = os.path.join(directory, name)
+        try:
+            with open(path, 'rb') as handle:
+                value = handle.read()
+            fd = os.open(path, os.O_WRONLY)
+        except OSError:
+            continue
+        opened.append(path)
+        try:
+            os.write(fd, value)  # the current value: harmless if a write were ever allowed
+            written.append(path)
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
+result = {'proc_sys_written': written, 'proc_sys_opened_for_write': opened}
+for path, flags in (('/proc/sysrq-trigger', os.O_WRONLY), ('/proc/kcore', os.O_RDONLY),
+                    ('/proc/timer_list', os.O_RDONLY)):
+    try:
+        os.close(os.open(path, flags))
+        result[path] = 'opened'
+    except OSError as error:
+        result[path] = type(error).__name__
+print(json.dumps(result))
+'''
 
 
 @unittest.skipUnless(os.environ.get('PO_RUNTIME_IMAGE') and os.environ.get('PO_RUNTIME_ROOT'),
@@ -17,13 +50,16 @@ class DevelopmentRuntimeContainerTests(unittest.TestCase):
     def test_workspace_sandbox_tools_network_and_effective_container_policy(self):
         image=os.environ['PO_RUNTIME_IMAGE']
         docker=os.environ.get('PO_DOCKER','/snap/bin/docker')
+        settings=runtime_host_settings()
         output=Path(os.environ['PO_RUNTIME_ROOT']).resolve()/('sandbox-control-'+uuid.uuid4().hex)
         output.mkdir(parents=True)
         workspace=output/'workspace';workspace.mkdir()
         auth=output/'not-authentication.fixture';auth.write_text('never mounted by this control')
         config=output/'runtime-config.json'
         config.write_text(json.dumps({'version':'1','docker':docker,'image':image,
-            'auth_file':str(auth),'clean_runtime_review':'trusted no-model qualification only'}))
+            'auth_file':str(auth),'clean_runtime_review':'trusted no-model qualification only',**settings}))
+        loaded=load_config(config)
+        docker,proc=loaded['docker'],loaded['proc']
         name='po-development-'+uuid.uuid4().hex
         summary={'scope':'trusted model-free control; no credentials mounted or model calls',
                  'started_at':time.time(),'container':name,'image':image,'outcome':'failed'}
@@ -43,7 +79,7 @@ class DevelopmentRuntimeContainerTests(unittest.TestCase):
             with temporary_directory() as directory:
                 runtime=DevelopmentRuntime(config,Path(directory)/'output',Path(directory)/'source')
             summary['runtime_version']=runtime.version
-            call(['run','--detach','--name',name,'--network','bridge',*restrictions(nested_sandbox=True),
+            call(['run','--detach','--name',name,'--network','bridge',*restrictions(nested_sandbox=True,proc=proc),
                 '--tmpfs','/outside-workspace:rw,nosuid,nodev,size=1m,mode=1777',
                 '--mount',f'type=bind,src={workspace},dst=/workspace',
                 '--entrypoint','/bin/sh',image,'-c','exec sleep 120'])
@@ -57,6 +93,10 @@ class DevelopmentRuntimeContainerTests(unittest.TestCase):
             self.assertEqual(record['Config']['User'],runtime_user())
             self.assertEqual(host['NetworkMode'],'bridge')
             self.assertIn('no-new-privileges',host['SecurityOpt'])
+            # Docker's masked/read-only /proc paths go only with the explicit runtime.json setting.
+            # (Docker records `systempaths=unconfined` as empty masked and read-only path lists.)
+            self.assertEqual(bool(host.get('MaskedPaths')),proc=='docker-default')
+            self.assertEqual(bool(host.get('ReadonlyPaths')),proc=='docker-default')
             self.assertTrue(any(v.startswith('seccomp=') for v in host['SecurityOpt']))
             for mount in ('/tmp', '/home/developer'):
                 flags = host['Tmpfs'][mount].split(',')
@@ -95,6 +135,13 @@ print('network-enabled-workspace-sandbox: passed')
             self.assertIn('network-enabled-workspace-sandbox: passed',result)
             self.assertEqual((workspace/'probe.txt').read_text(),'workspace-write')
             self.assertEqual((workspace/'node-probe.txt').read_text(),'ok')
+            if proc=='unmasked-for-nested-sandbox':
+                exposure=json.loads(call(['exec',name,'python','-c',PROC_EXPOSURE]).strip().splitlines()[-1])
+                summary['proc_exposure']=exposure
+                print('unmasked /proc, outer container:',exposure)
+                self.assertEqual(exposure['proc_sys_written'],[])
+                self.assertNotIn(exposure['/proc/sysrq-trigger'],('opened',))
+                self.assertNotIn(exposure['/proc/kcore'],('opened',))
             summary['outcome']='passed'
         except BaseException as error:
             summary['error']=str(error)

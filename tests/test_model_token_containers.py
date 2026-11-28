@@ -10,12 +10,11 @@ tokens, and the one model that answers is a loopback stand-in inside the contain
     PO_RUNTIME_IMAGE=sha256:... PO_RUNTIME_ROOT=/var/tmp/po-scratch PO_EGRESS_CONTROL=1 \\
         python3 -m unittest discover -s tests -p test_model_token_containers.py
 
-Docker Desktop only (diagnostics, never used by the runtime):
-- PO_DIAGNOSTIC_UNMASK_PROC=1 adds `--security-opt systempaths=unconfined` to every
-  container these controls start, because bubblewrap cannot mount the fresh /proc
-  of its PID namespace under Docker Desktop's masked /proc paths;
-- PO_DIAGNOSTIC_TMPFS_WORKSPACE=1 replaces the workspace bind with a tmpfs, because
-  bubblewrap cannot remount a Docker Desktop (virtiofs) bind read-only.
+Docker Desktop: set the runtime.json host settings these controls write into their
+config (see `support.runtime_host_settings`):
+
+    PO_DOCKER=/usr/local/bin/docker PO_DOCKER_SOCKET=$HOME/.docker/run/docker.sock \\
+    PO_RUNTIME_PROC=unmasked-for-nested-sandbox PO_RUNTIME_WORKSPACE_MOUNT=volume
 """
 import base64
 import io
@@ -28,6 +27,8 @@ import time
 import unittest
 from unittest.mock import patch
 import uuid
+
+from support import runtime_host_settings
 
 from principiis import development_runtime as runtime_module
 from principiis.development_runtime import (MODEL_PROXY_BOOT, MODEL_TOKEN_VARIABLE, DevelopmentRuntime,
@@ -191,24 +192,21 @@ class ModelTokenContainerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.image = os.environ['PO_RUNTIME_IMAGE']
-        cls.docker = os.environ.get('PO_DOCKER', '/snap/bin/docker')
         cls.scratch = Path(os.environ['PO_RUNTIME_ROOT']).resolve() / ('model-token-control-' + uuid.uuid4().hex)
         cls.scratch.mkdir(parents=True)
-        cls.patches = []
-        if os.environ.get('PO_DIAGNOSTIC_UNMASK_PROC') == '1':
-            original = runtime_module.restrictions
-            cls.patches.append(patch.object(runtime_module, 'restrictions', lambda **kwargs: [
-                *original(**kwargs), '--security-opt', 'systempaths=unconfined']))
-        for active in cls.patches:
-            active.start()
         cls.resources = []
         login = cls.scratch / 'fake-login.json'
         fake_login(login)
         (cls.scratch / 'mock_model.py').write_text(MOCK_MODEL)
         (cls.scratch / 'command_probe.py').write_text(COMMAND_PROBE)
         cls.config = cls.scratch / 'runtime-config.json'
-        cls.config.write_text(json.dumps({'version': '1', 'docker': cls.docker, 'image': cls.image,
-                                          'auth_file': str(login), 'clean_runtime_review': 'trusted no-model control only'}))
+        cls.config.write_text(json.dumps({'version': '1', 'docker': os.environ.get('PO_DOCKER', '/snap/bin/docker'),
+                                          'image': cls.image, 'auth_file': str(login),
+                                          'clean_runtime_review': 'trusted no-model control only',
+                                          **runtime_host_settings()}))
+        # The configured CLI, bound to the configured daemon socket.
+        loaded = runtime_module.load_config(cls.config)
+        cls.docker, cls.proc = loaded['docker'], loaded['proc']
         try:
             # The constructor's preflight runs the token probe inside the nested sandbox.
             cls.runtime = DevelopmentRuntime(cls.config, cls.scratch / 'output', cls.scratch / 'source')
@@ -224,8 +222,6 @@ class ModelTokenContainerTests(unittest.TestCase):
                 remove(cls.docker, argv)
             except Exception as error:
                 errors.append(str(error))
-        for active in cls.patches:
-            active.stop()
         shutil.rmtree(cls.scratch, ignore_errors=True)
         if errors:
             raise RuntimeError('model token control cleanup failed: ' + '; '.join(errors))
@@ -259,7 +255,7 @@ class ModelTokenContainerTests(unittest.TestCase):
         boot = ('mkdir -p "$CODEX_HOME"; echo FAKE-LOGIN > "$CODEX_HOME/auth.json"; ' + MODEL_PROXY_BOOT
                 + 'echo "PO-CODEX-PROCESS $(python -c "$1" ' + ' '.join(MODEL_HOSTS) + ')"; shift; exec "$@"')
         output = docker_run(self.docker, [
-            'run', '--rm', '--network', egress['network'], *runtime_module.restrictions(nested_sandbox=True),
+            'run', '--rm', '--network', egress['network'], *runtime_module.restrictions(nested_sandbox=True, proc=self.proc),
             *proxy_environment(proxy), '--env', MODEL_TOKEN_VARIABLE,
             '--tmpfs', '/workspace:rw,exec,nosuid,nodev,size=64m,mode=1777',
             '--entrypoint', '/bin/sh', self.image, '-eu', '-c', boot, 'po-model-token-control', CONNECT_PROBE,
@@ -308,7 +304,7 @@ class ModelTokenContainerTests(unittest.TestCase):
                    'six==1.16.0 requests==2.32.3 2>&1 | grep -E "Successfully|ERROR" ; '
                    'env | grep -E "^(PIP_INDEX_URL|PIP_TRUSTED_HOST|UV_DEFAULT_INDEX)=" | sort')
         output = docker_run(self.docker, [
-            'run', '--rm', '--network', egress['network'], *runtime_module.restrictions(nested_sandbox=True),
+            'run', '--rm', '--network', egress['network'], *runtime_module.restrictions(nested_sandbox=True, proc=self.proc),
             '--tmpfs', '/workspace:rw,exec,nosuid,nodev,size=256m,mode=1777',
             '--entrypoint', '/bin/sh', self.image, '-eu', '-c', 'mkdir -p "$CODEX_HOME"; exec "$@"', 'po-gateway-control',
             'codex', '--no-daemon', 'sandbox', '--permission-profile', 'development',
@@ -374,7 +370,7 @@ class ModelTokenContainerTests(unittest.TestCase):
             self.assertNotIn(value, json.dumps(events) + output)
 
     def run_exec(self, policy, *, mock):
-        """`DevelopmentRuntime.execute` as is, with the proxy isolated and the listed diagnostics."""
+        """`DevelopmentRuntime.execute` as is, with the proxy isolated (and the stand-in model if `mock`)."""
         seen = {}
         start = self.runtime.start_egress
         real_execute = runtime_module.execute
@@ -388,12 +384,9 @@ class ModelTokenContainerTests(unittest.TestCase):
             seen['egress'] = egress
             return proxy
 
-        def diagnostic_execute(argv, *args, **kwargs):
+        def control_execute(argv, *args, **kwargs):
             seen['argv'] = list(argv)
             argv = list(argv)
-            if os.environ.get('PO_DIAGNOSTIC_TMPFS_WORKSPACE') == '1':
-                index = next(i for i, v in enumerate(argv) if v.startswith('type=bind,') and 'dst=/workspace' in v)
-                argv[index - 1:index + 1] = ['--tmpfs', '/workspace:rw,exec,nosuid,nodev,size=256m,mode=1777']
             if mock:
                 entry = argv.index('--entrypoint')
                 argv[entry:entry] = ['--mount', f'type=bind,src={self.scratch / "mock_model.py"},dst=/run/po-mock.py,readonly',
@@ -409,7 +402,7 @@ class ModelTokenContainerTests(unittest.TestCase):
         workspace.mkdir(parents=True)
         stdout, stderr = io.StringIO(), io.StringIO()
         with patch.object(self.runtime, 'start_egress', isolated_start), \
-                patch.object(runtime_module, 'execute', diagnostic_execute):
+                patch.object(runtime_module, 'execute', control_execute):
             evidence = self.runtime.execute(workspace, 'model-free control request', stdout, stderr)
         retained = [json.dumps(evidence), json.dumps(seen['argv']), stdout.getvalue(), stderr.getvalue()]
         retained += [p.read_text() for p in workspace.parent.glob('*.json*')]

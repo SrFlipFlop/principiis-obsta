@@ -5,7 +5,11 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shutil
+import stat
 import subprocess
+import tarfile
+import tempfile
 import threading
 import time
 import uuid
@@ -182,16 +186,75 @@ def local_path(value, label, *, executable=False):
     return str(path.absolute() if executable else path.resolve())
 
 
+# Optional runtime.json settings for Docker hosts other than a Linux Docker Engine
+# (Docker Desktop, #75). Each default is the Linux behaviour before these settings.
+DEFAULT_DOCKER_SOCKET = '/var/run/docker.sock'
+# `unmasked-for-nested-sandbox` drops Docker's masked/read-only /proc paths
+# (`systempaths=unconfined`) for the containers that run the Codex sandbox only. The kernel
+# lets bubblewrap mount the fresh /proc of its PID namespace only when no part of the
+# existing /proc is hidden, so Docker's masks make that mount fail.
+PROC_SETTINGS = ('docker-default', 'unmasked-for-nested-sandbox')
+# `volume` gives each attempt a Docker volume that the controller copies the workspace
+# into and back out of, instead of binding the host directory (Docker Desktop's file
+# sharing breaks bubblewrap's mounts once the Codex home is denied).
+WORKSPACE_MOUNTS = ('bind', 'volume')
+HOST_SETTINGS = {'docker_socket': DEFAULT_DOCKER_SOCKET, 'proc': 'docker-default', 'workspace_mount': 'bind'}
+
+
+class DockerCLI(str):
+    """A Docker CLI path bound to one local daemon socket.
+
+    It is the path string itself, so it serialises as before; `docker_command` reads the
+    socket from it. Every call made with a loaded configuration's `docker` therefore
+    reaches the configured daemon and no other.
+    """
+    def __new__(cls, path, socket=DEFAULT_DOCKER_SOCKET):
+        value = super().__new__(cls, path)
+        value.socket = socket
+        return value
+
+
+def docker_socket(value):
+    """An explicit absolute path of an existing local Unix socket; never a URL or a remote daemon."""
+    if (not isinstance(value, str) or not value.startswith('/') or '://' in value
+            or any(v in value for v in (',', '\n', '\r', '\x00'))):
+        raise ValueError('docker_socket must be the absolute path of a local Unix socket (no URL, no remote daemon)')
+    path = Path(value).resolve()
+    try:
+        is_socket = stat.S_ISSOCK(path.stat().st_mode)
+    except OSError:
+        is_socket = False
+    if not is_socket:
+        raise ValueError(f'docker_socket {value} is not an existing Unix socket')
+    return str(path)
+
+
+def host_settings(config):
+    """The optional Docker host settings of a runtime config, validated, with today's defaults."""
+    settings = dict(HOST_SETTINGS)
+    if 'docker_socket' in config:
+        settings['docker_socket'] = docker_socket(config['docker_socket'])
+    for key, allowed in (('proc', PROC_SETTINGS), ('workspace_mount', WORKSPACE_MOUNTS)):
+        if key in config:
+            if config[key] not in allowed:
+                raise ValueError(f'{key} must be one of {allowed}')
+            settings[key] = config[key]
+    return settings
+
+
 def load_config(path):
     config = json.loads(Path(path).read_text())
     keys = {'version', 'docker', 'image', 'auth_file', 'clean_runtime_review'}
-    if not isinstance(config, dict) or set(config) != keys or config.get('version') != '1':
-        raise ValueError('development runtime requires version 1 and explicit docker/image/auth_file/clean_runtime_review')
+    if (not isinstance(config, dict) or not keys <= set(config) or set(config) - keys - set(HOST_SETTINGS)
+            or config.get('version') != '1'):
+        raise ValueError('development runtime requires version 1 and explicit docker/image/auth_file/clean_runtime_review '
+                         '(optional: docker_socket, proc, workspace_mount)')
     if not isinstance(config['image'], str) or not IMAGE_ID.fullmatch(config['image']):
         raise ValueError('development image must be pinned by a full local sha256 image ID')
     if not isinstance(config['clean_runtime_review'], str) or not config['clean_runtime_review'].strip():
         raise ValueError('a clean runtime review record is required')
-    config['docker'] = local_path(config['docker'], 'docker', executable=True)
+    config.update(host_settings(config))
+    config['docker'] = DockerCLI(local_path(config['docker'], 'docker', executable=True), config['docker_socket'])
     config['auth_file'] = local_path(config['auth_file'], 'auth_file')
     return config
 
@@ -202,8 +265,9 @@ def docker_environment():
 
 
 def docker_command(docker, args):
-    # Never select a remote daemon or a user-configured Docker context implicitly.
-    return [docker, '--host', 'unix:///var/run/docker.sock', *args]
+    # Never select a remote daemon or a user-configured Docker context implicitly: always
+    # an explicit local Unix socket, `/var/run/docker.sock` unless runtime.json names one.
+    return [docker, '--host', 'unix://' + getattr(docker, 'socket', DEFAULT_DOCKER_SOCKET), *args]
 
 
 def docker_run(docker, args, *, timeout=20, env=None):
@@ -312,9 +376,14 @@ def runtime_user():
     return f'{uid}:{gid}'
 
 
-def restrictions(*, nested_sandbox=False):
+def restrictions(*, nested_sandbox=False, proc='docker-default'):
+    """Container restrictions; `proc` (a runtime.json setting) matters only where Codex runs its sandbox."""
+    if proc not in PROC_SETTINGS:
+        raise ValueError(f'proc must be one of {PROC_SETTINGS}')
     uid, gid = runtime_user().split(':')
     policy = ['--security-opt', 'seccomp=' + str(SANDBOX_POLICY)] if nested_sandbox else []
+    if nested_sandbox and proc == 'unmasked-for-nested-sandbox':
+        policy += ['--security-opt', 'systempaths=unconfined']
     executable = 'exec,' if nested_sandbox else ''
     return [*policy, '--pull', 'never', '--init', '--read-only', '--cap-drop', 'ALL',
             '--security-opt', 'no-new-privileges', '--user', f'{uid}:{gid}',
@@ -345,7 +414,7 @@ def cleanup_runtime(allocation_path, config_path, output):
     if (not isinstance(config, dict) or config.get('version') != '1'
             or not isinstance(config.get('image'), str) or not IMAGE_ID.fullmatch(config['image'])):
         raise ValueError('cleanup requires frozen version 1 Docker/image configuration')
-    docker = local_path(config.get('docker'), 'docker', executable=True)
+    docker = DockerCLI(local_path(config.get('docker'), 'docker', executable=True), host_settings(config)['docker_socket'])
     name = allocation.get('container') if isinstance(allocation, dict) else None
     if not isinstance(name,str) or not re.fullmatch(r'po-development-[0-9a-f]{32}',name):
         raise ValueError('runtime allocation has an invalid development container identity')
@@ -361,6 +430,11 @@ def cleanup_runtime(allocation_path, config_path, output):
         raise ValueError('runtime allocation has an invalid egress identity')
     egress_argvs = ([['rm','-f',egress['container']], ['network','rm',egress['network']]]
                     + ([['network','rm',egress['outside_network']]] if 'outside_network' in egress else [])) if egress else []
+    # Allocations with `workspace_mount: volume` also hold the loader container and the volume.
+    volume = allocation.get('workspace_volume')
+    if volume is not None and volume != {'volume':'po-development-ws-'+token, 'loader':'po-development-load-'+token}:
+        raise ValueError('runtime allocation has an invalid workspace volume identity')
+    egress_argvs += [['rm','-f',volume['loader']], ['volume','rm',volume['volume']]] if volume else []
     output = Path(output).resolve()
     output.mkdir(parents=True,exist_ok=False)
     record = {'schema_version':1,'outcome':'cleanup_error','allocation':str(allocation_path),
@@ -418,7 +492,7 @@ class DevelopmentRuntime:
                  'test ! -e /workspace/AGENTS.md; '
                  'command -v python; command -v node; command -v git; '
                  'python -c "import sqlite3, venv"; exec "$@"')
-        version = preflight_run(c['docker'], ['--network', 'none', *restrictions(nested_sandbox=True),
+        version = preflight_run(c['docker'], ['--network', 'none', *restrictions(nested_sandbox=True, proc=c['proc']),
                             '--entrypoint', '/bin/sh', c['image'], '-eu', '-c', probe, '--', 'codex', '--version'])
         codex_version = version.strip().splitlines()[-1] if version.strip() else None
         if not codex_version or not codex_version.startswith('codex-cli '):
@@ -428,7 +502,7 @@ class DevelopmentRuntime:
         # A stand-in model token reaches the Codex process exactly as in `execute`; the
         # probe, run as a command, must not find it (#75). No network, so it goes nowhere.
         attest = preflight_run(c['docker'], ['--network', 'none',
-            *restrictions(nested_sandbox=True), *proxy_environment('preflight.invalid'),
+            *restrictions(nested_sandbox=True, proc=c['proc']), *proxy_environment('preflight.invalid'),
             '--env', MODEL_TOKEN_VARIABLE,
             '--tmpfs', '/workspace:rw,exec,nosuid,nodev,size=256m,mode=1777',
             '--tmpfs', '/outside-workspace:rw,nosuid,nodev,size=1m,mode=1777',
@@ -451,6 +525,7 @@ class DevelopmentRuntime:
         self.snapshot_binding = {'image':c['image'],'symlink_targets':sorted(set(paths))}
         self.version = {'sandbox_policy_sha256':hashlib.sha256(SANDBOX_POLICY.read_bytes()).hexdigest(),
                         'temporary_filesystems':'exec,nosuid,nodev',
+                        'docker_host':{'proc':c['proc'], 'workspace_mount':c['workspace_mount']},
                         'snapshot_binding':self.snapshot_binding, 'permission_settings':workspace_permission_settings(), 'codex':codex_version, 'runtime_user':runtime_user(),
                         'command_environment':command_environment('<egress proxy>'),
                         'image':c['image'], 'adapter':ADAPTER, 'web_search':WEB_SEARCH,
@@ -467,20 +542,26 @@ class DevelopmentRuntime:
         if not workspace.is_dir():
             raise ValueError(f'development workspace does not exist: {workspace}')
         forbid_foreign_git(workspace)
+        in_volume = c['workspace_mount'] == 'volume'
         # The controller and Docker daemon can have different mount namespaces
         # (notably Snap Docker's private /tmp). Probe this exact bind without
-        # credentials or a model request before allocating an attempt.
-        try:
-            preflight_run(c['docker'], ['--network', 'none', *restrictions(nested_sandbox=True),
-                '--mount', f'type=bind,src={workspace},dst=/workspace,readonly',
-                '--entrypoint', '/bin/sh', c['image'], '-eu', '-c', 'test -d /workspace'])
-        except (ValueError, OSError, subprocess.TimeoutExpired) as error:
-            raise ValueError(f'Docker daemon cannot mount workspace {workspace}: {error}. '
-                             'Choose a run root visible to the Docker daemon.') from error
+        # credentials or a model request before allocating an attempt. A volume
+        # workspace is copied through the Docker API and needs no daemon-visible path.
+        if not in_volume:
+            try:
+                preflight_run(c['docker'], ['--network', 'none', *restrictions(nested_sandbox=True),
+                    '--mount', f'type=bind,src={workspace},dst=/workspace,readonly',
+                    '--entrypoint', '/bin/sh', c['image'], '-eu', '-c', 'test -d /workspace'])
+            except (ValueError, OSError, subprocess.TimeoutExpired) as error:
+                raise ValueError(f'Docker daemon cannot mount workspace {workspace}: {error}. '
+                                 'Choose a run root visible to the Docker daemon.') from error
         token = uuid.uuid4().hex
         name = 'po-development-' + token
         egress = {'container':'po-development-egress-' + token, 'network':'po-development-net-' + token,
                   'outside_network':'po-development-out-' + token}
+        volume = {'volume':'po-development-ws-' + token, 'loader':'po-development-load-' + token} if in_volume else None
+        workspace_mount = (f'type=volume,src={volume["volume"]},dst=/workspace,volume-subpath=workspace' if in_volume
+                           else f'type=bind,src={workspace},dst=/workspace')
         boot = ('mkdir -p "$CODEX_HOME"; cp /run/subscription-auth.json "$CODEX_HOME/auth.json"; '
                 'chmod 600 "$CODEX_HOME/auth.json"; '
                 'login_status="$(codex login status 2>&1)" || '
@@ -499,11 +580,16 @@ class DevelopmentRuntime:
         egress_log = workspace.parent / 'egress.jsonl'
         removals = [['rm', '-f', name], ['rm', '-f', egress['container']], ['network', 'rm', egress['network']],
                     ['network', 'rm', egress['outside_network']]]
+        volume_removals = [['rm', '-f', volume['loader']], ['volume', 'rm', volume['volume']]] if in_volume else []
         allocation = {'schema_version':1,'adapter':ADAPTER,'container':name,'egress':egress,
                       'image':c['image'],'sandbox_policy_sha256':self.version['sandbox_policy_sha256'],'state':'allocated','allocated_at':time.time(),
                       'cleanup_argv':docker_command(c['docker'],['rm','-f',name]),
                       'egress_cleanup_argvs':[docker_command(c['docker'],argv) for argv in removals[1:]],
                       'note':'If the controller dies, remove these containers and network before retrying; original workspace/logs must remain.'}
+        if in_volume:
+            allocation.update(workspace_volume=volume,
+                              workspace_cleanup_argvs=[docker_command(c['docker'], argv) for argv in volume_removals],
+                              note=allocation['note'] + " The workspace volume holds the attempt's files until it is removed.")
         # Outside the only writable bind mount, durable before creating any Docker resource.
         write_json(allocation_path,allocation)
         done, samples = threading.Event(), []
@@ -522,17 +608,24 @@ class DevelopmentRuntime:
         evidence = {'argv': None, 'exit_status': None, 'memory': {}}
         # Never on a command line, in a log or in evidence: Docker reads it from its own environment.
         model_token = secrets.token_hex(32)
+        proxy, loaded, copied_out = None, not in_volume, None
         try:
-            try:
-                proxy = self.start_egress(egress, model_token)
-            except (OSError, ValueError, subprocess.TimeoutExpired) as error:
-                evidence['error'] = 'egress setup failed before authentication or model: ' + str(error)
-                proxy = None
+            if in_volume:
+                try:
+                    self.load_workspace(volume, workspace)
+                    loaded = True
+                except (OSError, ValueError, subprocess.TimeoutExpired, tarfile.TarError) as error:
+                    evidence['error'] = 'workspace copy-in failed before authentication or model: ' + str(error)
+            if loaded:
+                try:
+                    proxy = self.start_egress(egress, model_token)
+                except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+                    evidence['error'] = 'egress setup failed before authentication or model: ' + str(error)
             if proxy is not None:
                 settings.update(command_settings(proxy))
                 argv = docker_command(c['docker'], ['run', '-i', '--name', name, '--network', egress['network'],
-                            *restrictions(nested_sandbox=True), *proxy_environment(proxy), '--env', MODEL_TOKEN_VARIABLE,
-                            '--mount', f'type=bind,src={workspace},dst=/workspace',
+                            *restrictions(nested_sandbox=True, proc=c['proc']), *proxy_environment(proxy), '--env', MODEL_TOKEN_VARIABLE,
+                            '--mount', workspace_mount,
                             '--mount', f'type=bind,src={c["auth_file"]},dst=/run/subscription-auth.json,readonly',
                             '--entrypoint', '/bin/sh', c['image'], '-eu', '-c', boot, '--',
                             *codex[:-1], *configuration_args(command_settings(proxy)), codex[-1]])
@@ -547,12 +640,27 @@ class DevelopmentRuntime:
                 egress_log.write_text(redact(docker_run(c['docker'], ['logs', egress['container']])))
             except (OSError, ValueError, subprocess.TimeoutExpired) as error:
                 evidence['egress_log_error'] = str(error)
+            if in_volume and proxy is not None:
+                # The development container ran: bring its workspace back, deletions included.
+                try:
+                    self.unload_workspace(volume, workspace, token)
+                    copied_out = True
+                except (OSError, ValueError, subprocess.TimeoutExpired, tarfile.TarError) as error:
+                    # Never a completed attempt on a workspace that did not come back. The
+                    # volume stays for inspection; `principiis cleanup` removes it.
+                    copied_out = False
+                    evidence['process_exit_status'] = evidence.get('exit_status')
+                    evidence['exit_status'] = None
+                    message = 'workspace copy-out failed; the volume is kept for inspection: ' + str(error)
+                    evidence['error'] = (evidence['error'] + '; ' + message) if evidence.get('error') else message
             errors = []
-            for argv in removals:
+            for argv in removals + (volume_removals if copied_out is not False else []):
                 try:
                     remove(c['docker'], argv)
                 except (OSError, ValueError, subprocess.TimeoutExpired) as error:
                     errors.append(str(error))
+            if copied_out is False:
+                errors.append('workspace volume ' + volume['volume'] + ' kept after a failed copy-out')
             if errors:
                 evidence['cleanup_error'] = '; '.join(errors)
                 allocation.update(state='cleanup_error',error=evidence['cleanup_error'])
@@ -571,7 +679,8 @@ class DevelopmentRuntime:
             'model':None, 'reasoning_effort':None, 'requested_model':'default',
             'requested_reasoning_effort':'default', 'settings':settings, 'hosted_model_memory':None,
             'clean_runtime_review':c['clean_runtime_review'],
-            'filesystem_boundary':'disposable container; only workspace and subscription auth file are mounted'}
+            'filesystem_boundary':'disposable container; only workspace and subscription auth file are mounted'
+                                  + ('; the workspace is a per-attempt Docker volume copied in and out by the controller' if in_volume else '')}
         log = egress_log.read_text() if egress_log.is_file() else ''
         evidence['egress'] = {'mode':self.egress, 'log':str(egress_log), **self.version['egress'],
                               **egress_summary(log)}
@@ -579,8 +688,46 @@ class DevelopmentRuntime:
                                'temporary_filesystems':self.version['temporary_filesystems'],
                                'user':runtime_user(),'sandbox_policy_sha256':self.version['sandbox_policy_sha256'],
                                'allocation':str(allocation_path),'cleanup_state':allocation['state'],
-                               'network':NETWORK_DESCRIPTION[self.egress]}
+                               'network':NETWORK_DESCRIPTION[self.egress], 'docker_socket':c['docker_socket'],
+                               'docker_host':self.version['docker_host'],
+                               'workspace':({'mount':'volume', 'volume':volume['volume'], 'copied_out':copied_out}
+                                            if in_volume else {'mount':'bind'})}
         return evidence
+
+    def load_workspace(self, volume, workspace):
+        """Create the attempt's volume and copy the workspace into it, owned by the runtime user.
+
+        A loader container that never starts mounts the volume root; `docker cp -a` gives
+        the copied files the loader's user. The development container mounts only the
+        volume's `workspace` subdirectory, so `/workspace` itself belongs to that user.
+        """
+        c = self.config
+        docker_run(c['docker'], ['volume', 'create', volume['volume']])
+        docker_run(c['docker'], ['create', '--name', volume['loader'], '--pull', 'never', '--network', 'none',
+                                 '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
+                                 '--user', runtime_user(), '--mount', f'type=volume,src={volume["volume"]},dst=/po-volume',
+                                 '--entrypoint', '/bin/false', c['image']])
+        with tempfile.TemporaryFile() as archive:
+            with tarfile.open(fileobj=archive, mode='w', format=tarfile.PAX_FORMAT) as tar:
+                tar.add(str(workspace), arcname='workspace')
+            archive.seek(0)
+            copy(c['docker'], ['cp', '-a', '-', volume['loader'] + ':/po-volume'], stdin=archive)
+
+    def unload_workspace(self, volume, workspace, token):
+        """Replace the host workspace with the volume's, refusing any entry that would land outside it."""
+        staging = workspace.parent / ('.workspace-copy-' + token)
+        previous = workspace.parent / ('.workspace-before-' + token)
+        try:
+            with tempfile.TemporaryFile() as archive:
+                copy(self.config['docker'], ['cp', volume['loader'] + ':/po-volume/workspace', '-'], stdout=archive)
+                archive.seek(0)
+                extract_workspace(archive, staging)
+        except BaseException:
+            remove_tree(staging)
+            raise
+        os.rename(workspace, previous)
+        os.rename(staging, workspace)
+        remove_tree(previous)
 
     def start_egress(self, egress, model_token=''):
         """Create the internal network and the proxy that is its only route out; return the proxy address.
@@ -630,16 +777,102 @@ class DevelopmentRuntime:
 
 
 
+COPY_TIMEOUT = 900
+
+
+def copy(docker, args, *, stdin=None, stdout=None):
+    """A `docker cp` streaming a tar archive through a file, never a pipe both ways."""
+    with tempfile.TemporaryFile() as errors:
+        try:
+            result = subprocess.run(docker_command(docker, args), stdin=stdin or subprocess.DEVNULL,
+                                    stdout=stdout or subprocess.DEVNULL, stderr=errors, env=docker_environment(),
+                                    timeout=COPY_TIMEOUT)
+        except subprocess.TimeoutExpired as error:
+            raise ValueError(f'Docker cp exceeded its {COPY_TIMEOUT}s timeout') from error
+        if result.returncode:
+            errors.seek(0)
+            raise ValueError('Docker cp failed: ' + redact(errors.read().decode(errors='replace')[-2000:]))
+
+
+def extract_workspace(archive, destination):
+    """Extract a `workspace/...` tar into `destination`, which must not exist yet.
+
+    Only directories, regular files, symlinks (kept byte for byte, never followed),
+    hard links within the tree and FIFOs. Every member must name a new path whose
+    ancestors are directories this extraction created, so no member can escape through
+    `..`, an absolute name or a symlink. Set-ID and sticky bits are dropped.
+    """
+    def target(name):
+        parts = name.rstrip('/').split('/')
+        if name.startswith('/') or parts[0] != 'workspace' or any(p in ('', '.', '..') for p in parts[1:]):
+            raise ValueError(f'workspace archive member {name!r} is outside the workspace')
+        path = destination.joinpath(*parts[1:])
+        for ancestor in [p for p in path.parents if p == destination or destination in p.parents][::-1]:
+            if os.path.islink(ancestor) or not stat.S_ISDIR(os.lstat(ancestor).st_mode):
+                raise ValueError(f'workspace archive member {name!r} is under a non-directory')
+        return path
+
+    directories = []
+    with tarfile.open(fileobj=archive, mode='r:') as tar:
+        for member in tar:
+            if not directories and (member.name.rstrip('/') != 'workspace' or not member.isdir()):
+                raise ValueError('workspace archive must start with the workspace directory')
+            if directories and member.name.rstrip('/') == 'workspace':
+                raise ValueError('workspace archive repeats the workspace directory')
+            path = destination if not directories else target(member.name)
+            if path != destination and os.path.lexists(path):
+                raise ValueError(f'workspace archive member {member.name!r} appears twice')
+            mode = member.mode & 0o777
+            if member.isdir():
+                os.mkdir(path, 0o700)
+                directories.append((path, mode, member.mtime))
+            elif member.isreg():
+                with tar.extractfile(member) as source, open(path, 'xb') as sink:
+                    shutil.copyfileobj(source, sink)
+                os.chmod(path, mode)
+                os.utime(path, (member.mtime, member.mtime))
+            elif member.issym():
+                os.symlink(member.linkname, path)
+            elif member.islnk():
+                source = target(member.linkname)
+                if source.is_symlink() or not source.is_file():
+                    raise ValueError(f'workspace archive hard link {member.name!r} does not name a file')
+                os.link(source, path)
+            elif member.isfifo():
+                os.mkfifo(path, mode)
+            else:
+                raise ValueError(f'workspace archive member {member.name!r} has an unsupported type')
+    if not directories:
+        raise ValueError('workspace archive is empty')
+    for path, mode, mtime in reversed(directories):
+        os.chmod(path, mode)
+        os.utime(path, (mtime, mtime))
+
+
+def remove_tree(path):
+    """Remove a directory tree that may contain read-only directories; never follows symlinks."""
+    if not os.path.lexists(path):
+        return
+
+    def writable(function, name, _error):
+        os.chmod(os.path.dirname(name), stat.S_IRWXU)
+        if os.path.isdir(name) and not os.path.islink(name):
+            os.chmod(name, stat.S_IRWXU)
+        function(name)
+    shutil.rmtree(path, onerror=writable)
+
+
 def proxy_environment(address):
     return [item for key, value in package_environment(address).items() for item in ('--env', f'{key}={value}')]
 
 
 def remove(docker, argv):
-    """Remove a container or network, treating one that is already gone as removed."""
+    """Remove a container, network or volume, treating one that is already gone as removed."""
     result = subprocess.run(docker_command(docker, argv), capture_output=True, text=True,
                             env=docker_environment(), timeout=20)
     name = re.escape(argv[-1])
-    missing = re.fullmatch(rf'(?:Error response from daemon: )?(?:No such (?:container|network): {name}|network {name} not found)',
+    missing = re.fullmatch(rf'(?:Error response from daemon: )?(?:No such (?:container|network): {name}|network {name} not found'
+                           rf'|get {name}: no such volume)',
                            result.stderr.strip())
     if result.returncode and not missing:
         raise ValueError(f'Docker {" ".join(argv[:2])} failed: {redact(result.stderr[-2000:])}')

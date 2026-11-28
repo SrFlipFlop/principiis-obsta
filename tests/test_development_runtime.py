@@ -1,10 +1,13 @@
 import io
 import json
+import os
 from pathlib import Path
+import socket
 from support import temporary_directory
 import unittest
 from unittest.mock import patch
 import subprocess
+import uuid
 
 from principiis.development_runtime import ADAPTER, CODEX_HOME, MODEL_CREDENTIAL, PYPI_GATEWAY, SANDBOX_PROBE, DevelopmentRuntime, cleanup_runtime, docker_command, load_config, preflight_run, configuration_args, workspace_permission_settings, restrictions
 
@@ -12,14 +15,47 @@ from principiis.development_runtime import ADAPTER, CODEX_HOME, MODEL_CREDENTIAL
 IMAGE = 'sha256:' + 'a' * 64
 
 
-def docker_fixture(base):
+def docker_fixture(base, host='unix:///var/run/docker.sock'):
     executable = base / 'docker'
     executable.write_text('''#!/usr/bin/env python3
-import json,pathlib,sys
+import io,json,os,pathlib,shutil,sys,tarfile
 args=sys.argv[1:]
-assert args[:2] == ['--host','unix:///var/run/docker.sock']
+assert args[:2] == ['--host',''' + repr(host) + ''']
 args=args[2:]
 with pathlib.Path(''' + repr(str(base / 'commands.jsonl')) + ''').open('a') as f: f.write(json.dumps(args)+'\\n')
+VOLUMES=pathlib.Path(''' + repr(str(base / 'volumes')) + ''')
+def volume_mount(argv):
+    for i,v in enumerate(argv):
+        if v=='--mount' and argv[i+1].startswith('type=volume,'):
+            return dict(p.split('=',1) for p in argv[i+1].split(','))
+if args[:2] == ['volume','create']:
+    (VOLUMES/args[-1]).mkdir(parents=True); print(args[-1])
+if args[0] == 'create':
+    mount=volume_mount(args)
+    pathlib.Path(''' + repr(str(base / 'loaders.json')) + ''').write_text(json.dumps({args[args.index('--name')+1]:[mount['src'],mount['dst']]}))
+    sys.exit()
+if args[0] == 'cp':
+    loaders=json.loads(pathlib.Path(''' + repr(str(base / 'loaders.json')) + ''').read_text())
+    if args[-1] == '-':
+        name,path=args[-2].split(':',1); volume,dst=loaders[name]
+        assert path == dst+'/workspace', path
+        with tarfile.open(fileobj=sys.stdout.buffer,mode='w|') as t:
+            t.add(str(VOLUMES/volume/'workspace'),arcname='workspace')
+            extra=pathlib.Path(''' + repr(str(base / 'copy-out-extra.json')) + ''')
+            if extra.exists():
+                for member in json.loads(extra.read_text()):
+                    info=tarfile.TarInfo(member['name'])
+                    if member.get('link'): info.type,info.linkname=tarfile.SYMTYPE,member['link']; t.addfile(info)
+                    else: data=b'escaped'; info.size=len(data); t.addfile(info,io.BytesIO(data))
+        sys.exit()
+    assert args[1] == '-a' and args[2] == '-', args
+    name,path=args[3].split(':',1); volume,dst=loaders[name]
+    assert path == dst, path
+    with tarfile.open(fileobj=sys.stdin.buffer,mode='r|') as t:
+        for member in t:
+            assert member.name == 'workspace' or member.name.startswith('workspace/'), member.name
+            t.extract(member,str(VOLUMES/volume))
+    sys.exit()
 import os
 if args[0] == 'run' and os.environ.get('PO_MODEL_TOKEN'):
     # What the Docker client would hand a container for a bare `--env PO_MODEL_TOKEN`.
@@ -38,6 +74,17 @@ if args[0] == 'run' and 'test -d /workspace' in args:
     sys.exit()
 if args[0] == 'run' and '--detach' in args:
     print('preview-container');sys.exit()
+if args[0] == 'run' and volume_mount(args):
+    mount=volume_mount(args)
+    assert mount['dst'] == '/workspace' and mount['volume-subpath'] == 'workspace', mount
+    workspace=VOLUMES/mount['src']/'workspace'
+    pathlib.Path(workspace,'app.py').write_text(sys.stdin.read())
+    if (workspace/'remove-me').exists(): (workspace/'remove-me').unlink()
+    os.symlink('/usr/local/bin/python',workspace/'venv-python')
+    print(json.dumps({'type':'turn.completed','usage':{'input_tokens':7,'output_tokens':3}}));sys.exit()
+if args[:2] == ['volume','rm']:
+    if not (VOLUMES/args[-1]).exists(): print('Error response from daemon: get '+args[-1]+': no such volume',file=sys.stderr);sys.exit(1)
+    shutil.rmtree(VOLUMES/args[-1]);sys.exit()
 if args[0] == 'run':
     mounts=[args[i+1] for i,v in enumerate(args) if v=='--mount']
     workspace=next(v.split('src=',1)[1].split(',')[0] for v in mounts if 'dst=/workspace' in v)
@@ -90,11 +137,12 @@ class DevelopmentRuntimeTests(unittest.TestCase):
                 self.assertIn('nosuid', flags)
                 self.assertIn('nodev', flags)
 
-    def configuration(self, base):
+    def configuration(self, base, **settings):
         auth = base / 'auth.json'
         auth.write_text('opaque-test-auth-not-read-by-controller')
-        config = {'version':'1','docker':str(docker_fixture(base)), 'image':IMAGE,
-                  'auth_file':str(auth),'clean_runtime_review':'fixture review'}
+        host = 'unix://' + settings['docker_socket'] if 'docker_socket' in settings else 'unix:///var/run/docker.sock'
+        config = {'version':'1','docker':str(docker_fixture(base, host)), 'image':IMAGE,
+                  'auth_file':str(auth),'clean_runtime_review':'fixture review', **settings}
         path = base / 'runtime.json'
         path.write_text(json.dumps(config))
         return path, config
@@ -611,6 +659,198 @@ class DevelopmentRuntimeTests(unittest.TestCase):
             self.assertEqual(missing['exit_status'],1)
             self.assertEqual(allocation.read_bytes(),before)
             self.assertEqual(json.loads((base/'cleanup-failed/cleanup.json').read_text())['outcome'],'cleanup_error')
+
+    # ---- Docker host settings (Docker Desktop, #75) ---------------------------
+
+    def unix_socket(self, base):
+        path = base / 'docker.sock'
+        listener = socket.socket(socket.AF_UNIX)
+        listener.bind(str(path))
+        self.addCleanup(listener.close)
+        return str(path)
+
+    def test_default_host_settings_are_todays_linux_runtime(self):
+        with temporary_directory() as directory:
+            base = Path(directory)
+            path, config = self.configuration(base)
+            loaded = load_config(path)
+            self.assertEqual((loaded['docker_socket'], loaded['proc'], loaded['workspace_mount']),
+                             ('/var/run/docker.sock', 'docker-default', 'bind'))
+            output = base / 'run'
+            runtime = DevelopmentRuntime(path, output, base / 'tasks')
+            self.assertEqual(runtime.version['docker_host'], {'proc': 'docker-default', 'workspace_mount': 'bind'})
+            workspace = output / 'workspace'; workspace.mkdir(parents=True)
+            evidence = runtime.execute(workspace, 'request', io.StringIO(), io.StringIO())
+            commands = self.commands(base)
+            self.assertNotIn('systempaths=unconfined', repr(commands))
+            self.assertFalse(any(c[0] in ('volume', 'create', 'cp') for c in commands))
+            self.assertEqual(evidence['runtime']['docker_socket'], '/var/run/docker.sock')
+            self.assertEqual(evidence['runtime']['workspace']['mount'], 'bind')
+            self.assertNotIn('workspace_volume', json.loads((output / 'runtime.json').read_text()))
+
+    def test_docker_socket_is_an_explicit_local_unix_socket_used_for_every_command(self):
+        with temporary_directory() as directory:
+            base = Path(directory)
+            sock = self.unix_socket(base)
+            path, config = self.configuration(base, docker_socket=sock)
+            output = base / 'run'
+            runtime = DevelopmentRuntime(path, output, base / 'tasks')
+            workspace = output / 'workspace'; workspace.mkdir(parents=True)
+            evidence = runtime.execute(workspace, 'request', io.StringIO(), io.StringIO())
+            # The fixture asserts `--host unix://<sock>` on every call it receives.
+            self.assertEqual(evidence['exit_status'], 0)
+            self.assertEqual(evidence['runtime']['docker_socket'], sock)
+            # The daemon endpoint selects where the policy runs, not the policy: not in the version.
+            self.assertNotIn(sock, json.dumps(runtime.version))
+            allocation = json.loads((output / 'runtime.json').read_text())
+            self.assertEqual(allocation['cleanup_argv'][:3], [config['docker'], '--host', 'unix://' + sock])
+            record = cleanup_runtime(output / 'runtime.json', path, base / 'cleanup')
+            self.assertEqual(record['outcome'], 'removed')
+
+    def test_docker_socket_refuses_remote_relative_and_non_socket_endpoints(self):
+        with temporary_directory() as directory:
+            base = Path(directory)
+            path, config = self.configuration(base)
+            regular = base / 'not-a-socket'; regular.write_text('')
+            for value in ('tcp://10.0.0.1:2375', 'ssh://host', 'unix:///var/run/docker.sock', 'docker.sock',
+                          str(regular), str(base / 'missing.sock'), '/var/run/docker,sock', '', None, 7):
+                path.write_text(json.dumps(dict(config, docker_socket=value)))
+                with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'docker_socket'):
+                    load_config(path)
+            self.assertFalse((base / 'commands.jsonl').exists())
+
+    def test_host_settings_accept_only_known_values(self):
+        with temporary_directory() as directory:
+            base = Path(directory)
+            path, config = self.configuration(base)
+            for changes in ({'proc': 'unconfined'}, {'proc': None}, {'workspace_mount': 'tmpfs'},
+                            {'workspace_mount': ''}, {'docker_host': 'unix:///x'}):
+                path.write_text(json.dumps(dict(config, **changes)))
+                with self.subTest(changes=changes), self.assertRaises(ValueError):
+                    load_config(path)
+
+    def test_unmasked_proc_applies_only_to_containers_that_run_the_codex_sandbox(self):
+        with temporary_directory() as directory:
+            base = Path(directory)
+            path, config = self.configuration(base, proc='unmasked-for-nested-sandbox')
+            output = base / 'run'
+            runtime = DevelopmentRuntime(path, output, base / 'tasks')
+            self.assertEqual(runtime.version['docker_host']['proc'], 'unmasked-for-nested-sandbox')
+            workspace = output / 'workspace'; workspace.mkdir(parents=True)
+            runtime.execute(workspace, 'request', io.StringIO(), io.StringIO())
+            commands = self.commands(base)
+            unmasked = lambda c: 'systempaths=unconfined' in c and c[c.index('systempaths=unconfined') - 1] == '--security-opt'
+            codex = [c for c in commands if c[0] == 'run' and 'codex' in c]
+            self.assertEqual(len(codex), 3)  # version probe, sandbox preflight, development
+            self.assertTrue(all(unmasked(c) for c in codex))
+            others = [c for c in commands if c[0] in ('run', 'create') and 'codex' not in c]
+            self.assertTrue(any('--detach' in c for c in others))  # the egress proxy
+            self.assertFalse(any('systempaths=unconfined' in c for c in others))
+            default = DevelopmentRuntime(self.configuration(base)[0], output, base / 'tasks')
+            self.assertNotEqual(runtime.version, default.version)
+
+    def volume_attempt(self, base, **settings):
+        path, config = self.configuration(base, workspace_mount='volume', **settings)
+        output = base / 'run'
+        runtime = DevelopmentRuntime(path, output, base / 'tasks')
+        workspace = output / 'steps/one/workspace'; (workspace / 'src').mkdir(parents=True)
+        (workspace / 'src/kept.py').write_text('kept')
+        (workspace / 'remove-me').write_text('deleted by the agent')
+        (workspace / 'run.sh').write_text('#!/bin/sh\n'); (workspace / 'run.sh').chmod(0o755)
+        return path, config, output, runtime, workspace
+
+    def test_volume_workspace_copies_in_and_out_without_binding_the_host_directory(self):
+        with temporary_directory() as directory:
+            base = Path(directory)
+            path, config, output, runtime, workspace = self.volume_attempt(base)
+            self.assertEqual(runtime.version['docker_host']['workspace_mount'], 'volume')
+            evidence = runtime.execute(workspace, 'released request only', io.StringIO(), io.StringIO())
+            self.assertEqual(evidence['exit_status'], 0)
+            # The agent's changes came back, deletions included, links byte-exact.
+            self.assertEqual((workspace / 'app.py').read_text(), 'released request only')
+            self.assertEqual((workspace / 'src/kept.py').read_text(), 'kept')
+            self.assertFalse((workspace / 'remove-me').exists())
+            self.assertEqual(os.readlink(workspace / 'venv-python'), '/usr/local/bin/python')
+            self.assertTrue(os.access(workspace / 'run.sh', os.X_OK))
+            self.assertEqual(sorted(p.name for p in workspace.parent.iterdir()),
+                             ['egress.jsonl', 'runtime.json', 'workspace'])
+            commands = self.commands(base)
+            self.assertFalse(any('test -d /workspace' in c for c in commands))  # no host bind to probe
+            launch = self.launch(base)
+            mounts = [launch[i + 1] for i, v in enumerate(launch) if v == '--mount']
+            self.assertFalse(any(str(workspace) in m for m in mounts))
+            allocation = json.loads((output / 'steps/one/runtime.json').read_text())
+            volume, loader = allocation['workspace_volume']['volume'], allocation['workspace_volume']['loader']
+            token = allocation['container'].removeprefix('po-development-')
+            self.assertEqual((volume, loader), ('po-development-ws-' + token, 'po-development-load-' + token))
+            self.assertIn(f'type=volume,src={volume},dst=/workspace,volume-subpath=workspace', mounts)
+            # The loader never runs: created with the runtime user, no network, read-only, no capabilities.
+            create = next(c for c in commands if c[0] == 'create')
+            for flag in ('--read-only', '--cap-drop', '--user', '--network', '--pull'):
+                self.assertIn(flag, create)
+            self.assertEqual(create[create.index('--network') + 1], 'none')
+            self.assertFalse(any(c[:2] == ['start', loader] for c in commands))
+            def label(c):
+                if c[0] == 'rm':
+                    return 'rm ' + c[-1].split('-')[2]
+                return 'run' if c[0] == 'run' else ' '.join(c[:2]) if c[0] == 'volume' else c[0]
+            steps = [label(c) for c in commands if c[0] in ('volume', 'create', 'cp') or (c[0] == 'run' and '-i' in c)
+                     or (c[:2] == ['rm', '-f'] and not c[-1].startswith('po-development-preflight-'))]
+            self.assertEqual(steps, ['volume create', 'create', 'cp', 'run', 'cp', 'rm ' + token, 'rm egress',
+                                     'rm load', 'volume rm'])
+            self.assertEqual(allocation['state'], 'removed')
+            self.assertEqual(evidence['runtime']['workspace'], {'mount': 'volume', 'volume': volume, 'copied_out': True})
+            self.assertFalse((base / 'volumes' / volume).exists())
+
+    def test_volume_copy_out_refuses_paths_that_escape_and_keeps_the_volume(self):
+        for extra in ([{'name': '../escaped'}], [{'name': 'workspace/link', 'link': str(Path('/'))},
+                                                  {'name': 'workspace/link/escaped'}],
+                      [{'name': '/escaped'}]):
+            with temporary_directory() as directory, self.subTest(extra=extra):
+                base = Path(directory)
+                path, config, output, runtime, workspace = self.volume_attempt(base)
+                (base / 'copy-out-extra.json').write_text(json.dumps(extra))
+                evidence = runtime.execute(workspace, 'request', io.StringIO(), io.StringIO())
+                # Never a completed attempt on a workspace that did not come back.
+                self.assertIsNone(evidence['exit_status'])
+                self.assertEqual(evidence['process_exit_status'], 0)
+                self.assertIn('copy', evidence['error'])
+                self.assertFalse((base / 'escaped').exists())
+                self.assertFalse((output / 'steps/escaped').exists())
+                self.assertFalse(Path('/escaped').exists())
+                # The pre-attempt workspace stays as it was; the volume is kept for inspection.
+                self.assertTrue((workspace / 'remove-me').exists())
+                self.assertFalse((workspace / 'app.py').exists())
+                allocation = json.loads((output / 'steps/one/runtime.json').read_text())
+                self.assertEqual(allocation['state'], 'cleanup_error')
+                volume = allocation['workspace_volume']['volume']
+                self.assertTrue((base / 'volumes' / volume).exists())
+                self.assertNotIn(['volume', 'rm', volume], self.commands(base))
+                self.assertEqual([p.name for p in workspace.parent.iterdir() if p.name.startswith('.')], [])
+                # `principiis cleanup` then removes the loader and the volume.
+                record = cleanup_runtime(output / 'steps/one/runtime.json', path, base / 'cleanup')
+                self.assertEqual(record['outcome'], 'removed')
+                self.assertIn(['volume', 'rm', volume], self.commands(base))
+                self.assertFalse((base / 'volumes' / volume).exists())
+
+    def test_explicit_cleanup_removes_the_workspace_loader_and_volume_last(self):
+        with temporary_directory() as directory:
+            base = Path(directory)
+            path, config = self.configuration(base)
+            token = 'b' * 32
+            egress = {'container': 'po-development-egress-' + token, 'network': 'po-development-net-' + token,
+                      'outside_network': 'po-development-out-' + token}
+            allocation = self.egress_allocation(base, config, egress)
+            volume = {'volume': 'po-development-ws-' + token, 'loader': 'po-development-load-' + token}
+            allocation.write_text(json.dumps(dict(json.loads(allocation.read_text()), workspace_volume=volume)))
+            record = cleanup_runtime(allocation, path, base / 'cleanup')
+            self.assertEqual(record['outcome'], 'removed')
+            self.assertEqual(self.commands(base)[-2:], [['rm', '-f', volume['loader']], ['volume', 'rm', volume['volume']]])
+            for foreign in (dict(volume, volume='po-development-ws-' + 'c' * 32), dict(volume, loader='bridge'),
+                            {'volume': volume['volume']}, dict(volume, extra='x')):
+                allocation.write_text(json.dumps(dict(json.loads(allocation.read_text()), workspace_volume=foreign)))
+                with self.subTest(foreign=foreign), self.assertRaisesRegex(ValueError, 'workspace volume identity'):
+                    cleanup_runtime(allocation, path, base / ('cleanup-' + uuid.uuid4().hex))
 
 
 if __name__ == '__main__':

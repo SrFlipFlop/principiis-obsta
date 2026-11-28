@@ -13,6 +13,20 @@ def temporary_directory(**kwargs):
     return tempfile.TemporaryDirectory(**kwargs)
 
 
+def runtime_host_settings():
+    """Optional runtime.json Docker host settings for the opt-in container controls.
+
+    PO_DOCKER_SOCKET, PO_RUNTIME_PROC and PO_RUNTIME_WORKSPACE_MOUNT become
+    `docker_socket`, `proc` and `workspace_mount`; unset means the runtime default.
+    Docker Desktop: PO_DOCKER_SOCKET=$HOME/.docker/run/docker.sock
+    PO_RUNTIME_PROC=unmasked-for-nested-sandbox PO_RUNTIME_WORKSPACE_MOUNT=volume.
+    """
+    import os
+    names = {'PO_DOCKER_SOCKET': 'docker_socket', 'PO_RUNTIME_PROC': 'proc',
+             'PO_RUNTIME_WORKSPACE_MOUNT': 'workspace_mount'}
+    return {key: os.environ[name] for name, key in names.items() if os.environ.get(name)}
+
+
 ROOT = Path(__file__).resolve().parents[1]
 # The public fixture evaluator's check contract and the Node oracle adapter entrypoint.
 FIXTURE_CONTRACT = ['--check-contract', str(ROOT / 'fixtures/evaluation/contract.json')]

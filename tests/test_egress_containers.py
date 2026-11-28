@@ -11,7 +11,8 @@ Docker and outbound internet from the host.
     PO_RUNTIME_IMAGE=sha256:... PO_RUNTIME_ROOT=/var/tmp/po-scratch PO_EGRESS_CONTROL=1 \
         python3 -m unittest discover -s tests -p test_egress_containers.py
 
-`PO_DOCKER` names the Docker CLI (default `/snap/bin/docker`).
+`PO_DOCKER` names the Docker CLI (default `/snap/bin/docker`); on Docker Desktop also set
+`PO_DOCKER_SOCKET` (see `support.runtime_host_settings`).
 """
 import json
 import os
@@ -21,6 +22,7 @@ import socket
 import unittest
 import uuid
 
+from support import runtime_host_settings
 from principiis.development_runtime import (DevelopmentRuntime, docker_run, load_allowlist, load_config,
                                             proxy_environment, remove, restrictions)
 from principiis.network_measurement import FRONTING_PROBE, fronting_verdict
@@ -145,13 +147,15 @@ class EgressContainerTests(unittest.TestCase):
         auth.write_text('never mounted by this control')
         config = cls.scratch / 'runtime-config.json'
         config.write_text(json.dumps({'version': '1', 'docker': cls.docker, 'image': cls.image,
-                                      'auth_file': str(auth), 'clean_runtime_review': 'trusted no-model control only'}))
+                                      'auth_file': str(auth), 'clean_runtime_review': 'trusted no-model control only',
+                                      **runtime_host_settings()}))
         token = uuid.uuid4().hex
         cls.egress = {'container': 'po-development-egress-' + token, 'network': 'po-development-net-' + token,
                       'outside_network': 'po-development-out-' + token}
         # The same `start_egress` that `execute` uses, without the Codex preflight.
         cls.runtime = DevelopmentRuntime.__new__(DevelopmentRuntime)
         cls.runtime.config, cls.runtime.egress, cls.runtime.allowlist = load_config(config), 'allowlist', load_allowlist()
+        cls.docker = cls.runtime.config['docker']  # bound to the configured daemon socket
         cls.github_ip = socket.gethostbyname('github.com')
         try:
             cls.proxy = cls.runtime.start_egress(cls.egress)
