@@ -99,6 +99,37 @@ class DraftAllowlist(unittest.TestCase):
         with temporary_directory() as directory, patch.object(network_measurement, 'DevelopmentRuntime', Runtime):
             record = network_measurement.measure(Path(directory) / 'config.json', Path(directory) / 'out')
         self.assertEqual(record['credentialed_hosts'], ['chatgpt.com'])
+        self.assertEqual(record['egress_mode'], 'log')
+
+    def test_the_follow_up_session_reruns_the_request_under_the_enforced_allowlist(self):
+        # After the owner approves the allowlist, the same fixture request runs in
+        # allowlist mode, so the per-ecosystem NOTES.md shows what the allowlist breaks.
+        modes = []
+
+        class Runtime:
+            version = {'egress': {'mode': 'allowlist'}}
+
+            def __init__(self, config, output, source, *, egress):
+                modes.append(egress)
+
+            def execute(self, workspace, request, stdout, stderr):
+                return {'egress': {'connected_hosts': [], 'allowed_hosts': [], 'refused_hosts': [],
+                                   'credentialed_hosts': []}}
+        with temporary_directory() as directory, patch.object(network_measurement, 'DevelopmentRuntime', Runtime), \
+                contextlib.redirect_stdout(io.StringIO()):
+            network_measurement.main(['--config', str(Path(directory) / 'c.json'), '--output',
+                                      str(Path(directory) / 'out'), '--egress', 'allowlist'])
+            record = json.loads((Path(directory) / 'out' / 'measurement.json').read_text())
+            with self.assertRaises(SystemExit):
+                network_measurement.main(['--config', 'c.json', '--output', 'x', '--egress', 'open'])
+        self.assertEqual(modes, ['allowlist'])
+        self.assertEqual(record['egress_mode'], 'allowlist')
+        with temporary_directory() as directory:
+            # A draft only ever comes from a log-mode measurement.
+            path = Path(directory) / 'm.json'
+            path.write_text(json.dumps(dict(record, connected_hosts=['registry.npmjs.org'])))
+            with self.assertRaisesRegex(ValueError, 'log-mode'):
+                network_measurement.draft_allowlist(path, Path(directory) / 'draft.json')
 
     def test_code_hosting_and_ip_literals_are_never_drafted(self):
         with temporary_directory() as directory:

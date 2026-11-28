@@ -1,6 +1,6 @@
 """Logging-only network measurement that builds the development allowlist (#75).
 
-    python3 -m principiis.network_measurement --config RUNTIME_JSON --output NEW_DIR
+    python3 -m principiis.network_measurement --config RUNTIME_JSON --output NEW_DIR [--egress allowlist]
 
 Runs one ordinary Codex development session on a disposable fixture request, with
 the egress proxy in `log` mode: every destination is recorded and forwarded, except
@@ -10,6 +10,9 @@ with the per-run model credential, so only the Codex process reaches them; the h
 requested with it are `credentialed_hosts`. The output keeps the workspace, Codex logs, `egress.jsonl` and `measurement.json`, whose
 `connected_hosts` (destinations that actually answered) are the candidate allowlist. This is a live subscription run; it
 needs the owner's approval (AGENTS.md hard rule 3) and never uses a benchmark request.
+
+`--egress allowlist` is the follow-up session: the same request under the enforced
+allowlist (as every development run), so its NOTES.md shows what the allowlist breaks.
 """
 import argparse
 import hashlib
@@ -28,14 +31,14 @@ from .jsonio import write_json
 REQUEST = CHECKOUT / 'fixtures/development/network_measurement_request.txt'
 
 
-def measure(config, output, request=REQUEST):
+def measure(config, output, request=REQUEST, egress='log'):
     output = Path(output).resolve()
-    runtime = DevelopmentRuntime(config, output, Path(request).resolve().parent, egress='log')
+    runtime = DevelopmentRuntime(config, output, Path(request).resolve().parent, egress=egress)
     workspace = output / 'workspace'
     workspace.mkdir(parents=True)
     with (output / 'codex.stdout').open('w') as stdout, (output / 'codex.stderr').open('w') as stderr:
         evidence = runtime.execute(workspace, Path(request).read_text(), stdout, stderr)
-    record = {'schema_version': 1, 'request': str(request), 'runtime_version': runtime.version,
+    record = {'schema_version': 1, 'request': str(request), 'egress_mode': egress, 'runtime_version': runtime.version,
               'connected_hosts': evidence['egress']['connected_hosts'],
               'allowed_hosts': evidence['egress']['allowed_hosts'],
               'refused_hosts': evidence['egress']['refused_hosts'],
@@ -93,6 +96,8 @@ def draft_allowlist(measurement, output):
         raise ValueError(f'refusing to overwrite {output}')
     raw = measurement.read_bytes()
     document = json.loads(raw)
+    if isinstance(document, dict) and document.get('egress_mode', 'log') != 'log':
+        raise ValueError('a draft comes only from a log-mode measurement, not from the enforced-allowlist session')
     hosts = document.get('connected_hosts') if isinstance(document, dict) else None
     if not isinstance(hosts, list) or any(not isinstance(v, str) for v in hosts):
         raise ValueError('measurement has no connected_hosts list')
@@ -286,8 +291,10 @@ def main(argv=None):
     parser.add_argument('--config', required=True, help='development runtime JSON')
     parser.add_argument('--output', required=True, help='new directory outside the checkout')
     parser.add_argument('--request', default=str(REQUEST), help='disposable fixture request')
+    parser.add_argument('--egress', choices=('log', 'allowlist'), default='log',
+                        help='log: the measurement; allowlist: the follow-up session under the enforced allowlist')
     args = parser.parse_args(argv)
-    record = measure(args.config, args.output, args.request)
+    record = measure(args.config, args.output, args.request, args.egress)
     print('\n'.join(record['connected_hosts']))
 
 
