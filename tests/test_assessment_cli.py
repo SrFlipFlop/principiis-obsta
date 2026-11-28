@@ -164,7 +164,8 @@ class QualifiedAssessmentCLI(unittest.TestCase):
         self.make_run()
         self.generate_checkpoint()
         self.bind()
-        (self.bundle / 'contract.json').write_text(json.dumps({'other': 'functional', 'denial': 'security'}))
+        # #75: the run evaluates its own hash-checked copy, so tampering targets the copy.
+        (self.root / 'evaluator/contract.json').write_text(json.dumps({'other': 'functional', 'denial': 'security'}))
         process = self.operator('evaluate', '--step', '1', success=False)
         self.assertIn('dependency content changed', process.stderr)
         self.assertEqual(self.operator('status')['assessments'], [])

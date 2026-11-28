@@ -33,6 +33,7 @@ import subprocess
 import uuid
 
 from .benchmark import cumulative_request
+from .evaluator_lookup import copy_evaluator, identity
 from .jsonio import digest, write_json
 from .snapshot import validate
 
@@ -474,9 +475,15 @@ class RunStore:
         if target.is_symlink():
             raise ValueError('evaluator binding cannot be a symlink')
         if target.exists():
-            if json.loads(target.read_text()) != binding:
+            existing = json.loads(target.read_text())
+            if identity(existing) != identity(binding):
                 raise ValueError('evaluator binding changed; preserve this run and use a new run')
+            binding = existing
         else:
+            if 'manifest' in binding:
+                binding = dict(binding, source_manifest=binding['manifest'],
+                               manifest=copy_evaluator(self.root, declaration, binding['manifest_sha256'],
+                                                       binding['files']))
             (self.root / 'evaluator-manifest.json').write_bytes(Path(declaration).read_bytes())
             (self.root / 'evaluator-release.json').write_bytes(Path(release).read_bytes())
             write_json(target, binding)

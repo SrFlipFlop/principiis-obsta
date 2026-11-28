@@ -12,6 +12,7 @@ import sys
 
 from . import benchmark
 from .execution import execute
+from .evaluator_lookup import evaluator_directory
 from .jsonio import digest
 
 # Declarations bound before the field existed ran the Node oracle adapter's entrypoint.
@@ -133,10 +134,11 @@ def bind(store, declaration_path, package=None):
 class RestrictedEvaluator:
     """Runs a bound step's hidden checks in separate restricted containers."""
 
-    def __init__(self, binding, docker):
+    def __init__(self, binding, docker, root=None, search_roots=()):
+        """`root` is the run directory holding the evaluator copy; older records are found by SHA-256."""
         self.binding, self.docker = binding, docker
         self.manifest = binding['declaration']
-        self.directory = Path(binding['manifest']).parent
+        self.directory = evaluator_directory(root, binding, search_roots)
 
     def _file(self, name):
         path = _relative(self.directory, name)
