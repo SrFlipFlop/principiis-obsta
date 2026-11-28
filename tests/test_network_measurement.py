@@ -38,10 +38,10 @@ class DraftAllowlist(unittest.TestCase):
         with temporary_directory() as directory:
             base = Path(directory)
             measurement = write_measurement(base / 'measurement.json',
-                                            ['repo.packagist.org', 'api.nuget.org', 'registry.npmjs.org', 'docs.python.org'])
+                                            ['repo.packagist.org', 'api.nuget.org', 'registry.npmjs.org', 'docs.pytest.org'])
             draft = base / 'draft.json'
             summary = network_measurement.draft_allowlist(measurement, draft)
-            self.assertEqual(summary['hosts'], ['api.nuget.org', 'docs.python.org', 'registry.npmjs.org', 'repo.packagist.org'])
+            self.assertEqual(summary['hosts'], ['api.nuget.org', 'docs.pytest.org', 'registry.npmjs.org', 'repo.packagist.org'])
             document = json.loads(draft.read_text())
             self.assertEqual(document['version'], '1')
             self.assertEqual(document['domains'], summary['hosts'])

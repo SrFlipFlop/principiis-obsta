@@ -60,6 +60,10 @@ NEVER_ALLOW = (
     'jsdelivr.net', 'githack.com', 'statically.io', 'esm.sh', 'gitpod.io', 'sourcegraph.com',
     # Code hosts and archives where anyone can mirror the repository.
     'gitlab.com', 'bitbucket.org', 'codeberg.org', 'gitee.com', 'archive.org', 'softwareheritage.org',
+    # Found by the 2026-11-28 measurement. pkg.go.dev renders the GitHub README of any Go
+    # module. docs.python.org is on Fastly and failed `fronting-check`: a tunnel to it with
+    # `Host: raw.githubusercontent.com` returned this repository's README.
+    'pkg.go.dev', 'docs.python.org',
 )
 
 

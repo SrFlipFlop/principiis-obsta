@@ -32,7 +32,7 @@ class EgressPolicyTests(unittest.TestCase):
 
     def test_log_mode_admits_ordinary_destinations_on_any_port(self):
         self.assertTrue(allowed('registry.npmjs.org', 443, 'log', []))
-        self.assertTrue(allowed('docs.python.org', 8443, 'log', []))
+        self.assertTrue(allowed('docs.pytest.org', 8443, 'log', []))
         self.assertTrue(allowed('140.82.112.3', 22, 'log', []))  # addresses are checked after resolution
         self.assertFalse(allowed('bad host', 443, 'log', []))
 
@@ -67,7 +67,10 @@ GITHUB = ('github.com', 'api.github.com', 'codeload.github.com', 'gist.github.co
           'api.githubcopilot.com', 'githubapp.com', 'proxy.golang.org', 'goproxy.io', 'goproxy.cn',
           'cdn.jsdelivr.net', 'raw.githack.com', 'cdn.statically.io', 'gitpod.io', 'sourcegraph.com',
           'gitee.com', 'web.archive.org', 'archive.org', 'archive.softwareheritage.org', 'gitlab.com',
-          'bitbucket.org', 'codeberg.org')
+          'bitbucket.org', 'codeberg.org',
+          # Found by the 2026-11-28 measurement: pkg.go.dev renders any Go module's GitHub
+          # README; docs.python.org (Fastly) passed Host-header fronting to raw.githubusercontent.com.
+          'pkg.go.dev', 'docs.python.org')
 
 
 class NeverAllowTests(unittest.TestCase):

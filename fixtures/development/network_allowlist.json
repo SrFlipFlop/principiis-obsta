@@ -1,6 +1,7 @@
 {
   "version": "1",
-  "status": "provisional: not yet measured. Replace with the domains a logging-only run on a disposable fixture actually reached (#75). proxy.golang.org is deliberately absent: it serves any public GitHub repository as a Go module. pypi.org and files.pythonhosted.org are deliberately absent: they share Fastly with raw.githubusercontent.com, so a tunnel to them can front GitHub with the Host header; commands reach PyPI only through the proxy's PyPI gateway (http://<proxy>:3128/pypi/simple/). Run `python3 -m principiis.network_measurement fronting-check` before adding any host. model_domains are reachable only by the Codex process, which alone holds the per-run proxy token; commands get 403 there (otherwise a command could call the model API with hosted web search).",
+  "status": "measured 2026-11-28; hosts selected in an agent session the owner delegated, final approval is the owner's review of this file in its PR. Left out after review: docs.python.org (Fastly; fronting-check returned GitHub content) and pkg.go.dev (renders any Go module's GitHub README); both are now never-allowed. pypi.org and files.pythonhosted.org are reached only through the PyPI gateway. Composer installs still fail: Packagist package downloads come from GitHub, which stays refused. model_domains keeps the three hosts Codex needs; ab.chatgpt.com and *.oaiusercontent.com were also requested by Codex during the measurement and are left out until a run shows they are needed. Run `python3 -m principiis.network_measurement fronting-check` before adding any host.",
+  "measured_from": "network measurement 2026-11-28 with fixtures/development/network_measurement_request.txt in log mode (adapter docker-development-v7, measurement sha256 0f350efdf71e460224d7991d6875ec018f260b9a43d31368ef06d292c3fcfcbc); fronting-check passed for every host below",
   "model_domains": [
     "api.openai.com",
     "auth.openai.com",
@@ -8,8 +9,14 @@
   ],
   "domains": [
     "registry.npmjs.org",
+    "www.npmjs.com",
+    "api.nuget.org",
+    "www.nuget.org",
     "repo.packagist.org",
     "packagist.org",
-    "api.nuget.org"
+    "docs.pytest.org",
+    "flask.palletsprojects.com",
+    "expressjs.com",
+    "crl3.digicert.com"
   ]
 }
