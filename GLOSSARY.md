@@ -96,6 +96,13 @@ Reaching one host through a connection addressed to another, by naming a differe
 **PyPI gateway**:
 The read-only Python package index that the egress proxy serves on its own port (`/pypi/simple/`, `/pypi/files/`), so that commands install from PyPI without a tunnel to it. The proxy itself fetches only project index pages from `pypi.org` and package files from `files.pythonhosted.org`, over verified HTTPS with fixed hosts, paths and headers. Those two hosts are **gateway-only**: they share Fastly with `raw.githubusercontent.com`, so no allowlist may list them.
 
+**Model-provider host**:
+A host under the registrable domains OpenAI serves Codex, ChatGPT and the API from (`MODEL_PROVIDER` in `principiis/egress_proxy.py`). The egress proxy forwards it only with the model credential, in every mode; no network allowlist may list it in its ordinary domains.
+
+**Network measurement**:
+The one logging-only Codex session, on a disposable fixture request, that records which destinations development actually needs. Its egress proxy runs in `log` mode, which still refuses the never-allow list, tunnels to gateway-only hosts, non-public addresses and model-provider hosts without the model credential. Its draft network allowlist is refused until the owner has reviewed it.
+_Avoid_: Using a benchmark request for it.
+
 ## Example dialogue
 
 Researcher: “Does this security intervention improve the generated application?”
