@@ -417,12 +417,12 @@ records the PyPI gateway, model credential and Docker Desktop decisions.
   made before the outside network existed have no `outside_network` and are still
   accepted.
 
-**The allowlist is provisional.** It lists the ChatGPT/OpenAI endpoints (as
-`model_domains`) and the package registries, but has not been measured. Build it from a logging-only run on the
+**The allowlist is measured.** It was built on 2026-11-28 from a logging-only run on the
 disposable fixture request
-[`fixtures/development/network_measurement_request.txt`](../../fixtures/development/network_measurement_request.txt)
-(one pinned dependency from each ecosystem, one docs page, and a `NOTES.md` that records
-success or failure per ecosystem; never a benchmark run).
+[`fixtures/development/network_measurement_request.txt`](../../fixtures/development/network_measurement_request.txt),
+reviewed, fronting-checked and confirmed by a follow-up session under the enforced
+allowlist; see [Live measurement (2026-11-28)](#live-measurement-2026-11-28). The owner's
+final approval is the review of the file in its PR.
 
 ### What is verified and what is not
 
@@ -808,17 +808,49 @@ the log, that this works at all is a hypothesis.
 The security-investigation reviewer (`principiis/investigation.py`) uses the same
 runtime, so it is limited by the same allowlist.
 
+### Live measurement (2026-11-28)
+
+The live sessions on 2026-11-28 (owner-approved under hard rule 3, dedicated ChatGPT
+login file, Docker Desktop 29.9.3 with the three host settings, arm64 measurement
+candidate `sha256:a20bdded...`, adapter `docker-development-v7`, fixture request
+`fixtures/development/network_measurement_request.txt`; no benchmark request):
+
+1. **Measurement, `log` mode.** Codex completed the request. Every model request went
+   through the credentialed proxy (`chatgpt.com` 28 times, `credential: valid`); Codex
+   also reached `ab.chatgpt.com` and three `sdmntpr*.oaiusercontent.com` hosts with the
+   credential. Refused: `github.com` and `api.github.com` (Composer's package download and
+   its git fallback), `proxy.golang.org` (Go), and a tunnel to `pypi.org`. pip installed
+   Flask, pytest and six through the PyPI gateway (13 index and 24 file requests); npm
+   (`registry.npmjs.org`) and NuGet (`api.nuget.org`) worked; docs pages loaded.
+   `draft-allowlist` proposed 12 hosts.
+2. **Review and fronting check.** `fronting-check` on the draft **failed for
+   `docs.python.org`**: it is on Fastly, and a tunnel to it with
+   `Host: raw.githubusercontent.com` returned this repository's README. `pkg.go.dev`
+   passed the probe but renders the GitHub README of any Go module. Both joined
+   `NEVER_ALLOW`. The remaining 10 hosts pass, and are the committed
+   `network_allowlist.json`; `model_domains` stayed at `api.openai.com`,
+   `auth.openai.com`, `chatgpt.com`.
+3. **Follow-up session, enforced allowlist** (`--egress allowlist`). Codex worked with
+   only the three model domains; its requests to `ab.chatgpt.com` and
+   `*.oaiusercontent.com` were refused (`model-provider host not in model_domains`,
+   credential `valid`) without visible effect, so they stay out. Refused as never-allowed:
+   `github.com`, `api.github.com`, `proxy.golang.org`, `docs.python.org`, `pkg.go.dev`;
+   refused as unlisted: `six.readthedocs.io`, `www.php-fig.org`, `www.newtonsoft.com`.
+   pip (gateway), npm and NuGet installs worked. Composer resolved `psr/log` but its
+   download from GitHub was refused, as expected; Go failed at `proxy.golang.org`.
+
+Findings for the development image (not network): in the Codex sandbox the home
+directory is read-only, so the .NET SDK first failed with
+`The system cannot open the device or file specified. : 'NuGet-Migrations'` until the
+agent set `DOTNET_CLI_HOME`, `NUGET_PACKAGES` and `XDG_DATA_HOME` to temporary
+directories; Go needed `GOCACHE` likewise. If the candidate image is adopted, set these
+in the command environment.
+
 **Known gaps (#75 item 2).** One list: what is open, then what was closed and how it
 was verified.
 
 Open, to resolve before tests go public:
 
-- **Real model traffic through the credentialed proxy is unverified.** Nothing has yet
-  carried real model or login traffic through the credentialed, SNI-checked proxy end
-  to end. The measurement run will show it: `egress.jsonl` then has `credential: valid`
-  events and `tls` events with a matching `sni` for the model hosts.
-- **The allowlist itself is a guess** until the measurement has run and the owner has
-  reviewed the draft.
 - **Model hosts are not fronting-checked.** The OpenAI hosts are on Cloudflare; whether
   a tunnel to them reaches GitHub by Host fronting was not tested (that needs the
   credential and contacts OpenAI). Only the Codex process can open them.
@@ -833,9 +865,9 @@ Open, to resolve before tests go public:
   stays off only through `web_search = "disabled"`. The barrier against commands relies
   on bubblewrap's fresh `/proc`; Codex's `--no-proc` fallback would show the Codex
   process's environment, but the preflight probe would then fail. In the stand-in run
-  Codex also requested `ab.chatgpt.com` with the credential: `allowlist` mode refuses it
-  (not a model domain), `log` mode forwards and records it. The measurement decides
-  whether it is needed (`model_domains_measured`).
+  Codex also requested `ab.chatgpt.com` and `*.oaiusercontent.com` with the credential:
+  `allowlist` mode refuses them (not model domains), `log` mode forwards and records them.
+  The 2026-11-28 enforced session ran fine without them.
 - **The model-provider list is not exhaustive.** `MODEL_PROVIDER` names OpenAI's own
   domains. A host outside it that leads to the model (a reseller, Azure OpenAI) would need
   its own key, which commands do not have; `allowlist` mode is default-deny regardless.
@@ -856,9 +888,10 @@ Open, to resolve before tests go public:
   candidate is a local arm64 variant built with the `linux-arm64` tarball and its
   published SHA-512 (see the owner commands). Making the recipe multi-architecture
   (one pinned hash per architecture) is not done.
-- **Composer, .NET and Go installs through the proxy are unverified.** The candidate has
-  the toolchains; no control installs a package with them through the proxy. The
-  measurement's NOTES.md and the follow-up session will show it.
+- **Composer and Go installs fail by design.** Verified in the 2026-11-28 sessions:
+  Composer resolves through Packagist but downloads from GitHub (`api.github.com`, then a
+  `github.com` clone), both refused; Go fails at `proxy.golang.org`. A vetted cache or
+  mirror would be needed for either. .NET (NuGet) installs work.
 - **Hosts that serve arbitrary content.** `proxy.golang.org` is never allowed because it
   serves any public GitHub repository as a Go module, so Go module downloads fail until a
   safe option exists (a vetted module cache, for example). npm and PyPI also serve
@@ -877,6 +910,12 @@ Open, to resolve before tests go public:
 
 Closed:
 
+- **Real model traffic through the credentialed proxy (verified 2026-11-28).** Two live
+  sessions (measurement and enforced allowlist) carried every Codex model request through
+  the proxy with `credential: valid`; see [Live measurement](#live-measurement-2026-11-28).
+- **The allowlist was a guess (closed 2026-11-28).** It is now measured, reviewed and
+  fronting-checked. The fronting check caught `docs.python.org` (Fastly, returned
+  GitHub content); it and `pkg.go.dev` are never-allowed.
 - **Commands could reach the model hosts in `log` mode (closed in v7, verified
   2026-11-28).** The measurement ran with no `model_domains`, so a command could have
   called the model API with hosted web search. `log` mode now enforces the shipped

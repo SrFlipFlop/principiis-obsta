@@ -97,7 +97,7 @@ it checks four host lists, all in `egress_proxy.py` or the allowlist file:
 
 | List | Where | Effect |
 | --- | --- | --- |
-| `domains` | `network_allowlist.json` | Forwarded on ports 80 and 443 to anyone. Currently `registry.npmjs.org`, `repo.packagist.org`, `packagist.org`, `api.nuget.org` (provisional until the measurement). |
+| `domains` | `network_allowlist.json` | Forwarded on ports 80 and 443 to anyone. Measured on 2026-11-28: npm (`registry.npmjs.org`, `www.npmjs.com`), NuGet (`api.nuget.org`, `www.nuget.org`), Packagist (`repo.packagist.org`, `packagist.org`), three docs sites and `crl3.digicert.com`; each passed the fronting check. |
 | `model_domains` | `network_allowlist.json` | `api.openai.com`, `auth.openai.com`, `chatgpt.com`: forwarded only with the per-run model credential (section 6). |
 | `NEVER_ALLOW` | `egress_proxy.py` | GitHub (`github.com`, `githubusercontent.com`, `github.io`, `ghcr.io`, ...), Go module proxies, jsDelivr, githack, esm.sh, GitLab, Bitbucket, Codeberg, Gitee, archive.org, Software Heritage and similar. Refused in every mode, with or without the credential. |
 | `GATEWAY_ONLY` | `egress_proxy.py` | `pypi.org`, `pythonhosted.org`: never tunnelled; reached only through the PyPI gateway (section 5). |
@@ -249,6 +249,7 @@ Dated results are in [DEVELOPMENT_RUNTIME.md](DEVELOPMENT_RUNTIME.md#what-is-ver
 | The Codex process fronts another host through its credentialed model tunnel | Model token `test_the_codex_process_credentialed_tunnel_still_passes_the_sni_check` (sink on the internal network, no way out) | SNI `chatgpt.com` forwarded; SNI `pypi.org` and `raw.githubusercontent.com` closed (`sni-mismatch`, credential `valid`). |
 | Real `codex exec` reaches the model hosts only with the credential | Model token `test_codex_exec_presents_the_model_credential_to_a_refusing_proxy` (FAKE login, refuse-everything proxy) | Codex's `chatgpt.com` requests carry `credential: valid`. |
 | **Log mode** (measurement): GitHub, PyPI tunnels, private and metadata addresses, model hosts without the credential | Egress `test_log_mode_refuses_github_pypi_tunnels_and_non_public_addresses`; Model token `test_in_log_mode_commands_get_403_for_every_model_provider_host` | All `403` with a reason; only `registry.npmjs.org` connects. **Found before the fix:** the old `log` mode forwarded every destination (its `allowed` returned true for any host in `log` mode), so the same control got `200` for the GitHub `CONNECT`s, and loopback, private and metadata addresses were forwarded too. |
+| A docs host shares Fastly with GitHub | `fronting-check` on the measured draft (live, 2026-11-28) | **Found:** `docs.python.org` returned this repository's README for `Host: raw.githubusercontent.com`. Now never-allowed, with `pkg.go.dev`. |
 
 ### Other findings
 
@@ -286,10 +287,6 @@ not read these settings yet.
 
 From the Known gaps list in [DEVELOPMENT_RUNTIME.md](DEVELOPMENT_RUNTIME.md#what-is-verified-and-what-is-not):
 
-- **Real model traffic through the credentialed proxy is unverified end to end.** All
-  controls so far used a FAKE login, a stand-in model or a proxy without a way out.
-- **The allowlist is a guess** until the measurement has run and the owner has reviewed
-  the draft.
 - **Model hosts are not fronting-checked.** The OpenAI hosts are on Cloudflare; whether a
   tunnel to them reaches GitHub by Host fronting was not tested, because that needs the
   credential and contacts OpenAI. Only the Codex process can open them.
@@ -305,8 +302,8 @@ From the Known gaps list in [DEVELOPMENT_RUNTIME.md](DEVELOPMENT_RUNTIME.md#what
 - **Registries serve anything anyone uploads.** npm and PyPI (including through the
   gateway) could serve this repository's files if someone published them as a package;
   this risk is accepted for now. `proxy.golang.org` is never allowed, so Go module
-  downloads fail; Packagist downloads normally come from GitHub, so Composer installs may
-  fail too. Composer, .NET and Go installs through the proxy are unverified.
+  downloads fail; Packagist downloads normally come from GitHub, so Composer installs
+  fail too (both verified in the live sessions).
 - **Docker Desktop specifics.** Neither host setting has been tried on the owner's Linux
   Docker; whether its nested sandbox gets a fresh `/proc` without `proc` is unverified.
   The Dockerfile's .NET layer is linux-x64 only, and an amd64 image under emulation fails
@@ -317,7 +314,24 @@ From the Known gaps list in [DEVELOPMENT_RUNTIME.md](DEVELOPMENT_RUNTIME.md#what
 
 ## Live measurement (2026-11-28)
 
-Results are recorded in [DEVELOPMENT_RUNTIME.md](DEVELOPMENT_RUNTIME.md).
+Two owner-approved live Codex sessions on a disposable fixture request (never a
+benchmark) closed the loop:
+
+- **Measurement (`log` mode).** Every model request went through the credentialed proxy
+  (`credential: valid`). GitHub (`github.com`, `api.github.com`), `proxy.golang.org` and a
+  tunnel to `pypi.org` were refused; pip worked through the gateway, npm and NuGet
+  directly.
+- **The fronting check earned its place.** On the drafted allowlist it **failed for
+  `docs.python.org`**, another Fastly host that returned this repository's README when
+  asked for `Host: raw.githubusercontent.com`. It and `pkg.go.dev` (which renders any Go
+  module's GitHub README) joined `NEVER_ALLOW`; the other 10 hosts passed and became the
+  allowlist.
+- **Enforced allowlist.** Codex worked with only `api.openai.com`, `auth.openai.com` and
+  `chatgpt.com`; GitHub and every never-allowed host were refused. Composer (downloads
+  from GitHub) and Go (`proxy.golang.org`) fail, as designed.
+
+Details, counts and image findings are in
+[DEVELOPMENT_RUNTIME.md](DEVELOPMENT_RUNTIME.md#live-measurement-2026-11-28).
 
 ## How to verify it yourself
 
