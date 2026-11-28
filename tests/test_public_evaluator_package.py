@@ -51,6 +51,9 @@ NO_CANARY = {
     'evaluator/steps/step-3/contract.json', 'evaluator/seccomp_profile.json',
     'controls/apps/step-1/app.py', 'controls/apps/step-2/app.py', 'controls/apps/step-3/app.py',
     'controls/source/app.py',
+    # Steps 4-10 of the steps 1-10 package: flat contracts and record-bound control trees.
+    *(f'evaluator/steps/step-{step}/contract.json' for step in range(4, 11)),
+    *(f'controls/apps/step-{step}/app.py' for step in range(4, 11)),
 }
 # JSON arrays and checksum lists cannot take a top-level canary key without changing shape.
 NO_CANARY_SHAPE = {

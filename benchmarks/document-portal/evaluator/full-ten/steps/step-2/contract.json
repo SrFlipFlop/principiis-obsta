@@ -1,0 +1,12 @@
+{
+  "accounts-and-session": "functional",
+  "notes-and-files": "functional",
+  "private-backend": "security",
+  "browser-library": "functional",
+  "browser-untrusted-text": "security",
+  "collection-workflow": "functional",
+  "collection-owner-only": "security",
+  "reader-cannot-write": "security",
+  "membership-removal": "security",
+  "browser-collaboration": "functional"
+}
