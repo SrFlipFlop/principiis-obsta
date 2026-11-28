@@ -30,10 +30,18 @@ class EgressPolicyTests(unittest.TestCase):
                            ('140.82.112.3', 443), ('', 443), ('registry.npmjs.org\r\nX: y', 443)):
             self.assertFalse(allowed(host, port, 'allowlist', ALLOWLIST), (host, port))
 
-    def test_log_mode_admits_any_well_formed_destination(self):
-        self.assertTrue(allowed('github.com', 443, 'log', []))
-        self.assertTrue(allowed('140.82.112.3', 22, 'log', []))
+    def test_log_mode_admits_ordinary_destinations_on_any_port(self):
+        self.assertTrue(allowed('registry.npmjs.org', 443, 'log', []))
+        self.assertTrue(allowed('docs.python.org', 8443, 'log', []))
+        self.assertTrue(allowed('140.82.112.3', 22, 'log', []))  # addresses are checked after resolution
         self.assertFalse(allowed('bad host', 443, 'log', []))
+
+    def test_log_mode_refuses_github_its_mirrors_and_gateway_only_hosts(self):
+        # The measurement must never reach GitHub, directly or by Host fronting through Fastly.
+        for host in (*GITHUB, 'pypi.org', 'files.pythonhosted.org', 'test.pypi.org', 'Raw.GitHubUserContent.com.'):
+            with self.subTest(host=host):
+                self.assertFalse(allowed(host, 443, 'log', []))
+                self.assertFalse(allowed(host, 443, 'log', [host], [host], credential=True))
 
     def test_unknown_mode_refuses(self):
         self.assertFalse(allowed('registry.npmjs.org', 443, 'open', ALLOWLIST))
@@ -176,12 +184,16 @@ class Upstream:
         return proxy_side
 
 
+PUBLIC = '104.16.1.34'  # what a public name resolves to in these tests: no DNS lookup
+
+
 class HandleTests(unittest.TestCase):
-    def exchange(self, mode, head, payload=b'', policy=None, token=''):
+    def exchange(self, mode, head, payload=b'', policy=None, token='', addresses=(PUBLIC,)):
         policy = policy or {'domains': ['registry.npmjs.org'], 'model_domains': []}
         upstream, events = Upstream(), []
         client, proxy_side = socket.socketpair()
         with patch.object(egress_proxy.socket, 'create_connection', upstream.connect), \
+                patch.object(egress_proxy, 'resolve', lambda name, port: list(addresses)), \
                 patch.object(egress_proxy, 'log', lambda **event: events.append(event)):
             worker = threading.Thread(target=egress_proxy.handle, args=(proxy_side, mode, policy, token))
             worker.start()
@@ -190,8 +202,11 @@ class HandleTests(unittest.TestCase):
             if head.startswith(b'CONNECT'):
                 while b'\r\n\r\n' not in reply:
                     reply += client.recv(4096)
-            client.sendall(payload)
-            client.shutdown(socket.SHUT_WR)
+            try:
+                client.sendall(payload)
+                client.shutdown(socket.SHUT_WR)
+            except OSError:  # a refusal closes the connection after its 403
+                pass
             client.settimeout(10)
             while data := client.recv(65536):
                 reply += data
@@ -235,6 +250,67 @@ class HandleTests(unittest.TestCase):
         reply, forwarded, events = self.exchange('log', self.CONNECT, data)
         self.assertEqual(forwarded, data)
         self.assertIn('raw.githubusercontent.com', [e.get('sni') for e in events])
+
+    def test_log_mode_refuses_a_tunnel_to_gateway_only_and_never_allowed_hosts_and_logs_it(self):
+        for host, reason in (('pypi.org', 'gateway-only host: use the PyPI gateway'),
+                             ('files.pythonhosted.org', 'gateway-only host: use the PyPI gateway'),
+                             ('raw.githubusercontent.com', 'never-allowed host'), ('github.com', 'never-allowed host'),
+                             ('cdn.jsdelivr.net', 'never-allowed host')):
+            with self.subTest(host=host):
+                head = f'CONNECT {host}:443 HTTP/1.1\r\nHost: {host}:443\r\n\r\n'.encode()
+                reply, forwarded, events = self.exchange('log', head, hello(host))
+                self.assertIn(b' 403 ', reply)
+                self.assertEqual(forwarded, b'')
+                refused = [e for e in events if e.get('decision') == 'refused']
+                self.assertEqual([(e['host'], e['port']) for e in refused], [(host, 443)])
+                self.assertTrue(refused[0]['reason'].startswith(reason), refused[0])
+                self.assertNotIn('connected', [e.get('decision') for e in events])
+
+    def test_log_mode_refuses_plain_http_to_them_too(self):
+        reply, forwarded, events = self.exchange(
+            'log', b'GET http://raw.githubusercontent.com/SrFlipFlop/x HTTP/1.1\r\nHost: raw.githubusercontent.com\r\n\r\n')
+        self.assertIn(b' 403 ', reply)
+        self.assertEqual(forwarded, b'')
+
+    def test_log_mode_refuses_destinations_that_resolve_to_non_public_addresses(self):
+        for addresses in (['127.0.0.1'], ['10.0.0.1'], ['172.17.0.1'], ['192.168.65.254'], ['169.254.169.254'],
+                          ['100.100.100.200'], ['0.0.0.0'], ['::1'], ['fe80::1%eth0'], ['fd00::1'],
+                          ['::ffff:127.0.0.1'], ['224.0.0.1'], [PUBLIC, '10.0.0.1'], []):
+            with self.subTest(addresses=addresses):
+                reply, forwarded, events = self.exchange('log', self.CONNECT, hello('registry.npmjs.org'),
+                                                         addresses=addresses)
+                self.assertIn(b' 403 ', reply)
+                self.assertEqual(forwarded, b'')
+                refused = [e for e in events if e.get('decision') == 'refused']
+                self.assertEqual(refused[-1]['reason'], 'non-public address')
+                self.assertEqual(refused[-1]['host'], 'registry.npmjs.org')
+                self.assertNotIn('connected', [e.get('decision') for e in events])
+
+    def test_log_mode_resolves_literal_and_odd_forms_of_private_addresses_itself(self):
+        # Real resolution, all local: literals and the shorthand forms getaddrinfo accepts.
+        for host in ('127.0.0.1', '169.254.169.254', '10.0.0.1', 'localhost', '2130706433', '127.1'):
+            with self.subTest(host=host):
+                upstream = Upstream()
+                with patch.object(egress_proxy.socket, 'create_connection', upstream.connect):
+                    reply, events = ModelCredentialTests.request(
+                        self, f'CONNECT {host}:443 HTTP/1.1\r\n\r\n', mode='log', policy={'domains': [], 'model_domains': []})
+                self.assertEqual(upstream.connections, [])
+                self.assertNotIn(b' 200 ', reply)
+                self.assertEqual([e.get('reason') for e in events if e.get('decision') == 'refused'], ['non-public address'])
+
+    def test_log_mode_connects_to_the_address_it_checked(self):
+        upstream = Upstream()
+        with patch.object(egress_proxy.socket, 'create_connection', upstream.connect), \
+                patch.object(egress_proxy, 'resolve', lambda name, port: [PUBLIC]), \
+                patch.object(egress_proxy, 'log', lambda **event: None):
+            client, proxy_side = socket.socketpair()
+            worker = threading.Thread(target=egress_proxy.handle, args=(proxy_side, 'log', {}, ''))
+            worker.start()
+            client.sendall(self.CONNECT)
+            client.recv(4096)
+            client.close()
+            worker.join(10)
+        self.assertEqual(upstream.connections, [(PUBLIC, 443)])
 
     def test_plain_http_whose_host_header_names_another_host_is_refused(self):
         for host in (b'raw.githubusercontent.com', b'registry.npmjs.org\r\nHost: github.com', None):
@@ -336,7 +412,8 @@ class ModelCredentialTests(unittest.TestCase):
             self.assertNotIn(secret, json.dumps(events))
 
     def test_log_mode_forwards_everything_but_records_whether_the_credential_came(self):
-        with patch.object(egress_proxy.socket, 'create_connection', side_effect=OSError('no route in test')):
+        with patch.object(egress_proxy.socket, 'create_connection', side_effect=OSError('no route in test')), \
+                patch.object(egress_proxy, 'resolve', lambda name, port: [PUBLIC]):
             reply, events = self.request('CONNECT chatgpt.com:443 HTTP/1.1\r\n\r\n', mode='log')
         self.assertIn(b' 502 ', reply)
         self.assertEqual((events[0]['decision'], events[0]['credential']), ('allowed', 'absent'))
@@ -409,6 +486,13 @@ class GatewayOnlyTests(unittest.TestCase):
                 policy={'domains': ['pypi.org', 'registry.npmjs.org'], 'model_domains': []})
         self.assertIn(b' 403 ', reply)
         self.assertIn('gateway', [e for e in events if e.get('decision') == 'refused'][-1]['reason'])
+
+    def test_never_allowed_refusals_say_why_in_allowlist_mode_too(self):
+        with patch.object(egress_proxy.socket, 'create_connection', side_effect=AssertionError('no tunnel')):
+            reply, events = ModelCredentialTests.request(
+                self, 'CONNECT github.com:443 HTTP/1.1\r\n\r\n', policy={'domains': ['github.com'], 'model_domains': []})
+        self.assertIn(b' 403 ', reply)
+        self.assertTrue(events[0]['reason'].startswith('never-allowed host'), events)
 
     def test_the_shipped_allowlist_has_no_gateway_only_host(self):
         domains = load_allowlist()['domains']

@@ -3,8 +3,9 @@
     python3 -m principiis.network_measurement --config RUNTIME_JSON --output NEW_DIR
 
 Runs one ordinary Codex development session on a disposable fixture request, with
-the egress proxy in `log` mode: every destination is forwarded and recorded. The
-output keeps the workspace, Codex logs, `egress.jsonl` and `measurement.json`, whose
+the egress proxy in `log` mode: every destination is recorded and forwarded, except
+GitHub and its mirrors, tunnels to the gateway-only PyPI hosts and non-public addresses,
+which are refused (and recorded). The output keeps the workspace, Codex logs, `egress.jsonl` and `measurement.json`, whose
 `connected_hosts` (destinations that actually answered) are the candidate allowlist. This is a live subscription run; it
 needs the owner's approval (AGENTS.md hard rule 3) and never uses a benchmark request.
 """
@@ -83,6 +84,9 @@ def draft_allowlist(measurement, output):
     hosts = document.get('connected_hosts') if isinstance(document, dict) else None
     if not isinstance(hosts, list) or any(not isinstance(v, str) for v in hosts):
         raise ValueError('measurement has no connected_hosts list')
+    refused = document.get('refused_hosts', [])
+    if not isinstance(refused, list) or any(not isinstance(v, str) for v in refused):
+        raise ValueError('measurement has a malformed refused_hosts list')
     models = sorted({v for v in hosts if model_host(v)})
     kept = sorted({v for v in hosts if not exclusion(v) and not model_host(v)})
     excluded = {v: exclusion(v) for v in sorted(set(hosts)) if exclusion(v)}
@@ -95,7 +99,8 @@ def draft_allowlist(measurement, output):
              'model_domains_measured': models,
              'domains': kept}
     output.write_text(json.dumps(draft, indent=2) + '\n')
-    return {'draft': str(output), 'hosts': kept, 'model_hosts': models, 'excluded': excluded}
+    return {'draft': str(output), 'hosts': kept, 'model_hosts': models, 'excluded': excluded,
+            'refused': sorted(set(refused))}
 
 
 def check(report, name, function):
@@ -157,7 +162,7 @@ def preflight(runtime_config, runs_root):
     check(report, 'proxy imports work under python -I -S in the image',
           lambda: preflight_run(config['docker'], ['--network', 'none', *restrictions(), '--entrypoint', 'python',
                                 config['image'], '-I', '-S', '-c',
-                                'import base64, hmac, http.client, json, os, re, socket, ssl, sys, threading, time; '
+                                'import base64, hmac, http.client, ipaddress, json, os, re, socket, ssl, sys, threading, time; '
                                 'ssl.create_default_context()']) and '')
     return report
 
@@ -312,6 +317,8 @@ def helper(argv):
     print(f"Draft written to {summary['draft']} ({len(summary['hosts'])} hosts). It is REJECTED until you edit it.")
     for host, reason in summary['excluded'].items():
         print(f'NOT drafted, decide consciously: {host} ({reason})')
+    for host in summary['refused']:
+        print(f'REFUSED during the measurement: {host} (the reason is in egress.jsonl; never drafted)')
 
 
 if __name__ == '__main__':

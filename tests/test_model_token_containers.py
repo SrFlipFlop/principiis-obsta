@@ -302,7 +302,13 @@ class ModelTokenContainerTests(unittest.TestCase):
         proxy = self.runtime.start_egress(egress, '')
         install = ('python -m venv /workspace/venv && /workspace/venv/bin/pip install --no-cache-dir '
                    'six==1.16.0 requests==2.32.3 2>&1 | grep -E "Successfully|ERROR" ; '
-                   'env | grep -E "^(PIP_INDEX_URL|PIP_TRUSTED_HOST|UV_DEFAULT_INDEX)=" | sort')
+                   # uv (not in the image) through the gateway, then uv itself, with its default cache,
+                   # from the command environment alone. The sandbox's home is read-only, so uv
+                   # needs UV_CACHE_DIR to start at all.
+                   '/workspace/venv/bin/pip install -q --no-cache-dir uv==0.13.8 2>&1 | grep -v notice ; '
+                   '/workspace/venv/bin/uv venv -q /workspace/uv-app 2>&1 ; /workspace/venv/bin/uv pip install '
+                   '--python /workspace/uv-app/bin/python idna==3.10 2>&1 | tail -4 ; '
+                   'env | grep -E "^(PIP_INDEX_URL|PIP_TRUSTED_HOST|UV_DEFAULT_INDEX|UV_CACHE_DIR)=" | sort')
         output = docker_run(self.docker, [
             'run', '--rm', '--network', egress['network'], *runtime_module.restrictions(nested_sandbox=True, proc=self.proc),
             '--tmpfs', '/workspace:rw,exec,nosuid,nodev,size=256m,mode=1777',
@@ -315,6 +321,8 @@ class ModelTokenContainerTests(unittest.TestCase):
         for package in ('six-1.16.0', 'requests-2.32.3', 'urllib3-'):
             self.assertIn(package, output)
         self.assertIn(f'PIP_INDEX_URL=http://{proxy}:3128/pypi/simple/', output)
+        self.assertIn(' + idna==3.10', output)  # installed by uv inside the Codex sandbox
+        self.assertIn('UV_CACHE_DIR=/tmp/uv-cache', output)
         events = self.log(egress['container'])
         print('proxy decisions:', sorted({(e.get('event'), e.get('host'), e.get('route'), e['decision'])
                                           for e in events if 'decision' in e}))

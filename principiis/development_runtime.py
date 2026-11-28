@@ -50,9 +50,13 @@ PYPI_GATEWAY = ('pypi-gateway-v1: plain HTTP at http://<egress proxy>:3128/pypi/
                 'fixed SNI/Host and no client headers but a simple-API Accept, no redirects, and rewrites index '
                 'file URLs to /pypi/files/ keeping their hashes; CONNECT to PyPI hosts is refused because they '
                 'share Fastly with raw.githubusercontent.com')
+# What `log` mode (the one measurement run) still refuses, and logs (#75).
+LOG_POLICY = ('log-refusals-v1: log mode forwards and logs every destination except NEVER_ALLOW hosts (GitHub and '
+              'mirrors), GATEWAY_ONLY hosts (PyPI, only through its gateway) and names resolving to any non-public '
+              'address (loopback, private, link-local, metadata), which are refused and logged')
 NETWORK_DESCRIPTION = {
     'allowlist':'internal Docker network; only route out is the egress proxy (own per-run outside network), limited to the network allowlist with SNI/Host checks; PyPI only through its read-only gateway',
-    'log':'internal Docker network; only route out is the egress proxy (own per-run outside network), logging every destination without limits',
+    'log':'internal Docker network; only route out is the egress proxy (own per-run outside network), logging every destination; GitHub and its mirrors, PyPI tunnels and non-public addresses refused; PyPI only through its read-only gateway',
 }
 
 
@@ -143,7 +147,9 @@ def package_environment(address):
     index = url + '/pypi/simple/'
     no_proxy = 'localhost,127.0.0.1,::1,' + address
     return {**{name: url for name in PROXY_VARIABLES}, 'NO_PROXY': no_proxy, 'no_proxy': no_proxy,
-            'PIP_INDEX_URL': index, 'PIP_TRUSTED_HOST': f'{address}:{EGRESS_PORT}', 'UV_DEFAULT_INDEX': index}
+            'PIP_INDEX_URL': index, 'PIP_TRUSTED_HOST': f'{address}:{EGRESS_PORT}', 'UV_DEFAULT_INDEX': index,
+            # Codex's sandbox keeps the home read-only; uv will not start without a writable cache.
+            'UV_CACHE_DIR': '/tmp/uv-cache'}
 
 
 def command_environment(address):
@@ -532,7 +538,8 @@ class DevelopmentRuntime:
                         'egress':{'mode':egress, 'port':EGRESS_PORT,
                                   'allowlist_sha256':hashlib.sha256(NETWORK_ALLOWLIST.read_bytes()).hexdigest() if egress == 'allowlist' else None,
                                   'proxy_sha256':hashlib.sha256(EGRESS_PROXY.read_bytes()).hexdigest(),
-                                  'model_credential':MODEL_CREDENTIAL, 'pypi_gateway':PYPI_GATEWAY}}
+                                  'model_credential':MODEL_CREDENTIAL, 'pypi_gateway':PYPI_GATEWAY,
+                                  **({'log_policy':LOG_POLICY} if egress == 'log' else {})}}
 
     def execute(self, workspace, request, stdout, stderr):
         c = self.config

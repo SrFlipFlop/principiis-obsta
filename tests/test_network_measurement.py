@@ -14,9 +14,9 @@ IMAGE = 'sha256:' + 'a' * 64
 OTHER = 'sha256:' + 'b' * 64
 
 
-def write_measurement(path, hosts):
+def write_measurement(path, hosts, refused=()):
     path.write_text(json.dumps({'schema_version': 1, 'connected_hosts': hosts, 'allowed_hosts': hosts,
-                                'refused_hosts': []}))
+                                'refused_hosts': list(refused)}))
     return path
 
 
@@ -105,6 +105,22 @@ class DraftAllowlist(unittest.TestCase):
             self.assertEqual(summary['hosts'], ['registry.npmjs.org'])
             self.assertEqual(set(summary['excluded']), {'pypi.org', 'files.pythonhosted.org'})
             self.assertIn('gateway', summary['excluded']['pypi.org'])
+
+    def test_hosts_refused_during_the_measurement_are_reported_not_drafted(self):
+        # Log mode refuses GitHub, mirrors, PyPI tunnels and non-public addresses; the
+        # owner still sees each attempt.
+        with temporary_directory() as directory:
+            base = Path(directory)
+            measurement = write_measurement(base / 'm.json', ['registry.npmjs.org'],
+                                            refused=['github.com', 'pypi.org', 'localhost'])
+            summary = network_measurement.draft_allowlist(measurement, base / 'draft.json')
+            self.assertEqual(summary['hosts'], ['registry.npmjs.org'])
+            self.assertEqual(summary['refused'], ['github.com', 'localhost', 'pypi.org'])
+            self.assertNotIn('github', (base / 'draft.json').read_text())
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                network_measurement.main(['draft-allowlist', '--measurement', str(measurement),
+                                          '--output', str(base / 'second.json')])
+            self.assertIn('REFUSED during the measurement: github.com', output.getvalue())
 
     def test_the_committed_allowlist_has_no_markers(self):
         self.assertIn('registry.npmjs.org', development_runtime.load_allowlist()['domains'])
@@ -256,7 +272,7 @@ class Preflight(unittest.TestCase):
             imports = [c for c in map(json.loads, (base / 'commands.jsonl').read_text().splitlines())
                        if c[0] == 'run' and any(v.startswith('import ') for v in c)]
             self.assertEqual(len(imports), 1)
-            for module in ('ssl', 'http.client'):
+            for module in ('ssl', 'http.client', 'ipaddress'):
                 self.assertIn(module, imports[0][-1])
 
 

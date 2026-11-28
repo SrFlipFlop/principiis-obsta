@@ -274,11 +274,21 @@ or published evaluator material ([ADR 0003](../adr/0003-evaluator-material-is-pu
       else changes. Origin-form requests (`GET /pypi/...`) and absolute-form requests
       naming the proxy's own address are the gateway; everything else is the proxy.
     - Commands get `PIP_INDEX_URL=http://<proxy>:3128/pypi/simple/`,
-      `PIP_TRUSTED_HOST=<proxy>:3128`, `UV_DEFAULT_INDEX` (same URL) and
+      `PIP_TRUSTED_HOST=<proxy>:3128`, `UV_DEFAULT_INDEX` (same URL),
+      `UV_CACHE_DIR=/tmp/uv-cache` (Codex's sandbox keeps the home read-only, and uv
+      refuses to start without a writable cache: `Failed to initialize cache at
+      /home/developer/.cache/uv ... Read-only file system`) and
       `NO_PROXY`/`no_proxy` with the proxy address, both in
       `shell_environment_policy.set` and in the container environment. Tools that
       ignore these (Poetry, pipenv, a hard-coded `--index-url https://pypi.org/simple`)
-      fail closed: the tunnel is refused.
+      fail closed: the tunnel is refused. pip (install, `download`, sdist builds with
+      `--no-binary`, which fetch their build backend through the gateway too) and uv
+      (`uv pip install`, `uv add`; plain-http `UV_DEFAULT_INDEX` needs no
+      `UV_INSECURE_HOST`) work with these variables alone. Poetry (2.5.1 checked) asks
+      `https://pypi.org` itself and fails ("your network is not connected to the
+      internet"); a benchmark that uses Poetry must make the gateway its primary source:
+      `poetry source add --priority=primary gateway "$PIP_INDEX_URL"`. That writes the
+      per-run gateway URL into `pyproject.toml` (Known gaps).
     - The gateway serves in `log` mode too. Each request is one JSON line with
       `event: "gateway"`, the `route` (`simple`, `files` or `invalid`), the upstream
       `host`, the `decision` (`allowed`, `connected` with the upstream `status`, or
@@ -315,8 +325,22 @@ or published evaluator material ([ADR 0003](../adr/0003-evaluator-material-is-pu
     `PO_MODEL_TOKEN`, no credential in any proxy variable, no `://model:` or token
     variable in any visible `/proc/*/environ`, and `PermissionError` for the Codex home
     and its `auth.json`.
-- **`log` mode** forwards every destination and records it, with the SNI it saw and
-  whether a model credential came. It exists only for the measurement below.
+- **`log` mode** forwards and records every other destination, on any port, with the
+  SNI it saw and whether a model credential came. It exists only for the measurement
+  below. Even there it refuses, and logs as `refused` with a `reason`:
+  - `NEVER_ALLOW` hosts (GitHub and its mirrors): `never-allowed host: ...`, so the
+    measurement never reaches GitHub;
+  - tunnels or plain HTTP to the `GATEWAY_ONLY` PyPI hosts:
+    `gateway-only host: use the PyPI gateway`, so Fastly Host fronting is impossible
+    there too (the gateway serves as in `allowlist` mode);
+  - names that resolve to any non-public address (loopback, RFC 1918, link-local and
+    cloud metadata `169.254.169.254`, shared/CGNAT, unspecified, multicast, IPv6
+    ULA/link-local, IPv4-mapped forms; `localhost`, `host.docker.internal`, the
+    proxy's own name and address, and shorthand forms such as `2130706433`):
+    `non-public address`. The proxy resolves the name once, requires every address
+    to be public, and connects to the address it checked.
+  The `allowlist` mode never forwards such destinations anyway (names only, no IP
+  literals); it also gives the `never-allowed host` reason now.
 - Every decision is one JSON line in `egress.jsonl` beside the workspace, with
   `credential` = `valid`, `invalid` or `absent` (never the value) and, for refusals, a
   `reason`. Execution evidence keeps the mode, allowlist and proxy digests, the allowed,
@@ -326,7 +350,8 @@ or published evaluator material ([ADR 0003](../adr/0003-evaluator-material-is-pu
   (`per-run-token-v1: ...`, never the token) are part of `runtime_version`, together with
   `web_search`, the command environment policy (`command_environment`, which now
   includes the PyPI gateway variables), the gateway scheme (`egress.pypi_gateway`,
-  `pypi-gateway-v1: ...`), the permission settings and the adapter, so an existing run
+  `pypi-gateway-v1: ...`), in `log` mode the refusals (`egress.log_policy`,
+  `log-refusals-v1: ...`), the permission settings and the adapter, so an existing run
   cannot continue under a different network policy. The adapter is
   `docker-development-v6`: v5 (SNI/Host checks, outside network, model credential)
   plus the PyPI gateway, with PyPI no longer tunnelled. Two parallel branches each used
@@ -487,7 +512,7 @@ earlier.
   four `PASS`, `FRONTING CHECK OK`. On a draft with `pypi.org`, `github.com` and
   `*.example.org` it reports `REFUSED`/`REFUSED`/`UNCHECKED` and exits 1.
 - Positive control (scratch script, not in the suite): the same probe through a
-  `log`-mode proxy, which still tunnels PyPI, flags `pypi.org` and
+  `log`-mode proxy, which then still tunnelled PyPI, flags `pypi.org` and
   `files.pythonhosted.org` as `FAIL` (`200`, `X-GitHub-Request-Id`) and passes
   `registry.npmjs.org`. So the probe does detect Fastly fronting.
 
@@ -522,6 +547,44 @@ Desktop 29.9.3 (LinuxKit 7.0.14, arm64), the scratch image `sha256:eeaa4f19...` 
   `PREFLIGHT OK` (no login read, nothing started).
 - No `po-` container, network or volume remained afterwards.
 
+Verified, model-free, on 2026-11-28 after the log-mode refusals (proxy change only;
+adapter still `docker-development-v6`, `egress.log_policy` added for `log` mode), on the
+scratch image (`sha256:eeaa4f19...`) and stock `python:3.12-slim`
+(`sha256:191083cd...`), Docker Desktop 29.9.3, both diagnostics set:
+
+- `tests/test_egress_containers.py`, 14 tests, all pass on both images (the stock image
+  skips only the npm half). New controls:
+  - a `log`-mode proxy: `registry.npmjs.org` gets `200`; the six GitHub hosts get `403`
+    (`never-allowed host`), `pypi.org` and `files.pythonhosted.org` `403`
+    (`gateway-only host`), and `127.0.0.1`, `localhost`, `10.0.0.1`, `172.17.0.1`,
+    `192.168.1.1`, `169.254.169.254`, `2130706433`, the proxy's own address and its
+    container name, and `host.docker.internal` `403` (`non-public address`). The
+    fronting probe through it to both PyPI hosts never gets a tunnel. Only
+    `registry.npmjs.org` is `connected`. Before the change the same control failed: the
+    `log` proxy answered `200` to the GitHub CONNECTs;
+  - uv 0.13.8, installed with pip through the gateway, then `uv venv` +
+    `uv pip install requests==2.32.3` (requests, urllib3, idna, certifi,
+    charset-normalizer) and `uv init` + `uv add six==1.16.0`, with only the command
+    environment; the gateway served both routes and no PyPI tunnel opened;
+  - `pip download six==1.16.0 requests==2.32.3`, `pip install --no-binary :all:
+    six==1.16.0` (sdist build; setuptools comes through the gateway), and a PEP 691
+    JSON index page (`application/vnd.pypi.simple.v1+json`, api 1.4, file URLs
+    `/pypi/files/...`, `sha256` hashes, no foreign URL). pip and uv ask for JSON first,
+    so every install above already used JSON pages;
+  - Poetry 2.5.1: `poetry add requests==2.32.3` fails by default (CONNECT `pypi.org`
+    refused, `gateway-only host`); after
+    `poetry source add --priority=primary gateway "$PIP_INDEX_URL"` it installs.
+- `tests/test_model_token_containers.py`, 5 tests, all pass on the scratch image. The
+  Codex-sandbox gateway control now also
+  installs uv with pip and runs `uv venv` and `uv pip install idna==3.10` (default
+  cache) inside `codex sandbox --permission-profile development` with only
+  `shell_environment_policy.set`. Without `UV_CACHE_DIR` it failed (read-only home);
+  with it, it installs. uv warns that it falls back to copying from the cache
+  (`UV_LINK_MODE=copy` would silence that; not set).
+- `python3 -m principiis.network_measurement fronting-check` on the shipped allowlist:
+  `registry.npmjs.org`, `repo.packagist.org`, `packagist.org` `PASS` (`403`),
+  `api.nuget.org` `PASS` (`421`), `FRONTING CHECK OK`.
+
 **Not verified:**
 - that real model traffic works through the credentialed proxy end to end. That needs an
   owner-approved live run; the measurement run will show it, because `egress.jsonl`
@@ -538,7 +601,6 @@ Desktop 29.9.3 (LinuxKit 7.0.14, arm64), the scratch image `sha256:eeaa4f19...` 
   use `/var/run/docker.sock` and binds (only the development runtime reads the host
   settings).
 - Composer, .NET and Go installs (the image has no such toolchains yet).
-- `uv` through the gateway (the image has no uv); only the variable is set.
 - the allowlist itself (still a guess until measured).
 
 ### Owner commands for the measurement run (the Codex machine)
@@ -573,7 +635,10 @@ PO_RUNTIME_IMAGE=sha256:... PO_RUNTIME_ROOT=RUNS_ROOT PO_EGRESS_CONTROL=1 \
 ```
 
 `pypi.org` and `files.pythonhosted.org` appear in the measurement (through the gateway)
-but are never drafted: they are gateway-only.
+but are never drafted: they are gateway-only. Hosts the `log` proxy refused (GitHub and
+its mirrors, PyPI tunnels, non-public addresses) are in `refused_hosts`; `draft-allowlist`
+prints each as `REFUSED during the measurement: <host>` and never drafts it. Their
+`reason` is in `egress.jsonl`.
 
 The draft never contains code-hosting hosts (GitHub, GitLab, Bitbucket), `golang.org`
 hosts or IP literals; the command lists them so that you decide consciously. `connected_hosts`
@@ -635,10 +700,23 @@ Open, to resolve before tests go public:
 - **Model hosts are not fronting-checked.** The OpenAI hosts are on Cloudflare;
   fronting through them was not tested (that needs the credential and contacts
   OpenAI), and only the Codex process can open them.
-- **`log` mode still tunnels PyPI.** The measurement run forwards every destination
-  (`log` mode exists for that), so Fastly fronting is possible there; commands still
-  use the gateway by default. The measurement uses a disposable fixture request, never a
-  benchmark.
+- **In `log` mode commands can reach the model hosts.** The measurement runs with no
+  `model_domains` (it is meant to discover them), so the model credential is not
+  required there and a command could call the model API, including hosted web search.
+  The measurement uses a disposable fixture request, never a benchmark, and no benchmark
+  material is reachable through GitHub from it; requiring the credential for known
+  OpenAI/ChatGPT hosts in `log` mode would close this.
+- **Lockfiles record the per-run gateway address.** `uv add`/`uv lock` write
+  `http://<proxy address>:3128/pypi/simple/` into `uv.lock`; `poetry source add`
+  writes it into `pyproject.toml` and `poetry.lock`. Each attempt gets a new internal
+  network, so the address can change between steps: a plain `uv sync` relocks against
+  the new address (lockfile churn in the workspace), `uv sync --locked` fails ("To
+  update the lockfile, run `uv lock`"), and a stale Poetry source points at an address
+  that is gone or refused. A stable gateway name on the internal network (a Docker
+  network alias) would fix this; not done.
+- **Name resolution in `log` mode** happens at the proxy, through Docker's DNS on the
+  outside network. A name that resolves to a mix of public and non-public addresses is
+  refused as a whole.
 - **Docker Desktop runs with explicit host settings.** The runtime works on Docker
   Desktop only with the three [Docker host settings](#docker-host-settings-docker-desktop);
   without them it fails closed in its preflight, as before. What still differs from a
@@ -675,6 +753,14 @@ Open, to resolve before tests go public:
 
 Closed and verified on real Docker (2026-11-27, rechecked on the merged branch
 2026-11-28, see above):
+
+- **`log` mode tunnelled PyPI and reached GitHub and private addresses (closed
+  2026-11-28).** The measurement proxy forwarded every destination, so a tunnel to
+  `pypi.org` could front GitHub, GitHub itself was reachable, and loopback, private,
+  link-local and metadata addresses were forwarded. It now refuses `NEVER_ALLOW`,
+  `GATEWAY_ONLY` and non-public destinations and logs each refusal (see *`log` mode*
+  above).
+- **uv through the gateway** works with the command environment alone (uv 0.13.8).
 
 - **Commands calling the model API.** The login was readable from commands and the
   model API was allowed, so a command could have called it with hosted web search turned
